@@ -69,7 +69,7 @@ homebrew_casks:
     repository:
       owner: dukechain2333
       name: homebrew-tap
-      token: "{{ index .Env \"HOMEBREW_TAP_GITHUB_TOKEN\" }}"
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
     homepage: https://github.com/dukechain2333/ai-sessions-manager
     description: TUI to browse and resume Claude Code sessions across directories
