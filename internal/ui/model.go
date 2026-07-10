@@ -530,7 +530,7 @@ func (m Model) View() string {
 		count += " · scanning…"
 	}
 	header := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.st.AppTitle.Render(" cs · Claude Sessions  "),
+		m.st.AppTitle.Render(" sm · AI Sessions  "),
 		m.st.Count.Render(count),
 	)
 	filterBar := m.filterInput.View()
