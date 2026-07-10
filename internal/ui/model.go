@@ -161,24 +161,38 @@ func (m *Model) loadTranscriptCmd() tea.Cmd {
 // below 80 columns the preview pane is hidden (per spec).
 func (m Model) narrow() bool { return m.width < 80 }
 
-// Layout: 1 header row + 1 filter row + body + 1 help row; borders eat
-// 2 rows/cols per pane.
-func (m *Model) layout() {
-	bodyH := m.height - 5
-	if bodyH < 3 {
-		bodyH = 3
+// bodyHeight is the pane content height: total height minus title, filter,
+// help, and the panes' top/bottom border rows.
+func (m *Model) bodyHeight() int {
+	h := m.height - 5
+	if h < 3 {
+		return 3
 	}
-	listW := m.width * 2 / 5
+	return h
+}
+
+// paneWidths returns the outer widths of the list and preview panes.
+// layout() and mouse hit-testing must agree on these, so they live here.
+func (m *Model) paneWidths() (listW, previewW int) {
+	listW = m.width * 2 / 5
 	if listW < 20 {
 		listW = 20
 	}
 	if m.narrow() {
 		listW = m.width - 2
 	}
-	previewW := m.width - listW - 2
+	previewW = m.width - listW - 2
 	if previewW < 10 {
 		previewW = 10
 	}
+	return listW, previewW
+}
+
+// Layout: 1 header row + 1 filter row + body + 1 help row; borders eat
+// 2 rows/cols per pane.
+func (m *Model) layout() {
+	bodyH := m.bodyHeight()
+	listW, previewW := m.paneWidths()
 	m.list.SetSize(listW-2, bodyH)
 	if !m.ready {
 		m.preview = viewport.New(previewW, bodyH)
@@ -268,6 +282,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 	return m, nil
 }
