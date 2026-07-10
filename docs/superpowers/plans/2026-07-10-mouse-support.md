@@ -86,12 +86,17 @@ func TestRowAtLineScrolledSmallPane(t *testing.T) {
 	l.SetSize(50, 3)
 	l.SetSessions(testSessions())
 	l.ToggleGroup()
-	l.SetCursor(3) // s2 occupies lines 5-7; height 3 → lineOffset = 5
+	l.SetCursor(3) // s2 occupies lines 5-7
+	// ensureVisible keeps title+meta visible (the blank separator may hang
+	// off-screen): cursor on s2 (lines 5-7, height 3) → lineOffset 4.
 	if l.lineOffset == 0 {
 		t.Fatal("setup: expected a scrolled pane")
 	}
-	if row, ok := l.RowAtLine(0); !ok || row != 3 {
-		t.Errorf("scrolled: RowAtLine(0) = %d, want 3 (s2)", row)
+	if row, ok := l.RowAtLine(0); !ok || row != 2 {
+		t.Errorf("scrolled: RowAtLine(0) = %d, want 2 (beta header at line 4)", row)
+	}
+	if row, ok := l.RowAtLine(1); !ok || row != 3 {
+		t.Errorf("scrolled: RowAtLine(1) = %d, want 3 (s2 title line)", row)
 	}
 }
 
