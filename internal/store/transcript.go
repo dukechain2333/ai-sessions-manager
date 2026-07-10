@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 type MsgKind int
@@ -83,6 +84,7 @@ func summarizeTool(b contentBlock) string {
 // TranscriptCache is a small LRU keyed by path+mtime, so an updated
 // session file is re-parsed while repeated previews stay instant.
 type TranscriptCache struct {
+	mu       sync.Mutex
 	capacity int
 	order    []string
 	entries  map[string]Transcript
@@ -93,6 +95,8 @@ func NewTranscriptCache(capacity int) *TranscriptCache {
 }
 
 func (c *TranscriptCache) Get(path string) (Transcript, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	st, err := os.Stat(path)
 	if err != nil {
 		return Transcript{}, err
