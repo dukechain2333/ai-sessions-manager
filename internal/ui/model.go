@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -80,6 +81,12 @@ type Model struct {
 	// injected for tests
 	trashFn   func(string, store.Session) (string, error)
 	runClaude func(dir string, args ...string) tea.Cmd
+
+	// mouse double-click tracking; now is injected for tests
+	lastClickZone zone
+	lastClickRow  int
+	lastClickAt   time.Time
+	now           func() time.Time
 }
 
 func New(projectsDir string) Model {
@@ -100,6 +107,8 @@ func New(projectsDir string) Model {
 		pendingDelete: -1,
 		trashFn:       store.TrashSession,
 		runClaude:     execClaude,
+		lastClickRow:  -1,
+		now:           time.Now,
 	}
 }
 

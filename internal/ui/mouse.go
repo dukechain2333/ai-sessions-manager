@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -100,7 +102,21 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// clickList selects the row under a click; header rows fold instead.
+// doubleClickWindow is how close two presses on the same row must be to
+// count as a double-click.
+const doubleClickWindow = 400 * time.Millisecond
+
+func (m *Model) isDoubleClick(z zone, row int) bool {
+	return z == m.lastClickZone && row == m.lastClickRow &&
+		m.now().Sub(m.lastClickAt) <= doubleClickWindow
+}
+
+func (m *Model) recordClick(z zone, row int) {
+	m.lastClickZone, m.lastClickRow, m.lastClickAt = z, row, m.now()
+}
+
+// clickList selects the row under a click; header rows fold instead, and a
+// second click on the same session within doubleClickWindow resumes it.
 func (m Model) clickList(line int) (tea.Model, tea.Cmd) {
 	row, ok := m.list.RowAtLine(line)
 	if !ok {
@@ -108,8 +124,14 @@ func (m Model) clickList(line int) (tea.Model, tea.Cmd) {
 	}
 	m.list.SetCursor(row)
 	if m.list.OnHeader() {
+		m.lastClickRow = -1 // folding renumbers rows; stale indexes must not pair
 		m.list.ToggleFold()
 		return m, m.loadTranscriptCmd()
 	}
+	if m.isDoubleClick(zoneList, row) {
+		m.lastClickRow = -1
+		return m.startResume()
+	}
+	m.recordClick(zoneList, row)
 	return m, m.loadTranscriptCmd()
 }

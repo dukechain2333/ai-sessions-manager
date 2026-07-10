@@ -2,6 +2,7 @@ package ui
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -147,5 +148,79 @@ func TestClickListReturnsFocus(t *testing.T) {
 	m = m2.(Model)
 	if m.focus != focusList || m.filterInput.Focused() {
 		t.Error("clicking the list while filtering must blur the filter and refocus the list")
+	}
+}
+
+func TestDoubleClickResumes(t *testing.T) {
+	m, dir := modelWithRealCWD(t)
+	rec := &resumeRecorder{}
+	m.runClaude = rec.cmd
+	t0 := time.Now()
+	m.now = func() time.Time { return t0 }
+	m2, _ := m.Update(click(5, 4)) // s1 title line
+	m = m2.(Model)
+	m.now = func() time.Time { return t0.Add(200 * time.Millisecond) }
+	m2, cmd := m.Update(click(5, 4))
+	m = m2.(Model)
+	if cmd == nil || rec.dir != dir {
+		t.Fatalf("double-click: resume dir = %q, want %q (cmd nil: %v)", rec.dir, dir, cmd == nil)
+	}
+	if len(rec.args) != 2 || rec.args[0] != "--resume" || rec.args[1] != "s1" {
+		t.Errorf("args = %v, want [--resume s1]", rec.args)
+	}
+}
+
+func TestSlowSecondClickDoesNotResume(t *testing.T) {
+	m, _ := modelWithRealCWD(t)
+	rec := &resumeRecorder{}
+	m.runClaude = rec.cmd
+	t0 := time.Now()
+	m.now = func() time.Time { return t0 }
+	m2, _ := m.Update(click(5, 4))
+	m = m2.(Model)
+	m.now = func() time.Time { return t0.Add(time.Second) }
+	m2, _ = m.Update(click(5, 4))
+	m = m2.(Model)
+	if rec.dir != "" {
+		t.Error("a slow second click must not resume")
+	}
+}
+
+func TestDoubleClickDifferentRowsDoesNotResume(t *testing.T) {
+	m, _ := modelWithRealCWD(t)
+	rec := &resumeRecorder{}
+	m.runClaude = rec.cmd
+	t0 := time.Now()
+	m.now = func() time.Time { return t0 }
+	m2, _ := m.Update(click(5, 4)) // s1
+	m = m2.(Model)
+	m.now = func() time.Time { return t0.Add(100 * time.Millisecond) }
+	m2, _ = m.Update(click(5, 8)) // s2 — fast, but a different row
+	m = m2.(Model)
+	if rec.dir != "" {
+		t.Error("fast clicks on different rows must not resume")
+	}
+	if s, _, _ := m.list.Selected(); s.ID != "s2" {
+		t.Errorf("second click should still select s2, got %v", s.ID)
+	}
+}
+
+func TestHeaderClickResetsDoubleClick(t *testing.T) {
+	m, _ := modelWithRealCWD(t)
+	rec := &resumeRecorder{}
+	m.runClaude = rec.cmd
+	t0 := time.Now()
+	m.now = func() time.Time { return t0 }
+	m2, _ := m.Update(click(5, 4)) // s1
+	m = m2.(Model)
+	m2, _ = m.Update(click(5, 3)) // alpha header (folds; s1 row index shifts)
+	m = m2.(Model)
+	m2, _ = m.Update(click(5, 3)) // unfold
+	m = m2.(Model)
+	m.now = func() time.Time { return t0.Add(300 * time.Millisecond) }
+	m2, _ = m.Update(click(5, 4)) // s1 again, still inside the window
+	m = m2.(Model)
+	if rec.dir != "" {
+		t.Error("a header click in between must reset double-click tracking")
 	}
 }
