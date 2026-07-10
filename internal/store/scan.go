@@ -55,6 +55,9 @@ type EnrichResult struct {
 // Enrich parses metadata for every session concurrently, sending one
 // result per session on results and closing it when all are done.
 func Enrich(sessions []Session, workers int, results chan<- EnrichResult) {
+	if workers < 1 {
+		workers = 1
+	}
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {

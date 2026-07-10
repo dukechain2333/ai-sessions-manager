@@ -68,6 +68,26 @@ func TestEnrich(t *testing.T) {
 	}
 }
 
+func TestEnrichZeroWorkers(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "-x", "s1.jsonl"),
+		`{"type":"user","message":{"role":"user","content":"hello there"},"timestamp":"2026-07-01T10:00:00.000Z","cwd":"/tmp"}`+"\n")
+	sessions, err := Scan(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan EnrichResult, len(sessions))
+	Enrich(sessions, 0, results)
+	n := 0
+	for range results {
+		n++
+	}
+	// The loop terminating at all proves Enrich did not deadlock.
+	if n != 1 {
+		t.Fatalf("got %d results, want 1", n)
+	}
+}
+
 func TestResolveSlug(t *testing.T) {
 	root := t.TempDir()
 	// Real directory containing a dash: home/william/hyper-sagnn
