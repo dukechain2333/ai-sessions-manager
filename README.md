@@ -71,17 +71,35 @@ Once the tap is published (see [Releasing](#releasing)):
 brew install dukechain2333/tap/sm
 ```
 
-### Debian / Ubuntu (`.deb`)
+### Debian / Ubuntu (`apt`)
+
+Add the signed APT repository once, then install and upgrade with `apt` like
+any other package (amd64 and arm64 supported):
 
 ```sh
-# pick the asset matching your architecture (amd64 or arm64) from the
-# latest release, then:
-sudo dpkg -i ai-sessions-manager_*_linux_amd64.deb
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://dukechain2333.github.io/ai-sessions-manager/public.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/ai-sessions-manager.gpg
+echo "deb [signed-by=/etc/apt/keyrings/ai-sessions-manager.gpg] https://dukechain2333.github.io/ai-sessions-manager stable main" \
+  | sudo tee /etc/apt/sources.list.d/ai-sessions-manager.list
+sudo apt update
+sudo apt install ai-sessions-manager      # installs the `sm` command
 ```
 
-Get the exact URL from the
-[latest release](https://github.com/dukechain2333/ai-sessions-manager/releases/latest)
-page.
+Upgrades then come through `sudo apt update && sudo apt upgrade`.
+
+> The package is named `ai-sessions-manager` (the command it installs is `sm`),
+> because `sm` already exists in the Ubuntu archive.
+
+### Debian / Ubuntu (single `.deb`, no repo)
+
+Prefer a one-off install without adding a repo? Grab the `.deb` matching your
+architecture from the
+[latest release](https://github.com/dukechain2333/ai-sessions-manager/releases/latest):
+
+```sh
+sudo dpkg -i ai-sessions-manager_*_linux_amd64.deb
+```
 
 ### Fedora / RHEL / openSUSE (`.rpm`)
 

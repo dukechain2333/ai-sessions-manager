@@ -1,0 +1,82 @@
+name: APT repo
+
+# Rebuilds the signed APT repository on the gh-pages branch after each
+# release. Requires the repo secret APT_GPG_PRIVATE_KEY (an ASCII-armored,
+# passphraseless GPG private key). Without it, this workflow is skipped.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to (re)publish, e.g. v0.1.1"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apt-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip if signing key is not configured
+        id: guard
+        env:
+          KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "APT_GPG_PRIVATE_KEY not set — skipping apt publish."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout (for apt/build-repo.sh)
+        if: steps.guard.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+
+      - name: Checkout gh-pages (existing repo state)
+        if: steps.guard.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: site
+
+      - name: Install packaging tools
+        if: steps.guard.outputs.enabled == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq dpkg-dev apt-utils gnupg
+
+      - name: Import signing key
+        if: steps.guard.outputs.enabled == 'true'
+        run: printf '%s' "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Download release .deb assets
+        if: steps.guard.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          mkdir -p site/pool/main
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.deb' --dir site/pool/main --clobber
+
+      - name: Build signed repo
+        if: steps.guard.outputs.enabled == 'true'
+        run: ./apt/build-repo.sh "$GITHUB_WORKSPACE/site"
+
+      - name: Commit & push gh-pages
+        if: steps.guard.outputs.enabled == 'true'
+        working-directory: site
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "apt repo: publish ${TAG}" || { echo "no changes"; exit 0; }
+          git push origin gh-pages
