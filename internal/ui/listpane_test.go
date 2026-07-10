@@ -77,6 +77,68 @@ func TestListView(t *testing.T) {
 	}
 }
 
+func TestListScroll(t *testing.T) {
+	titles := []string{
+		"Alpha task", "Bravo task", "Charlie task",
+		"Delta task", "Echo task", "Foxtrot task",
+	}
+	sessions := make([]store.Session, len(titles))
+	for i, title := range titles {
+		sessions[i] = store.Session{
+			ID:           "s" + string(rune('1'+i)),
+			Slug:         "-p",
+			CWD:          "/x/proj",
+			Title:        title,
+			UserMessages: 1,
+			Enriched:     true,
+			LastActivity: time.Now().Add(-time.Duration(i) * time.Hour),
+		}
+	}
+	l := listPane{styles: defaultStyles()}
+	l.SetSize(50, 9) // maxItems() == 3
+	l.SetSessions(sessions)
+
+	l.MoveCursor(5)
+	s, _, ok := l.Selected()
+	if !ok || s.ID != "s6" {
+		t.Fatalf("Selected() = %v (ok=%v), want s6", s.ID, ok)
+	}
+	if l.offset != 3 {
+		t.Errorf("offset = %d, want 3 (window advanced)", l.offset)
+	}
+	v := l.View()
+	if !strings.Contains(v, "Foxtrot task") {
+		t.Errorf("view missing s6 title after scroll:\n%s", v)
+	}
+	if strings.Contains(v, "Alpha task") {
+		t.Errorf("view still shows s1 title after scroll:\n%s", v)
+	}
+
+	l.MoveCursor(-5)
+	if l.offset != 0 {
+		t.Errorf("offset = %d after scrolling back, want 0", l.offset)
+	}
+	if v := l.View(); !strings.Contains(v, "Alpha task") {
+		t.Errorf("view missing s1 title after scrolling back:\n%s", v)
+	}
+}
+
+func TestListViewEmptyStates(t *testing.T) {
+	var empty listPane
+	empty.styles = defaultStyles()
+	empty.SetSize(50, 30)
+	empty.SetSessions(nil)
+	if v := empty.View(); !strings.Contains(v, "no sessions") {
+		t.Errorf("empty pane view = %q, want it to contain %q", v, "no sessions")
+	}
+
+	l := newTestPane()
+	l.SetFilter("zzzznomatch")
+	if v := l.View(); !strings.Contains(v, "no matches") {
+		t.Errorf("filtered-out view = %q, want it to contain %q", v, "no matches")
+	}
+}
+
 func TestHumanTime(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
