@@ -25,8 +25,8 @@ func newTestPane() listPane {
 
 func TestListFilter(t *testing.T) {
 	l := newTestPane()
-	if got := len(l.visible); got != 2 {
-		t.Fatalf("visible = %d, want 2 (empty session hidden)", got)
+	if got := l.Len(); got != 2 {
+		t.Fatalf("Len = %d, want 2 (empty session hidden)", got)
 	}
 	l.SetFilter("backup")
 	s, _, ok := l.Selected()
@@ -34,16 +34,16 @@ func TestListFilter(t *testing.T) {
 		t.Errorf("filter 'backup' selected %v", s.ID)
 	}
 	l.SetFilter("")
-	if got := len(l.visible); got != 2 {
-		t.Errorf("clearing filter: visible = %d, want 2", got)
+	if got := l.Len(); got != 2 {
+		t.Errorf("clearing filter: Len = %d, want 2", got)
 	}
 }
 
 func TestListToggleEmpty(t *testing.T) {
 	l := newTestPane()
 	l.ToggleEmpty()
-	if got := len(l.visible); got != 3 {
-		t.Errorf("visible = %d, want 3 after ToggleEmpty", got)
+	if got := l.Len(); got != 3 {
+		t.Errorf("Len = %d, want 3 after ToggleEmpty", got)
 	}
 }
 
@@ -131,22 +131,28 @@ func TestListGroupingHeadersAndClustering(t *testing.T) {
 	l.SetSize(60, 40)
 	l.SetSessions(groupedSessions())
 
-	// visible clustered by project, most-recent project first, recency within.
-	wantOrder := []string{"b1", "a1", "a2"}
-	for i, id := range wantOrder {
-		if got := l.sessions[l.visible[i]].ID; got != id {
-			t.Errorf("visible[%d] = %s, want %s", i, got, id)
+	// Session rows clustered by project, most-recent project first, recency
+	// within. Collect the session IDs from the row list, in order.
+	var order []string
+	for _, r := range l.rows {
+		if !r.header {
+			order = append(order, l.sessions[r.session].ID)
+		}
+	}
+	want := []string{"b1", "a1", "a2"}
+	for i := range want {
+		if i >= len(order) || order[i] != want[i] {
+			t.Fatalf("session order = %v, want %v", order, want)
 		}
 	}
 
 	v := l.View()
-	if !strings.Contains(v, "▸ beta (1)") {
+	if !strings.Contains(v, "▾ beta (1)") {
 		t.Errorf("view missing beta header:\n%s", v)
 	}
-	if !strings.Contains(v, "▸ alpha (2)") {
+	if !strings.Contains(v, "▾ alpha (2)") {
 		t.Errorf("view missing alpha header with count 2:\n%s", v)
 	}
-	// beta header must appear before alpha header.
 	if strings.Index(v, "beta (1)") > strings.Index(v, "alpha (2)") {
 		t.Errorf("beta group should precede alpha group:\n%s", v)
 	}
@@ -156,15 +162,15 @@ func TestGroupToggle(t *testing.T) {
 	l := listPane{styles: defaultStyles()}
 	l.SetSize(60, 40)
 	l.SetSessions(groupedSessions())
-	if strings.Contains(l.View(), "▸ ") {
+	if strings.ContainsAny(l.View(), "▾▸") {
 		t.Error("flat view should have no group headers")
 	}
 	l.ToggleGroup()
-	if !strings.Contains(l.View(), "▸ ") {
+	if !strings.Contains(l.View(), "▾ ") {
 		t.Error("grouped view should show headers after ToggleGroup")
 	}
 	l.ToggleGroup()
-	if strings.Contains(l.View(), "▸ ") {
+	if strings.ContainsAny(l.View(), "▾▸") {
 		t.Error("headers should disappear after toggling group off")
 	}
 }
@@ -174,8 +180,46 @@ func TestGroupedFilterFallsBackToFlat(t *testing.T) {
 	l.SetSize(60, 40)
 	l.SetSessions(groupedSessions())
 	l.SetFilter("alpha")
-	if strings.Contains(l.View(), "▸ ") {
+	if strings.ContainsAny(l.View(), "▾▸") {
 		t.Errorf("filtered view should be flat (no headers):\n%s", l.View())
+	}
+}
+
+func TestFoldHidesSessions(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(60, 40)
+	l.SetSessions(groupedSessions())
+	// Select an alpha session, then fold its group.
+	l.selectSession(1) // a1 (index 1 in groupedSessions)
+	if s, _, ok := l.Selected(); !ok || s.ID != "a1" {
+		t.Fatalf("setup: selected %v, want a1", s.ID)
+	}
+	l.ToggleFold()
+
+	v := l.View()
+	if !strings.Contains(v, "▸ alpha (2)") {
+		t.Errorf("folded alpha header should use ▸ and keep its count:\n%s", v)
+	}
+	if strings.Contains(v, "Alpha newer") || strings.Contains(v, "Alpha older") {
+		t.Errorf("folded group should hide its session titles:\n%s", v)
+	}
+	// beta is still expanded.
+	if !strings.Contains(v, "Beta newest") {
+		t.Errorf("unfolded beta session should remain visible:\n%s", v)
+	}
+	// Cursor parked on the folded project's header.
+	if !l.OnHeader() {
+		t.Error("after folding, cursor should rest on the group header")
+	}
+	// Fold does not change the session count.
+	if l.Len() != 3 {
+		t.Errorf("Len = %d after fold, want 3 (fold hides rows, not sessions)", l.Len())
+	}
+
+	// Unfold restores the sessions.
+	l.ToggleFold()
+	if v := l.View(); !strings.Contains(v, "Alpha newer") {
+		t.Errorf("unfolding should restore session titles:\n%s", v)
 	}
 }
 

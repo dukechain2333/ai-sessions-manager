@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -105,7 +106,10 @@ func TestTabTogglesFocus(t *testing.T) {
 
 func TestJKMoveCursor(t *testing.T) {
 	m := newTestModel()
-	m2, _ := m.Update(key("j"))
+	// Flat recency order so navigation is session-to-session (no headers).
+	m2, _ := m.Update(key("g"))
+	m = m2.(Model)
+	m2, _ = m.Update(key("j"))
 	m = m2.(Model)
 	s, _, _ := m.list.Selected()
 	if s.ID != "s2" {
@@ -127,6 +131,41 @@ func TestEmptyToggleKey(t *testing.T) {
 	if m.list.Len() != before+1 {
 		t.Errorf("Len = %d, want %d", m.list.Len(), before+1)
 	}
+}
+
+func TestSpaceFoldsGroup(t *testing.T) {
+	m := newTestModel() // grouped by default; cursor on first session (s1, project alpha)
+	if m.list.OnHeader() {
+		t.Fatal("cursor should start on a session, not a header")
+	}
+	m2, _ := m.Update(key(" "))
+	m = m2.(Model)
+	if !m.list.OnHeader() {
+		t.Error("space should fold the group and park the cursor on its header")
+	}
+	if strings.Contains(m.list.View(), "Create slides from notes") {
+		t.Error("folded group should hide its session titles")
+	}
+}
+
+func TestEnterOnHeaderFoldsNotResume(t *testing.T) {
+	m := newTestModel()
+	// Move up onto the leading project header.
+	m2, _ := m.Update(key("k"))
+	m = m2.(Model)
+	if !m.list.OnHeader() {
+		t.Fatal("k from the first session should land on the group header")
+	}
+	m2, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = m2.(Model)
+	// Enter on a header folds; it must not open a dialog or try to resume.
+	if m.dialog != dialogNone {
+		t.Errorf("enter on header should not open a dialog, got %v", m.dialog)
+	}
+	if strings.Contains(m.list.View(), "Create slides from notes") {
+		t.Error("enter on header should have folded the group")
+	}
+	_ = cmd
 }
 
 func TestQuitKey(t *testing.T) {

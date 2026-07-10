@@ -9,21 +9,22 @@ import (
 )
 
 type styles struct {
-	AppTitle     lipgloss.Style
-	Count        lipgloss.Style
-	ListTitle    lipgloss.Style
-	ListTitleSel lipgloss.Style
-	ListMeta     lipgloss.Style
-	ListMetaSel  lipgloss.Style
-	GroupHeader  lipgloss.Style
-	UserMsg      lipgloss.Style
-	AssistantMsg lipgloss.Style
-	ToolMsg      lipgloss.Style
-	PaneFocused  lipgloss.Style
-	PaneBlurred  lipgloss.Style
-	Help         lipgloss.Style
-	ErrorText    lipgloss.Style
-	DialogBox    lipgloss.Style
+	AppTitle       lipgloss.Style
+	Count          lipgloss.Style
+	ListTitle      lipgloss.Style
+	ListTitleSel   lipgloss.Style
+	ListMeta       lipgloss.Style
+	ListMetaSel    lipgloss.Style
+	GroupHeader    lipgloss.Style
+	GroupHeaderSel lipgloss.Style
+	UserMsg        lipgloss.Style
+	AssistantMsg   lipgloss.Style
+	ToolMsg        lipgloss.Style
+	PaneFocused    lipgloss.Style
+	PaneBlurred    lipgloss.Style
+	Help           lipgloss.Style
+	ErrorText      lipgloss.Style
+	DialogBox      lipgloss.Style
 }
 
 func defaultStyles() styles {
@@ -32,21 +33,22 @@ func defaultStyles() styles {
 	text := lipgloss.AdaptiveColor{Light: "235", Dark: "252"}
 	warn := lipgloss.AdaptiveColor{Light: "160", Dark: "203"}
 	return styles{
-		AppTitle:     lipgloss.NewStyle().Bold(true).Foreground(accent),
-		Count:        lipgloss.NewStyle().Foreground(dim),
-		ListTitle:    lipgloss.NewStyle().Foreground(text),
-		ListTitleSel: lipgloss.NewStyle().Bold(true).Foreground(accent),
-		ListMeta:     lipgloss.NewStyle().Foreground(dim),
-		ListMetaSel:  lipgloss.NewStyle().Foreground(accent),
-		GroupHeader:  lipgloss.NewStyle().Bold(true).Foreground(text).Underline(true),
-		UserMsg:      lipgloss.NewStyle().Bold(true).Foreground(text),
-		AssistantMsg: lipgloss.NewStyle().Foreground(text),
-		ToolMsg:      lipgloss.NewStyle().Foreground(dim),
-		PaneFocused:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent),
-		PaneBlurred:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(dim),
-		Help:         lipgloss.NewStyle().Foreground(dim),
-		ErrorText:    lipgloss.NewStyle().Bold(true).Foreground(warn),
-		DialogBox:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 2),
+		AppTitle:       lipgloss.NewStyle().Bold(true).Foreground(accent),
+		Count:          lipgloss.NewStyle().Foreground(dim),
+		ListTitle:      lipgloss.NewStyle().Foreground(text),
+		ListTitleSel:   lipgloss.NewStyle().Bold(true).Foreground(accent),
+		ListMeta:       lipgloss.NewStyle().Foreground(dim),
+		ListMetaSel:    lipgloss.NewStyle().Foreground(accent),
+		GroupHeader:    lipgloss.NewStyle().Bold(true).Foreground(text).Underline(true),
+		GroupHeaderSel: lipgloss.NewStyle().Bold(true).Foreground(accent).Underline(true),
+		UserMsg:        lipgloss.NewStyle().Bold(true).Foreground(text),
+		AssistantMsg:   lipgloss.NewStyle().Foreground(text),
+		ToolMsg:        lipgloss.NewStyle().Foreground(dim),
+		PaneFocused:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent),
+		PaneBlurred:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(dim),
+		Help:           lipgloss.NewStyle().Foreground(dim),
+		ErrorText:      lipgloss.NewStyle().Bold(true).Foreground(warn),
+		DialogBox:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 2),
 	}
 }
 
