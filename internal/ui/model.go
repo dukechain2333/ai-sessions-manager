@@ -34,8 +34,11 @@ type (
 		sessions []store.Session
 		err      error
 	}
-	enrichMsg     store.EnrichResult
-	enrichDoneMsg struct{}
+	enrichMsg struct {
+		store.EnrichResult
+		ch chan store.EnrichResult
+	}
+	enrichDoneMsg struct{ ch chan store.EnrichResult }
 	transcriptMsg struct {
 		id  string
 		t   store.Transcript
@@ -125,9 +128,9 @@ func waitEnrich(ch chan store.EnrichResult) tea.Cmd {
 	return func() tea.Msg {
 		r, ok := <-ch
 		if !ok {
-			return enrichDoneMsg{}
+			return enrichDoneMsg{ch: ch}
 		}
-		return enrichMsg(r)
+		return enrichMsg{EnrichResult: r, ch: ch}
 	}
 }
 
@@ -207,6 +210,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd())
 
 	case enrichMsg:
+		if msg.ch != m.enrichCh {
+			return m, nil // stale result from a superseded scan; do not re-arm
+		}
 		if msg.Err != nil {
 			if msg.Index >= 0 && msg.Index < len(m.list.sessions) {
 				m.list.sessions[msg.Index].Unreadable = true
@@ -216,9 +222,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.list.ApplyEnrich(msg.Index, msg.Meta)
 		}
 		cmd := m.loadTranscriptCmd()
-		return m, tea.Batch(waitEnrich(m.enrichCh), cmd)
+		return m, tea.Batch(waitEnrich(msg.ch), cmd)
 
 	case enrichDoneMsg:
+		if msg.ch != m.enrichCh {
+			return m, nil
+		}
 		m.loading = false
 		return m, m.loadTranscriptCmd()
 

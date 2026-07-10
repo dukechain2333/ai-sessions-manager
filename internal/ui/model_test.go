@@ -19,10 +19,10 @@ func newTestModel() Model {
 	m2, _ = m.Update(scanDoneMsg{sessions: testSessions()})
 	m = m2.(Model)
 	for i, s := range testSessions() {
-		m2, _ = m.Update(enrichMsg{Index: i, Meta: store.Meta{
+		m2, _ = m.Update(enrichMsg{EnrichResult: store.EnrichResult{Index: i, Meta: store.Meta{
 			Title: s.Title, FirstPrompt: s.FirstPrompt, CWD: s.CWD,
 			UserMessages: s.UserMessages, LastActivity: s.LastActivity,
-		}})
+		}}, ch: m.enrichCh})
 		m = m2.(Model)
 	}
 	return m
@@ -107,6 +107,23 @@ func TestQuitKey(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Error("q cmd should produce tea.QuitMsg")
+	}
+}
+
+func TestStaleEnrichDropped(t *testing.T) {
+	m := newTestModel()
+	before := m.list.sessions[0].Title
+	stale := make(chan store.EnrichResult)
+	m2, cmd := m.Update(enrichMsg{
+		EnrichResult: store.EnrichResult{Index: 0, Meta: store.Meta{Title: "STALE"}},
+		ch:           stale,
+	})
+	m = m2.(Model)
+	if got := m.list.sessions[0].Title; got != before {
+		t.Errorf("stale enrich applied: title = %q, want %q", got, before)
+	}
+	if cmd != nil {
+		t.Error("stale enrich should not re-arm waitEnrich (cmd must be nil)")
 	}
 }
 
