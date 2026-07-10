@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>ai-sessions-manager apt repo</title>
+<h1>ai-sessions-manager — APT repository</h1>
+<p>Install <code>sm</code> on Debian/Ubuntu:</p>
+<pre>
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://dukechain2333.github.io/ai-sessions-manager/public.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/ai-sessions-manager.gpg
+echo "deb [signed-by=/etc/apt/keyrings/ai-sessions-manager.gpg] https://dukechain2333.github.io/ai-sessions-manager stable main" \
+  | sudo tee /etc/apt/sources.list.d/ai-sessions-manager.list
+sudo apt update
+sudo apt install ai-sessions-manager
+</pre>
+<p>See <a href="https://github.com/dukechain2333/ai-sessions-manager">the project</a>.</p>
