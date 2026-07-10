@@ -581,6 +581,6 @@ func (m Model) View() string {
 		}
 	}
 
-	help := m.st.Help.Render(" ↵ resume  tab focus  n new  d delete  / filter  g group  space fold  e empty  r rescan  q quit")
+	help := m.st.Help.Render(helpLine())
 	return header + "\n" + filterBar + "\n" + body + "\n" + help
 }

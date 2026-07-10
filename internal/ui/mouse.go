@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // zone is an interactive region of the screen. zoneDialog is never returned
@@ -18,6 +20,42 @@ const (
 	zoneHelp
 	zoneDialog
 )
+
+// runeKey builds the KeyMsg for a printable key, so help-bar buttons reuse
+// the exact key-handling paths.
+func runeKey(s string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+// helpItem is one clickable segment of the help bar.
+type helpItem struct {
+	label string
+	key   tea.KeyMsg
+}
+
+// helpBar drives both the rendered help line and its hit-testing; the two
+// can't drift because they read the same table.
+var helpBar = []helpItem{
+	{"↵ resume", tea.KeyMsg{Type: tea.KeyEnter}},
+	{"tab focus", tea.KeyMsg{Type: tea.KeyTab}},
+	{"n new", runeKey("n")},
+	{"d delete", runeKey("d")},
+	{"/ filter", runeKey("/")},
+	{"g group", runeKey("g")},
+	{"space fold", runeKey(" ")},
+	{"e empty", runeKey("e")},
+	{"r rescan", runeKey("r")},
+	{"q quit", runeKey("q")},
+}
+
+// helpLine renders the help bar's text (unstyled).
+func helpLine() string {
+	parts := make([]string, len(helpBar))
+	for i, it := range helpBar {
+		parts[i] = it.label
+	}
+	return " " + strings.Join(parts, "  ")
+}
 
 // zoneAt resolves screen coordinates to the region under them. Geometry
 // mirrors layout()/View(): row 0 title, row 1 filter bar, row 2 body top
@@ -97,7 +135,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.filterInput.Focus()
 		return m, nil
 	case zoneHelp:
-		return m, nil // clickable help bar lands in a later task
+		return m.clickHelp(msg.X)
 	}
 	return m, nil
 }
@@ -134,4 +172,18 @@ func (m Model) clickList(line int) (tea.Model, tea.Cmd) {
 	}
 	m.recordClick(zoneList, row)
 	return m, m.loadTranscriptCmd()
+}
+
+// clickHelp maps an x coordinate on the help bar to its segment and feeds
+// that segment's key through the normal key path.
+func (m Model) clickHelp(x int) (tea.Model, tea.Cmd) {
+	pos := 1 // leading space
+	for _, it := range helpBar {
+		w := lipgloss.Width(it.label)
+		if x >= pos && x < pos+w {
+			return m.handleKey(it.key)
+		}
+		pos += w + 2
+	}
+	return m, nil
 }
