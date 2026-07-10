@@ -1,0 +1,1 @@
+{"parentUuid":null,"type":"user","message":{"role":"user","content":"Refactor the long database helper into smaller functions so each one does a single thing"},"uuid":"u1","timestamp":"2026-07-03T09:00:00.000Z","cwd":"/home/william/demo","sessionId":"unt1"}
