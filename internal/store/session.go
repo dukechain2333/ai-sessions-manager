@@ -54,6 +54,9 @@ func (s *Session) Apply(m Meta) {
 // Truncate collapses whitespace and cuts s to at most n runes,
 // ending with an ellipsis when cut.
 func Truncate(s string, n int) string {
+	if n < 1 {
+		return ""
+	}
 	s = strings.Join(strings.Fields(s), " ")
 	r := []rune(s)
 	if len(r) <= n {

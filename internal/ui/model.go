@@ -174,7 +174,7 @@ func (m *Model) layout() {
 	if m.narrow() {
 		listW = m.width - 2
 	}
-	previewW := m.width - listW - 4
+	previewW := m.width - listW - 2
 	if previewW < 10 {
 		previewW = 10
 	}
@@ -204,6 +204,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetSessions(msg.sessions)
 		m.previewFor = ""
 		if len(msg.sessions) == 0 {
+			if m.ready {
+				m.preview.SetContent("")
+			}
 			return m, nil
 		}
 		ch := make(chan store.EnrichResult, len(msg.sessions))

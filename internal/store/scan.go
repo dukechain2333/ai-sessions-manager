@@ -58,6 +58,14 @@ func Enrich(sessions []Session, workers int, results chan<- EnrichResult) {
 	if workers < 1 {
 		workers = 1
 	}
+	// Snapshot the fields workers need up front so they never read the
+	// caller's slice concurrently with an in-place mutation (e.g. the UI's
+	// RemoveSession shifting sessions during a delete).
+	type job struct{ path, slug string }
+	snap := make([]job, len(sessions))
+	for i, s := range sessions {
+		snap[i] = job{s.Path, s.Slug}
+	}
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -65,16 +73,16 @@ func Enrich(sessions []Session, workers int, results chan<- EnrichResult) {
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				m, err := ParseMetadata(sessions[i].Path)
+				m, err := ParseMetadata(snap[i].path)
 				if err == nil && m.CWD == "" {
-					m.CWD = ResolveSlug("/", sessions[i].Slug)
+					m.CWD = ResolveSlug("/", snap[i].slug)
 				}
 				results <- EnrichResult{Index: i, Meta: m, Err: err}
 			}
 		}()
 	}
 	go func() {
-		for i := range sessions {
+		for i := range snap {
 			jobs <- i
 		}
 		close(jobs)
