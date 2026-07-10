@@ -257,3 +257,82 @@ func TestHumanTime(t *testing.T) {
 		}
 	}
 }
+
+func TestRowAtLineGrouped(t *testing.T) {
+	l := newTestPane()
+	l.ToggleGroup() // fixture pane starts flat; model default is grouped
+	// rows: 0 hdr alpha, 1 s1 (3 lines), 2 hdr beta, 3 s2 (3 lines)
+	cases := []struct {
+		line int
+		row  int
+		ok   bool
+	}{
+		{0, 0, true}, {1, 1, true}, {3, 1, true}, {4, 2, true},
+		{5, 3, true}, {7, 3, true}, {8, 0, false}, {-1, 0, false},
+	}
+	for _, c := range cases {
+		row, ok := l.RowAtLine(c.line)
+		if ok != c.ok || (ok && row != c.row) {
+			t.Errorf("RowAtLine(%d) = (%d,%v), want (%d,%v)", c.line, row, ok, c.row, c.ok)
+		}
+	}
+}
+
+func TestRowAtLineFlat(t *testing.T) {
+	l := newTestPane() // flat: rows 0 s1 (lines 0-2), 1 s2 (lines 3-5)
+	for line, want := range map[int]int{0: 0, 2: 0, 3: 1, 5: 1} {
+		if row, ok := l.RowAtLine(line); !ok || row != want {
+			t.Errorf("RowAtLine(%d) = (%d,%v), want (%d,true)", line, row, ok, want)
+		}
+	}
+	if _, ok := l.RowAtLine(6); ok {
+		t.Error("RowAtLine(6) should be out of range")
+	}
+}
+
+func TestRowAtLineFolded(t *testing.T) {
+	l := newTestPane()
+	l.ToggleGroup()
+	l.ToggleFold() // cursor starts on s1 → folds alpha; rows: hdr alpha, hdr beta, s2
+	if row, ok := l.RowAtLine(1); !ok || row != 1 {
+		t.Errorf("folded: RowAtLine(1) = %d, want 1 (beta header)", row)
+	}
+	if row, ok := l.RowAtLine(3); !ok || row != 2 {
+		t.Errorf("folded: RowAtLine(3) = %d, want 2 (s2 middle line)", row)
+	}
+}
+
+func TestRowAtLineScrolledSmallPane(t *testing.T) {
+	l := listPane{styles: defaultStyles()}
+	l.SetSize(50, 3)
+	l.SetSessions(testSessions())
+	l.ToggleGroup()
+	l.SetCursor(3)
+	// ensureVisible keeps title+meta visible (the blank separator may hang
+	// off-screen): cursor on s2 (lines 5-7, height 3) → lineOffset 4.
+	if l.lineOffset == 0 {
+		t.Fatal("setup: expected a scrolled pane")
+	}
+	if row, ok := l.RowAtLine(0); !ok || row != 2 {
+		t.Errorf("scrolled: RowAtLine(0) = %d, want 2 (beta header at line 4)", row)
+	}
+	if row, ok := l.RowAtLine(1); !ok || row != 3 {
+		t.Errorf("scrolled: RowAtLine(1) = %d, want 3 (s2 title line)", row)
+	}
+}
+
+func TestSetCursorClamps(t *testing.T) {
+	l := newTestPane()
+	l.SetCursor(1)
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("SetCursor(1) selected %v, want s2", s.ID)
+	}
+	l.SetCursor(99) // out of range: no-op
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("SetCursor(99) moved cursor to %v", s.ID)
+	}
+	l.SetCursor(-1)
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("SetCursor(-1) moved cursor to %v", s.ID)
+	}
+}

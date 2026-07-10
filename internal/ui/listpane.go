@@ -145,6 +145,36 @@ func (l *listPane) MoveCursor(delta int) {
 	l.ensureVisible()
 }
 
+// RowAtLine maps a visible content line (0 = the first line currently on
+// screen) to the row under it, accounting for scroll offset and the mixed
+// one-line-header / three-line-session heights. ok is false below the last
+// row or above the top.
+func (l *listPane) RowAtLine(visible int) (int, bool) {
+	if visible < 0 {
+		return 0, false
+	}
+	line := visible + l.lineOffset
+	start, total := l.layout()
+	if line >= total {
+		return 0, false
+	}
+	for i := len(start) - 1; i >= 0; i-- {
+		if line >= start[i] {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// SetCursor moves the cursor to row i, ignoring out-of-range values.
+func (l *listPane) SetCursor(i int) {
+	if i < 0 || i >= len(l.rows) {
+		return
+	}
+	l.cursor = i
+	l.ensureVisible()
+}
+
 // Selected returns the session under the cursor. ok is false when the
 // cursor is on a header row or the list is empty.
 func (l *listPane) Selected() (store.Session, int, bool) {
