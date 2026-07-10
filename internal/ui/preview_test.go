@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dukechain2333/claude-sessions/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
 func TestRenderTranscript(t *testing.T) {

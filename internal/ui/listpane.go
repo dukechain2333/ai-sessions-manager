@@ -7,7 +7,7 @@ import (
 
 	"github.com/sahilm/fuzzy"
 
-	"github.com/dukechain2333/claude-sessions/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
 // sessionLines is the number of terminal rows one session occupies:

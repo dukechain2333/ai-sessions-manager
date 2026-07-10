@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/dukechain2333/claude-sessions/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
 func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {

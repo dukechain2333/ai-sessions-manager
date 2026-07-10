@@ -3,7 +3,7 @@ package ui
 import (
 	"strings"
 
-	"github.com/dukechain2333/claude-sessions/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
 // renderTranscript renders a transcript as styled, wrapped text for

@@ -13,7 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/dukechain2333/claude-sessions/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
 type focusArea int

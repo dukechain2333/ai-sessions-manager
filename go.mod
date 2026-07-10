@@ -1,4 +1,4 @@
-module github.com/dukechain2333/claude-sessions
+module github.com/dukechain2333/ai-sessions-manager
 
 go 1.24.5
 

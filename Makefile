@@ -1,9 +1,9 @@
-BINARY=cs
+BINARY=sm
 
 .PHONY: build test install vet
 
 build:
-	go build -o $(BINARY) ./cmd/cs
+	go build -o $(BINARY) ./cmd/sm
 
 test:
 	go test ./...
