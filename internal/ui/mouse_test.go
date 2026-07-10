@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -222,5 +223,66 @@ func TestHeaderClickResetsDoubleClick(t *testing.T) {
 	m = m2.(Model)
 	if rec.dir != "" {
 		t.Error("a header click in between must reset double-click tracking")
+	}
+}
+
+func TestClickPreviewFocusesIt(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(click(50, 10))
+	m = m2.(Model)
+	if m.focus != focusPreview {
+		t.Errorf("focus = %v, want focusPreview", m.focus)
+	}
+}
+
+func TestWheelOverPreviewScrollsWithoutFocus(t *testing.T) {
+	m := newTestModel()
+	m.preview.SetContent(strings.Repeat("x\n", 100))
+	m.preview.GotoTop()
+	m2, _ := m.Update(wheel(50, 10, false))
+	m = m2.(Model)
+	if m.preview.YOffset != 3 {
+		t.Errorf("YOffset = %d, want 3 (one wheel tick)", m.preview.YOffset)
+	}
+	if m.focus != focusList {
+		t.Error("wheel over the preview must not steal focus")
+	}
+	m2, _ = m.Update(wheel(50, 10, true))
+	m = m2.(Model)
+	if m.preview.YOffset != 0 {
+		t.Errorf("YOffset = %d, want 0 after wheeling back up", m.preview.YOffset)
+	}
+}
+
+func TestClickFilterBarFocusesFilter(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(click(5, 1))
+	m = m2.(Model)
+	if m.focus != focusFilter || !m.filterInput.Focused() {
+		t.Fatalf("focus = %v focused=%v, want filter focused", m.focus, m.filterInput.Focused())
+	}
+	// typed keys must now go to the filter
+	for _, r := range "backup" {
+		m2, _ = m.Update(key(string(r)))
+		m = m2.(Model)
+	}
+	if s, _, ok := m.list.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("typing after a filter-bar click selected %v, want s2", s.ID)
+	}
+}
+
+func TestNonLeftPressesIgnored(t *testing.T) {
+	m := newTestModel()
+	before, _, _ := m.list.Selected()
+	for _, msg := range []tea.MouseMsg{
+		{X: 5, Y: 8, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft},
+		{X: 5, Y: 8, Action: tea.MouseActionMotion, Button: tea.MouseButtonNone},
+		{X: 5, Y: 8, Action: tea.MouseActionPress, Button: tea.MouseButtonRight},
+	} {
+		m2, _ := m.Update(msg)
+		m = m2.(Model)
+	}
+	if s, _, ok := m.list.Selected(); !ok || s.ID != before.ID {
+		t.Error("release/motion/right-click must not change the selection")
 	}
 }
