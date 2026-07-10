@@ -15,6 +15,7 @@ type styles struct {
 	ListTitleSel lipgloss.Style
 	ListMeta     lipgloss.Style
 	ListMetaSel  lipgloss.Style
+	GroupHeader  lipgloss.Style
 	UserMsg      lipgloss.Style
 	AssistantMsg lipgloss.Style
 	ToolMsg      lipgloss.Style
@@ -37,6 +38,7 @@ func defaultStyles() styles {
 		ListTitleSel: lipgloss.NewStyle().Bold(true).Foreground(accent),
 		ListMeta:     lipgloss.NewStyle().Foreground(dim),
 		ListMetaSel:  lipgloss.NewStyle().Foreground(accent),
+		GroupHeader:  lipgloss.NewStyle().Bold(true).Foreground(text).Underline(true),
 		UserMsg:      lipgloss.NewStyle().Bold(true).Foreground(text),
 		AssistantMsg: lipgloss.NewStyle().Foreground(text),
 		ToolMsg:      lipgloss.NewStyle().Foreground(dim),

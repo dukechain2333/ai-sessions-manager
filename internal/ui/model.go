@@ -93,7 +93,7 @@ func New(projectsDir string) Model {
 	return Model{
 		projectsDir:   projectsDir,
 		st:            st,
-		list:          listPane{styles: st},
+		list:          listPane{styles: st, groupByProject: true},
 		filterInput:   fi,
 		dirInput:      di,
 		cache:         store.NewTranscriptCache(8),
@@ -330,6 +330,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "e":
 			m.list.ToggleEmpty()
 			return m, m.loadTranscriptCmd()
+		case "g":
+			m.list.ToggleGroup()
+			return m, m.loadTranscriptCmd()
 		case "r":
 			return m, m.scanCmd()
 		case "enter":
@@ -545,6 +548,6 @@ func (m Model) View() string {
 		}
 	}
 
-	help := m.st.Help.Render(" ↵ resume  tab focus  n new  d delete  / filter  e empty  r rescan  q quit")
+	help := m.st.Help.Render(" ↵ resume  tab focus  n new  d delete  / filter  g group  e empty  r rescan  q quit")
 	return header + "\n" + filterBar + "\n" + body + "\n" + help
 }

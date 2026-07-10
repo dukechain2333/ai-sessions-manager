@@ -103,9 +103,6 @@ func TestListScroll(t *testing.T) {
 	if !ok || s.ID != "s6" {
 		t.Fatalf("Selected() = %v (ok=%v), want s6", s.ID, ok)
 	}
-	if l.offset != 3 {
-		t.Errorf("offset = %d, want 3 (window advanced)", l.offset)
-	}
 	v := l.View()
 	if !strings.Contains(v, "Foxtrot task") {
 		t.Errorf("view missing s6 title after scroll:\n%s", v)
@@ -115,11 +112,70 @@ func TestListScroll(t *testing.T) {
 	}
 
 	l.MoveCursor(-5)
-	if l.offset != 0 {
-		t.Errorf("offset = %d after scrolling back, want 0", l.offset)
-	}
 	if v := l.View(); !strings.Contains(v, "Alpha task") {
 		t.Errorf("view missing s1 title after scrolling back:\n%s", v)
+	}
+}
+
+func groupedSessions() []store.Session {
+	// beta is the most-recent project; alpha has two sessions.
+	return []store.Session{
+		{ID: "b1", CWD: "/x/beta", Title: "Beta newest", UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+		{ID: "a1", CWD: "/x/alpha", Title: "Alpha newer", UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(-time.Hour)},
+		{ID: "a2", CWD: "/x/alpha", Title: "Alpha older", UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(-3 * time.Hour)},
+	}
+}
+
+func TestListGroupingHeadersAndClustering(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(60, 40)
+	l.SetSessions(groupedSessions())
+
+	// visible clustered by project, most-recent project first, recency within.
+	wantOrder := []string{"b1", "a1", "a2"}
+	for i, id := range wantOrder {
+		if got := l.sessions[l.visible[i]].ID; got != id {
+			t.Errorf("visible[%d] = %s, want %s", i, got, id)
+		}
+	}
+
+	v := l.View()
+	if !strings.Contains(v, "▸ beta (1)") {
+		t.Errorf("view missing beta header:\n%s", v)
+	}
+	if !strings.Contains(v, "▸ alpha (2)") {
+		t.Errorf("view missing alpha header with count 2:\n%s", v)
+	}
+	// beta header must appear before alpha header.
+	if strings.Index(v, "beta (1)") > strings.Index(v, "alpha (2)") {
+		t.Errorf("beta group should precede alpha group:\n%s", v)
+	}
+}
+
+func TestGroupToggle(t *testing.T) {
+	l := listPane{styles: defaultStyles()}
+	l.SetSize(60, 40)
+	l.SetSessions(groupedSessions())
+	if strings.Contains(l.View(), "▸ ") {
+		t.Error("flat view should have no group headers")
+	}
+	l.ToggleGroup()
+	if !strings.Contains(l.View(), "▸ ") {
+		t.Error("grouped view should show headers after ToggleGroup")
+	}
+	l.ToggleGroup()
+	if strings.Contains(l.View(), "▸ ") {
+		t.Error("headers should disappear after toggling group off")
+	}
+}
+
+func TestGroupedFilterFallsBackToFlat(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(60, 40)
+	l.SetSessions(groupedSessions())
+	l.SetFilter("alpha")
+	if strings.Contains(l.View(), "▸ ") {
+		t.Errorf("filtered view should be flat (no headers):\n%s", l.View())
 	}
 }
 

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -9,24 +10,32 @@ import (
 	"github.com/dukechain2333/claude-sessions/internal/store"
 )
 
-// listPane is a hand-rolled scrolling session list: three terminal
-// rows per item (title, meta, blank), fuzzy-filterable.
+// sessionLines is the number of terminal rows one session occupies:
+// title, meta, blank separator.
+const sessionLines = 3
+
+// listPane is a hand-rolled scrolling session list. Sessions render as
+// three rows (title, meta, blank); in group-by-project mode a one-row
+// header precedes each project's first session. Scrolling is tracked in
+// terminal lines so headers don't throw the window off.
 type listPane struct {
-	sessions  []store.Session
-	visible   []int // indexes into sessions, in display order
-	cursor    int   // index into visible
-	offset    int   // first visible row index (scrolling)
-	width     int
-	height    int
-	filter    string
-	showEmpty bool
-	focused   bool
-	styles    styles
+	sessions       []store.Session
+	visible        []int          // indexes into sessions, in display order
+	counts         map[string]int // visible session count per project label
+	cursor         int            // index into visible
+	lineOffset     int            // first visible terminal line (scrolling)
+	width          int
+	height         int
+	filter         string
+	showEmpty      bool
+	groupByProject bool
+	focused        bool
+	styles         styles
 }
 
 func (l *listPane) SetSize(w, h int) {
 	l.width, l.height = w, h
-	l.clampScroll()
+	l.ensureVisible()
 }
 
 func (l *listPane) SetSessions(s []store.Session) {
@@ -48,12 +57,18 @@ func (l *listPane) ApplyEnrich(i int, m store.Meta) {
 func (l *listPane) SetFilter(q string) {
 	l.filter = q
 	l.cursor = 0
-	l.offset = 0
+	l.lineOffset = 0
 	l.refresh()
 }
 
 func (l *listPane) ToggleEmpty() {
 	l.showEmpty = !l.showEmpty
+	l.refresh()
+}
+
+// ToggleGroup switches between project-clustered and flat recency order.
+func (l *listPane) ToggleGroup() {
+	l.groupByProject = !l.groupByProject
 	l.refresh()
 }
 
@@ -68,7 +83,7 @@ func (l *listPane) MoveCursor(delta int) {
 	if l.cursor < 0 {
 		l.cursor = 0
 	}
-	l.clampScroll()
+	l.ensureVisible()
 }
 
 func (l *listPane) Selected() (store.Session, int, bool) {
@@ -91,14 +106,21 @@ func haystack(s store.Session) string {
 	return strings.ToLower(s.Title + " " + s.Project() + " " + s.FirstPrompt)
 }
 
+// grouped reports whether project headers are shown. Filtering falls
+// back to a flat, relevance-ordered list.
+func (l *listPane) grouped() bool {
+	return l.groupByProject && l.filter == ""
+}
+
 func (l *listPane) refresh() {
-	l.visible = l.visible[:0]
+	// 1. Select sessions (recency order, honoring the empty toggle / filter).
+	base := l.visible[:0]
 	if l.filter == "" {
 		for i, s := range l.sessions {
 			if s.Empty() && !l.showEmpty {
 				continue
 			}
-			l.visible = append(l.visible, i)
+			base = append(base, i)
 		}
 	} else {
 		targets := make([]string, len(l.sessions))
@@ -110,35 +132,89 @@ func (l *listPane) refresh() {
 			if s.Empty() && !l.showEmpty {
 				continue
 			}
-			l.visible = append(l.visible, m.Index)
+			base = append(base, m.Index)
 		}
 	}
+
+	// 2. Count per project and, when grouping, cluster by project. Projects
+	//    keep first-appearance order — since base is recency-sorted, that is
+	//    most-recent project first, sessions within a project by recency.
+	l.counts = map[string]int{}
+	for _, si := range base {
+		l.counts[l.sessions[si].Project()]++
+	}
+	if l.grouped() {
+		order := []string{}
+		buckets := map[string][]int{}
+		for _, si := range base {
+			p := l.sessions[si].Project()
+			if _, seen := buckets[p]; !seen {
+				order = append(order, p)
+			}
+			buckets[p] = append(buckets[p], si)
+		}
+		clustered := base[:0]
+		for _, p := range order {
+			clustered = append(clustered, buckets[p]...)
+		}
+		l.visible = clustered
+	} else {
+		l.visible = base
+	}
+
 	if l.cursor >= len(l.visible) {
 		l.cursor = len(l.visible) - 1
 	}
 	if l.cursor < 0 {
 		l.cursor = 0
 	}
-	l.clampScroll()
+	l.ensureVisible()
 }
 
-func (l *listPane) maxItems() int {
-	n := l.height / 3
-	if n < 1 {
-		n = 1
+// layout returns, for each visible row, the terminal line its block starts
+// on, whether a group header precedes it, and the total line count.
+func (l *listPane) layout() (start []int, header []bool, total int) {
+	start = make([]int, len(l.visible))
+	header = make([]bool, len(l.visible))
+	pos := 0
+	prev := ""
+	for r, si := range l.visible {
+		p := l.sessions[si].Project()
+		if l.grouped() && p != prev {
+			header[r] = true
+			pos++ // header line
+			prev = p
+		}
+		start[r] = pos
+		pos += sessionLines
 	}
-	return n
+	return start, header, pos
 }
 
-func (l *listPane) clampScroll() {
-	if l.cursor < l.offset {
-		l.offset = l.cursor
+// ensureVisible scrolls the minimum amount to keep the selected session
+// (and its header, when it starts a group) inside the viewport.
+func (l *listPane) ensureVisible() {
+	if len(l.visible) == 0 || l.height <= 0 {
+		l.lineOffset = 0
+		return
 	}
-	if l.cursor >= l.offset+l.maxItems() {
-		l.offset = l.cursor - l.maxItems() + 1
+	start, header, total := l.layout()
+	top := start[l.cursor]
+	if header[l.cursor] {
+		top-- // pull the group header into view too
 	}
-	if l.offset < 0 {
-		l.offset = 0
+	bottom := start[l.cursor] + sessionLines - 2 // through the meta line
+	if top < l.lineOffset {
+		l.lineOffset = top
+	}
+	if bottom >= l.lineOffset+l.height {
+		l.lineOffset = bottom - l.height + 1
+	}
+	if maxOff := total - l.height; l.lineOffset > maxOff {
+		l.lineOffset = maxOff
+	}
+	if l.lineOffset < 0 {
+		l.lineOffset = 0
 	}
 }
 
@@ -149,13 +225,17 @@ func (l *listPane) View() string {
 		}
 		return l.styles.ListMeta.Render("no sessions")
 	}
-	end := l.offset + l.maxItems()
-	if end > len(l.visible) {
-		end = len(l.visible)
-	}
-	var b strings.Builder
-	for row := l.offset; row < end; row++ {
-		s := l.sessions[l.visible[row]]
+
+	var lines []string
+	prev := ""
+	for row, si := range l.visible {
+		s := l.sessions[si]
+		if l.grouped() && s.Project() != prev {
+			label := fmt.Sprintf("▸ %s (%d)", s.Project(), l.counts[s.Project()])
+			lines = append(lines, l.styles.GroupHeader.Render(store.Truncate(label, l.width)))
+			prev = s.Project()
+		}
+
 		title := s.Title
 		if title == "" {
 			if s.Enriched {
@@ -177,8 +257,20 @@ func (l *listPane) View() string {
 			prefix = "▶ "
 			titleStyle, metaStyle = l.styles.ListTitleSel, l.styles.ListMetaSel
 		}
-		b.WriteString(titleStyle.Render(store.Truncate(prefix+title, l.width)) + "\n")
-		b.WriteString(metaStyle.Render(store.Truncate("  "+meta, l.width)) + "\n\n")
+		lines = append(lines,
+			titleStyle.Render(store.Truncate(prefix+title, l.width)),
+			metaStyle.Render(store.Truncate("  "+meta, l.width)),
+			"")
 	}
-	return strings.TrimRight(b.String(), "\n")
+
+	// Window to [lineOffset, lineOffset+height).
+	start := l.lineOffset
+	if start > len(lines) {
+		start = len(lines)
+	}
+	end := start + l.height
+	if l.height <= 0 || end > len(lines) {
+		end = len(lines)
+	}
+	return strings.TrimRight(strings.Join(lines[start:end], "\n"), "\n")
 }
