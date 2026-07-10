@@ -1,0 +1,105 @@
+# GoReleaser config — builds cross-platform binaries, .deb/.rpm packages,
+# a universal archive, checksums, and (optionally) a Homebrew formula.
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: ai-sessions-manager
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sm
+    main: ./cmd/sm
+    binary: sm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    ids:
+      - sm
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+
+nfpms:
+  - id: packages
+    package_name: ai-sessions-manager
+    ids:
+      - sm
+    vendor: dukechain2333
+    homepage: https://github.com/dukechain2333/ai-sessions-manager
+    maintainer: William Qian <william.z.qian@gmail.com>
+    description: >-
+      sm — a terminal UI to browse and resume Claude Code sessions across
+      directories, grouped by project.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: ./README.md
+        dst: /usr/share/doc/ai-sessions-manager/README.md
+      - src: ./LICENSE
+        dst: /usr/share/doc/ai-sessions-manager/LICENSE
+
+# Homebrew tap (macOS + Linux). Publishes only when HOMEBREW_TAP_GITHUB_TOKEN
+# is present in the release environment; otherwise the cask is built but not
+# pushed, so a release never fails just because the tap isn't set up yet. See
+# the README "Homebrew" section for the one-time tap setup.
+homebrew_casks:
+  - name: sm
+    ids:
+      - default
+    repository:
+      owner: dukechain2333
+      name: homebrew-tap
+      token: "{{ index .Env \"HOMEBREW_TAP_GITHUB_TOKEN\" }}"
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
+    homepage: https://github.com/dukechain2333/ai-sessions-manager
+    description: TUI to browse and resume Claude Code sessions across directories
+    commit_author:
+      name: goreleaser-bot
+      email: goreleaser@users.noreply.github.com
+    # The binary is unsigned, so strip the macOS quarantine flag on install
+    # (otherwise Gatekeeper blocks it on first run).
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sm"]
+          end
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: dukechain2333
+    name: ai-sessions-manager
+  draft: false
+  prerelease: auto
+  name_template: "sm {{ .Version }}"

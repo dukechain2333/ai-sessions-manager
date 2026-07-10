@@ -1,36 +1,196 @@
 # sm — AI sessions manager
 
-A single-binary TUI that lists every Claude Code session on the machine,
-groups them by project, previews transcripts, and resumes any session in
-its original directory.
+A single-binary terminal UI that finds every **Claude Code** session on your
+machine, groups them by project, previews the transcript, and drops you back
+into any conversation with one keypress — in the right directory, wherever the
+session originally lived.
+
+Claude Code stores each session as a `.jsonl` file under
+`~/.claude/projects/<dir>/`. Once you work across many directories they become
+impossible to track. `sm` gathers them into one browsable, foldable list and
+runs `claude --resume` for you.
+
+```
+ sm · AI Sessions   52 sessions
+ 🔍 filter…
+┌────────────────────────────────────┬─────────────────────────────────────┐
+│ ▾ ai-sessions-manager (1)          │ › So currently my Claude Code       │
+│ ▶ Build session history web app    │   sessions are dispersed among      │
+│   ai-sessions-manager · just now   │   different dirs…                   │
+│ ▾ HyperSAGNN_Interaction (4)       │ ● Using superpowers:brainstorming   │
+│   Experiment with top 3 fit …      │   to explore the design…            │
+│   HyperSAGNN_Interaction · 4h ago  │                                     │
+│ ▸ william (12)                     │ ⚒ Skill: superpowers:brainstorming  │
+│ ▸ prs-net (2)                      │                                     │
+├────────────────────────────────────┴─────────────────────────────────────┤
+│ ↵ resume  space fold  g group  / filter  n new  d delete  q quit          │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+## Features
+
+- **One list, every project** — scans `~/.claude/projects/*/*.jsonl` and sorts
+  by recency.
+- **Grouped by project**, with foldable headers so long projects can be tucked
+  away (`▾` open, `▸` folded).
+- **Live transcript preview** of the highlighted session.
+- **Fuzzy filter** across title, project, and first prompt.
+- **Resume in the right place** — launches `claude --resume <id>` in the
+  session's original directory (the one Claude filed it under), so resume
+  works even for sessions that later `cd`'d elsewhere.
+- **New session** in any known project directory, and **safe delete** (files
+  are moved to `~/.claude/projects/.trash/`, never `rm`'d).
+- Cross-platform single static binary (macOS & Linux, Intel & Apple Silicon),
+  no runtime dependencies.
 
 ## Install
 
-    make install        # builds and copies to ~/.local/bin/sm
+`sm` needs the [Claude Code](https://claude.com/claude-code) CLI (`claude`) on
+your `PATH` to actually resume sessions.
 
-Requires Go ≥1.24 to build; the binary itself has no dependencies.
+### Quick install (macOS & Linux)
 
-## Use
+```sh
+curl -fsSL https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/install.sh | sh
+```
 
-    sm                      # browse ~/.claude/projects
-    sm --projects-dir DIR   # browse another location
+Installs the latest release to `~/.local/bin/sm`. Options:
+
+```sh
+# specific version, or a custom install directory
+curl -fsSL .../install.sh | sh -s -- --version v0.1.0 --bin /usr/local/bin
+```
+
+If `~/.local/bin` isn't on your `PATH`, the script prints the line to add.
+
+### Homebrew (macOS & Linux)
+
+Once the tap is published (see [Releasing](#releasing)):
+
+```sh
+brew install dukechain2333/tap/sm
+```
+
+### Debian / Ubuntu (`.deb`)
+
+```sh
+# pick the asset matching your architecture (amd64 or arm64) from the
+# latest release, then:
+sudo dpkg -i ai-sessions-manager_*_linux_amd64.deb
+```
+
+Get the exact URL from the
+[latest release](https://github.com/dukechain2333/ai-sessions-manager/releases/latest)
+page.
+
+### Fedora / RHEL / openSUSE (`.rpm`)
+
+```sh
+sudo rpm -i ai-sessions-manager_*_linux_amd64.rpm
+```
+
+### Manual download
+
+Grab a `sm_<version>_<os>_<arch>.tar.gz` from the
+[releases page](https://github.com/dukechain2333/ai-sessions-manager/releases),
+extract, and move `sm` onto your `PATH`.
+
+### Build from source
+
+Requires Go ≥ 1.24.
+
+```sh
+git clone https://github.com/dukechain2333/ai-sessions-manager
+cd ai-sessions-manager
+make install          # builds ./sm and copies it to ~/.local/bin/sm
+```
+
+## Usage
+
+```sh
+sm                      # browse ~/.claude/projects
+sm --projects-dir DIR   # browse a different location
+sm --version
+```
 
 | Key | Action |
 |---|---|
 | `↑/↓` `j/k` | move selection (over project headers and sessions) |
-| `enter` | resume selected session (`claude --resume` in its cwd); on a project header, fold/unfold it |
-| `space` | fold/unfold the current project group |
+| `enter` | resume the selected session; on a **project header**, fold/unfold it |
+| `space` | fold / unfold the current project group |
 | `g` | toggle grouping by project ⇄ flat recency |
-| `tab` | toggle focus list ⇄ preview |
+| `tab` | move focus to the preview pane (to scroll a long transcript) and back |
 | `/` | fuzzy filter (enter keeps it, esc clears it) |
-| `n` | new session in a picked directory |
-| `d` | delete session (moved to `~/.claude/projects/.trash/`, never rm'd) |
-| `e` | show/hide empty sessions |
+| `n` | start a new session in a picked directory |
+| `d` | delete the selected session (moved to `.trash/`) |
+| `e` | show / hide "empty" sessions (hook-only, no real prompts) |
 | `r` | rescan |
 | `q` | quit |
 
-Sessions are grouped under a project header (`▾` expanded, `▸` folded) with
-a session count; fold a long project to tuck it away. Filtering falls back
-to a flat, relevance-ordered list.
+### Resuming
 
-Deleted sessions are recoverable: move the `.jsonl` back out of `.trash/`.
+Pressing `enter` on a session suspends `sm`, runs `claude --resume <id>` in the
+session's original directory, and returns you to the list when Claude exits.
+
+The first time Claude opens a directory it may show its own **"Is this a
+project you trust?"** prompt — that's Claude Code's security gate, not `sm`.
+Choose *"Yes, I trust this folder"* (the default) and Claude remembers it.
+Declining it, or pressing `Ctrl-C`/`/exit`, simply returns you to the list.
+
+### Recovering a deleted session
+
+Deletes are just moves. To restore one:
+
+```sh
+mv ~/.claude/projects/.trash/<project-slug>/<id>.jsonl \
+   ~/.claude/projects/<project-slug>/
+```
+
+## Uninstall
+
+```sh
+rm -f ~/.local/bin/sm            # or wherever you installed it
+# packaged installs:
+sudo dpkg -r ai-sessions-manager # deb
+sudo rpm -e ai-sessions-manager  # rpm
+brew uninstall sm                # homebrew
+```
+
+## Releasing
+
+Releases are automated with [GoReleaser](https://goreleaser.com) via GitHub
+Actions. Pushing a tag builds binaries, `.deb`/`.rpm` packages, archives, and
+checksums, and publishes a GitHub Release:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+**To also publish the Homebrew cask**, do the one-time setup:
+
+1. Create a public repo `dukechain2333/homebrew-tap`.
+2. Create a token with `contents:write` on that tap repo (a classic PAT with
+   `repo` scope, or a fine-grained token scoped to `homebrew-tap`).
+3. Add it to this repo's secrets as `HOMEBREW_TAP_GITHUB_TOKEN`
+   (Settings → Secrets and variables → Actions).
+
+The next tagged release pushes the cask; without the secret the release still
+succeeds and just skips Homebrew.
+
+## Development
+
+```sh
+make test    # go test ./...
+make vet     # go vet ./...
+make build   # ./sm
+```
+
+Architecture: `internal/store` is a UI-free reader over the session `.jsonl`
+files (scan, metadata parse, transcript, trash); `internal/ui` is the
+[Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI. Design notes and
+the implementation plan live under `docs/superpowers/`.
+
+## License
+
+[MIT](LICENSE)
