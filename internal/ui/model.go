@@ -2,7 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -332,15 +335,173 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// Stubs completed in the actions task.
-func (m Model) startResume() (tea.Model, tea.Cmd)    { return m, nil }
-func (m Model) openNewSession() (tea.Model, tea.Cmd) { return m, nil }
-func (m Model) askDelete() (tea.Model, tea.Cmd)      { return m, nil }
+func (m Model) startResume() (tea.Model, tea.Cmd) {
+	s, _, ok := m.list.Selected()
+	if !ok {
+		return m, nil
+	}
+	if st, err := os.Stat(s.CWD); s.CWD == "" || err != nil || !st.IsDir() {
+		sess := s
+		m.pendingResume = &sess
+		m.openDirPicker()
+		return m, nil
+	}
+	return m, m.runClaude(s.CWD, "--resume", s.ID)
+}
+
+func (m Model) openNewSession() (tea.Model, tea.Cmd) {
+	m.pendingResume = nil
+	m.openDirPicker()
+	return m, nil
+}
+
+func (m *Model) openDirPicker() {
+	m.dirs = store.KnownDirs(m.list.Sessions())
+	m.dirCursor = 0
+	m.dirInput.SetValue("")
+	m.dirInput.Focus()
+	m.dialog = dialogPickDir
+}
+
+func (m Model) askDelete() (tea.Model, tea.Cmd) {
+	if _, idx, ok := m.list.Selected(); ok {
+		m.pendingDelete = idx
+		m.dialog = dialogDelete
+	}
+	return m, nil
+}
+
 func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.dialog {
+	case dialogError:
+		m.dialog = dialogNone
+		m.errText = ""
+		return m, nil
+
+	case dialogDelete:
+		switch msg.String() {
+		case "y", "enter":
+			idx := m.pendingDelete
+			m.pendingDelete = -1
+			m.dialog = dialogNone
+			if idx >= 0 && idx < len(m.list.sessions) {
+				s := m.list.sessions[idx]
+				if _, err := m.trashFn(m.projectsDir, s); err != nil {
+					m.dialog = dialogError
+					m.errText = "delete failed: " + err.Error()
+					return m, nil
+				}
+				m.list.RemoveSession(idx)
+				m.previewFor = ""
+			}
+			return m, m.loadTranscriptCmd()
+		case "n", "esc":
+			m.pendingDelete = -1
+			m.dialog = dialogNone
+			return m, nil
+		}
+		return m, nil
+
+	case dialogPickDir:
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.dialog = dialogNone
+			m.pendingResume = nil
+			m.dirInput.Blur()
+			return m, nil
+		case tea.KeyUp, tea.KeyDown:
+			delta := 1
+			if msg.Type == tea.KeyUp {
+				delta = -1
+			}
+			m.dirCursor += delta
+			if m.dirCursor < 0 {
+				m.dirCursor = 0
+			}
+			if m.dirCursor >= len(m.dirs) {
+				m.dirCursor = len(m.dirs) - 1
+			}
+			return m, nil
+		case tea.KeyEnter:
+			dir := strings.TrimSpace(m.dirInput.Value())
+			if dir == "" {
+				if m.dirCursor < 0 || m.dirCursor >= len(m.dirs) {
+					return m, nil
+				}
+				dir = m.dirs[m.dirCursor]
+			}
+			if strings.HasPrefix(dir, "~") {
+				if home, err := os.UserHomeDir(); err == nil {
+					dir = filepath.Join(home, strings.TrimPrefix(dir, "~"))
+				}
+			}
+			if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+				m.dialog = dialogError
+				m.errText = "not a directory: " + dir
+				m.pendingResume = nil
+				return m, nil
+			}
+			pending := m.pendingResume
+			m.pendingResume = nil
+			m.dialog = dialogNone
+			m.dirInput.Blur()
+			if pending != nil {
+				return m, m.runClaude(dir, "--resume", pending.ID)
+			}
+			return m, m.runClaude(dir)
+		}
+		var cmd tea.Cmd
+		m.dirInput, cmd = m.dirInput.Update(msg)
+		return m, cmd
+	}
 	m.dialog = dialogNone
 	return m, nil
 }
-func (m Model) dialogView() string { return "" }
+
+func (m Model) dialogView() string {
+	switch m.dialog {
+	case dialogError:
+		return m.st.DialogBox.Render(
+			m.st.ErrorText.Render("Error") + "\n\n" + m.errText + "\n\n" +
+				m.st.Help.Render("press any key"))
+
+	case dialogDelete:
+		title := ""
+		if m.pendingDelete >= 0 && m.pendingDelete < len(m.list.sessions) {
+			s := m.list.sessions[m.pendingDelete]
+			title = s.Title
+			if title == "" {
+				title = s.ID
+			}
+			title += "  (" + s.Project() + ")"
+		}
+		return m.st.DialogBox.Render(
+			"Move session to trash?\n\n  " + title + "\n\n" +
+				m.st.Help.Render("y confirm · n cancel"))
+
+	case dialogPickDir:
+		var b strings.Builder
+		header := "Start new session in:"
+		if m.pendingResume != nil {
+			header = "Original directory is gone. Resume in:"
+		}
+		b.WriteString(header + "\n\n")
+		if len(m.dirs) == 0 {
+			b.WriteString(m.st.ListMeta.Render("  (no known directories)") + "\n")
+		}
+		for i, d := range m.dirs {
+			line := "  " + d
+			if i == m.dirCursor {
+				line = m.st.ListTitleSel.Render("▶ " + d)
+			}
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("\n" + m.dirInput.View() + "\n\n")
+		b.WriteString(m.st.Help.Render("↑/↓ pick · type a path · ↵ go · esc cancel"))
+		return m.st.DialogBox.Render(b.String())
+	}
+	return ""
+}
 
 func (m Model) View() string {
 	if !m.ready {
