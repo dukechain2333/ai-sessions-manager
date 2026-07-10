@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -255,9 +256,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case claudeExitMsg:
-		if msg.err != nil {
+		// claude exiting non-zero is normal — the user declined the trust
+		// prompt, pressed Ctrl-C, or /exit'd. Only surface an error when claude
+		// failed to launch at all (anything that is not an *exec.ExitError).
+		var exitErr *exec.ExitError
+		if msg.err != nil && !errors.As(msg.err, &exitErr) {
 			m.dialog = dialogError
-			m.errText = "claude exited with error: " + msg.err.Error()
+			m.errText = "could not launch claude: " + msg.err.Error()
 		}
 		return m, m.scanCmd()
 

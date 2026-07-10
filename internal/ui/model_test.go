@@ -1,12 +1,42 @@
 package ui
 
 import (
+	"errors"
+	"os/exec"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/dukechain2333/claude-sessions/internal/store"
 )
+
+func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {
+	m := newTestModel()
+	// A real *exec.ExitError: claude ran and exited non-zero (declined trust
+	// prompt, Ctrl-C, /exit, etc.). This is normal — no error dialog.
+	exitErr := exec.Command("sh", "-c", "exit 1").Run()
+	if exitErr == nil {
+		t.Fatal("setup: expected a non-nil exit error")
+	}
+	m2, cmd := m.Update(claudeExitMsg{err: exitErr})
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Errorf("non-zero claude exit should return to the list, got dialog=%v err=%q", m.dialog, m.errText)
+	}
+	if cmd == nil {
+		t.Error("expected a rescan cmd after claude exits")
+	}
+}
+
+func TestClaudeLaunchFailureShownAsError(t *testing.T) {
+	m := newTestModel()
+	// Not an *exec.ExitError: claude could not be launched at all.
+	m2, _ := m.Update(claudeExitMsg{err: errors.New(`exec: "claude": executable file not found in $PATH`)})
+	m = m2.(Model)
+	if m.dialog != dialogError {
+		t.Error("a genuine launch failure should show the error dialog")
+	}
+}
 
 func key(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
