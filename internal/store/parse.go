@@ -68,7 +68,11 @@ func ParseMetadata(path string) (Meta, error) {
 				m.Title = rec.AiTitle // last one wins
 			}
 		case "user", "assistant":
-			if rec.CWD != "" {
+			// First cwd wins: Claude Code files a session under the directory
+			// it was started in and resolves `--resume` against the current
+			// directory's project, so a session that later cd'd into a
+			// subdirectory must still be resumed from its origin.
+			if m.CWD == "" && rec.CWD != "" {
 				m.CWD = rec.CWD
 			}
 			if rec.GitBranch != "" {

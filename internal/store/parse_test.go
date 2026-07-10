@@ -1,9 +1,33 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestParseMetadataUsesOriginCWD(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "moved.jsonl")
+	// Session starts in /home/w/proj, then cd's into a subdirectory. Claude
+	// filed it under /home/w/proj, so resume must target the origin, not the
+	// last-seen cwd.
+	content := `{"type":"user","message":{"role":"user","content":"start here"},"uuid":"u1","timestamp":"2026-07-01T10:00:00.000Z","cwd":"/home/w/proj"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"uuid":"a1","timestamp":"2026-07-01T10:00:05.000Z","cwd":"/home/w/proj"}
+{"type":"user","message":{"role":"user","content":"now in a subdir"},"uuid":"u2","timestamp":"2026-07-01T10:00:10.000Z","cwd":"/home/w/proj/sub"}
+`
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ParseMetadata(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.CWD != "/home/w/proj" {
+		t.Errorf("CWD = %q, want /home/w/proj (session origin, not the later subdir)", m.CWD)
+	}
+}
 
 func TestParseMetadata(t *testing.T) {
 	m, err := ParseMetadata("testdata/session.jsonl")
