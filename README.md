@@ -132,12 +132,13 @@ sm --version
 
 | Key | Action |
 |---|---|
-| `↑/↓` `j/k` | move selection (over project headers and sessions) |
+| `↑/↓` `j/k` | move selection (over project headers and sessions); ↑ at the top enters the search bar, ↓ in the bar returns |
 | `enter` | resume the selected session; on a **project header**, fold/unfold it |
 | `space` | fold / unfold the current project group |
 | `g` | toggle grouping by project ⇄ flat recency |
 | `tab` | move focus to the preview pane (to scroll a long transcript) and back |
 | `/` | fuzzy filter (enter keeps it, esc clears it) |
+| `s` | focus the search bar on the full-text layer |
 | `n` | start a new session in a picked directory |
 | `d` | delete the selected session (moved to `.trash/`) |
 | `e` | show / hide "empty" sessions (hook-only, no real prompts) |
@@ -165,7 +166,7 @@ mouse-enabled TUIs).
 ### Search
 
 The filter bar has two layers — press `/` to focus it, then **Tab** (or
-click the `>` prompt) to switch:
+click the `>` prompt) to switch: Pressing `s` in the list jumps straight to the full-text layer; `↑` at the top of the list also enters the bar, and `↓` leaves it.
 
 - **filter…** — the default fuzzy filter over title, project, and first
   prompt.
