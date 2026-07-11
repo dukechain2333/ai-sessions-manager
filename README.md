@@ -11,20 +11,19 @@ impossible to track. `sm` gathers them into one browsable, foldable list and
 runs `claude --resume` for you.
 
 ```
- sm · AI Sessions   52 sessions
- 🔍 filter…
-┌────────────────────────────────────┬─────────────────────────────────────┐
-│ ▾ ai-sessions-manager (1)          │ › So currently my Claude Code       │
-│ ▶ Build session history web app    │   sessions are dispersed among      │
-│   ai-sessions-manager · just now   │   different dirs…                   │
-│ ▾ HyperSAGNN_Interaction (4)       │ ● Using superpowers:brainstorming   │
-│   Experiment with top 3 fit …      │   to explore the design…            │
-│   HyperSAGNN_Interaction · 4h ago  │                                     │
-│ ▸ william (12)                     │ ⚒ Skill: superpowers:brainstorming  │
-│ ▸ prs-net (2)                      │                                     │
-├────────────────────────────────────┴─────────────────────────────────────┤
-│ ↵ resume  space fold  g group  / filter  n new  d delete  q quit          │
-└───────────────────────────────────────────────────────────────────────────┘
+✻ sm · AI Sessions   52 sessions
+ > filter…
+╭────────────────────────────────────╮╭─────────────────────────────────────╮
+│ ▾ ai-sessions-manager (1)          ││ > So currently my Claude Code       │
+│ ▶ Build session history web app    ││   sessions are dispersed among      │
+│   ai-sessions-manager · just now   ││   different dirs…                   │
+│ ▾ HyperSAGNN_Interaction (4)       ││ ⏺ Using superpowers:brainstorming   │
+│   Experiment with top 3 fit …      ││   to explore the design…            │
+│   HyperSAGNN_Interaction · 4h ago  ││                                     │
+│ ▸ william (12)                     ││ ⎿ Skill: superpowers:brainstorming  │
+│ ▸ prs-net (2)                      ││                                     │
+╰────────────────────────────────────╯╰─────────────────────────────────────╯
+ ↵ resume  tab focus  n new  d delete  / filter  g group  space fold  q quit
 ```
 
 ## Features
