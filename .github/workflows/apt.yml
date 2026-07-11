@@ -1,17 +1,25 @@
 name: APT repo
 
-# Rebuilds the signed APT repository on the gh-pages branch after each
-# release. Requires the repo secret APT_GPG_PRIVATE_KEY (an ASCII-armored,
-# passphraseless GPG private key). Without it, this workflow is skipped.
+# Rebuilds the signed APT repository on the gh-pages branch for a release.
+# Called by the Release workflow after it publishes (release: published does
+# NOT fire for releases created by the workflow's own GITHUB_TOKEN, so we chain
+# via workflow_call instead), and available manually via workflow_dispatch.
+# Requires the repo secret APT_GPG_PRIVATE_KEY (an ASCII-armored, passphraseless
+# GPG private key). Without it, this workflow is skipped.
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to publish, e.g. v0.2.0"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to (re)publish, e.g. v0.1.1"
+        description: "Release tag to (re)publish, e.g. v0.2.0"
         required: true
+        type: string
 
 permissions:
   contents: write
@@ -59,7 +67,7 @@ jobs:
         if: steps.guard.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG: ${{ inputs.tag }}
         run: |
           mkdir -p site/pool/main
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
@@ -73,7 +81,7 @@ jobs:
         if: steps.guard.outputs.enabled == 'true'
         working-directory: site
         env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG: ${{ inputs.tag }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

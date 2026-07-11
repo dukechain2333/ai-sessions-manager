@@ -31,3 +31,15 @@ jobs:
           # Optional: set this repo secret to also publish the Homebrew cask.
           # A PAT (or fine-grained token) with contents:write on the tap repo.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  # Rebuild the signed APT repo after the release exists. Chained via
+  # workflow_call because `release: published` does not fire for a release
+  # created by this workflow's GITHUB_TOKEN.
+  apt:
+    needs: goreleaser
+    permissions:
+      contents: write
+    uses: ./.github/workflows/apt.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
