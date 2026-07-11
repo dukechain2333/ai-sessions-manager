@@ -440,3 +440,19 @@ func TestSearchResultsEmptyShowsNoMatches(t *testing.T) {
 		t.Errorf("empty search-results view = %q, want it to contain %q", v, "no matches")
 	}
 }
+
+func TestListShowsAgentTag(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(80, 40)
+	l.SetSessions([]store.Session{
+		{ID: "c1", CWD: "/x/p", Title: "claude one", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+		{ID: "x1", CWD: "/x/p", Title: "codex one", Agent: store.AgentCodex, UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(-time.Minute)},
+	})
+	v := l.View()
+	if !strings.Contains(v, "claude") {
+		t.Errorf("view missing claude tag:\n%s", v)
+	}
+	if !strings.Contains(v, "codex") {
+		t.Errorf("view missing codex tag:\n%s", v)
+	}
+}

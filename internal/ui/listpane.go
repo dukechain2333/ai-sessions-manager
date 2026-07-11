@@ -476,15 +476,24 @@ func (l *listPane) View() string {
 				meta += "s"
 			}
 		}
+		tag := s.Agent.Label()
+		tagStyle := l.styles.ClaudeTag
+		if s.Agent == store.AgentCodex {
+			tagStyle = l.styles.CodexTag
+		}
 		prefix := "  "
 		titleStyle, metaStyle := l.styles.ListTitle, l.styles.ListMeta
 		if i == l.cursor {
 			prefix = "▶ "
 			titleStyle, metaStyle = l.styles.ListTitleSel, l.styles.ListMetaSel
+			if s.Agent == store.AgentCodex {
+				titleStyle = l.styles.CodexTitleSel
+			}
 		}
+		metaText := store.Truncate("  "+meta, l.width-len(tag)-3)
 		lines = append(lines,
 			titleStyle.Render(store.Truncate(prefix+title, l.width)),
-			metaStyle.Render(store.Truncate("  "+meta, l.width)),
+			metaStyle.Render(metaText)+" "+tagStyle.Render(tag),
 			"")
 	}
 
