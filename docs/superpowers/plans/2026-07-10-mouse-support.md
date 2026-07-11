@@ -1503,7 +1503,7 @@ The whole UI is clickable — `sm` enables mouse reporting:
 | scroll wheel | move the selection; over the preview, scroll the transcript |
 | click the preview pane | focus it (like `tab`) |
 | click the filter bar | start filtering (like `/`) |
-| click a help-bar action or dialog button | same as pressing its key |
+| click a help-bar action or dialog button | performs that action (help-bar buttons act as if the list were focused) |
 | click outside a dialog | cancel it |
 
 With mouse reporting on, select text with **Shift+drag** (standard for
@@ -1562,7 +1562,7 @@ Makes the whole UI mouse-operable, with zero new dependencies and zero keyboard-
 | click a project header | fold / unfold |
 | scroll wheel | move selection; over the preview, scroll the transcript |
 | click preview / filter bar | focus it (`tab` / `/`) |
-| click a help-bar action or dialog button | same as its key |
+| click a help-bar action or dialog button | performs that action (help-bar buttons act from list focus) |
 | click outside a dialog | cancel |
 
 Design notes:
