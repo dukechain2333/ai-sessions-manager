@@ -41,6 +41,7 @@ var helpBar = []helpItem{
 	{"n new", runeKey("n")},
 	{"d delete", runeKey("d")},
 	{"/ filter", runeKey("/")},
+	{"s search", runeKey("s")},
 	{"g group", runeKey("g")},
 	{"space fold", runeKey(" ")},
 	{"e empty", runeKey("e")},

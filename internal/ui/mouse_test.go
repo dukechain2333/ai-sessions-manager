@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
@@ -291,10 +292,9 @@ func TestNonLeftPressesIgnored(t *testing.T) {
 }
 
 func TestHelpBarTextUnchanged(t *testing.T) {
-	m := newTestModel()
-	want := " ↵ resume  tab focus  n new  d delete  / filter  g group  space fold  e empty  r rescan  q quit"
-	if !strings.Contains(m.View(), want) {
-		t.Fatal("help bar text changed — it must stay byte-identical")
+	want := " ↵ resume  tab focus  n new  d delete  / filter  s search  g group  space fold  e empty  r rescan  q quit"
+	if helpLine() != want {
+		t.Fatalf("help bar text changed — it must stay byte-identical\n got: %q\nwant: %q", helpLine(), want)
 	}
 }
 
@@ -303,17 +303,17 @@ func TestClickHelpBarTriggersAction(t *testing.T) {
 	if !m.list.groupByProject {
 		t.Fatal("setup: expected grouped mode")
 	}
-	m2, _ := m.Update(click(50, 29)) // inside "g group" [49,55]
+	m2, _ := m.Update(click(60, 29)) // inside "g group" [59,65]
 	m = m2.(Model)
 	if m.list.groupByProject {
 		t.Error("clicking 'g group' must toggle grouping")
 	}
-	m2, _ = m.Update(click(60, 29)) // inside "space fold" [58,67]
+	m2, _ = m.Update(click(70, 29)) // inside "space fold" [68,77]
 	m = m2.(Model)
 	// flat mode: fold is a no-op; regroup and fold via clicks
-	m2, _ = m.Update(click(50, 29))
-	m = m2.(Model)
 	m2, _ = m.Update(click(60, 29))
+	m = m2.(Model)
+	m2, _ = m.Update(click(70, 29))
 	m = m2.(Model)
 	if len(m.list.folded) == 0 {
 		t.Error("clicking 'space fold' must fold the current project")
@@ -322,7 +322,7 @@ func TestClickHelpBarTriggersAction(t *testing.T) {
 
 func TestClickHelpBarGapIsNoop(t *testing.T) {
 	m := newTestModel()
-	m2, _ := m.Update(click(47, 29)) // gap between "/ filter" and "g group"
+	m2, _ := m.Update(click(47, 29)) // gap between "/ filter" and "s search"
 	m = m2.(Model)
 	if !m.list.groupByProject {
 		t.Error("a click on a help-bar gap must do nothing")
@@ -331,7 +331,7 @@ func TestClickHelpBarGapIsNoop(t *testing.T) {
 
 func TestClickHelpQuitReturnsQuit(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(click(90, 29)) // inside "q quit" [89,94]
+	_, cmd := m.Update(click(100, 29)) // inside "q quit" [99,104]
 	if cmd == nil {
 		t.Fatal("clicking 'q quit' must return a command")
 	}
@@ -358,7 +358,7 @@ func TestClickHelpGapKeepsFocus(t *testing.T) {
 	m := newTestModel()
 	m2, _ := m.Update(click(50, 10)) // focus the preview
 	m = m2.(Model)
-	m2, _ = m.Update(click(47, 29)) // gap between "/ filter" and "g group"
+	m2, _ = m.Update(click(47, 29)) // gap between "/ filter" and "s search"
 	m = m2.(Model)
 	if m.focus != focusPreview {
 		t.Errorf("focus = %v, want focusPreview (a gap click must be a pure no-op)", m.focus)
@@ -600,5 +600,16 @@ func TestOversizeDialogIgnoresMouse(t *testing.T) {
 	m = m2.(Model)
 	if trashed != "s1" || m.dialog != dialogNone {
 		t.Errorf("keyboard confirm broken: trashed=%q dialog=%v", trashed, m.dialog)
+	}
+}
+
+func TestHelpBarTruncatesToWidth(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 30})
+	m = m2.(Model)
+	lines := strings.Split(m.View(), "\n")
+	last := lines[len(lines)-1]
+	if w := lipgloss.Width(last); w > 60 {
+		t.Errorf("help line width %d exceeds terminal width 60 — it must truncate, not wrap", w)
 	}
 }

@@ -866,6 +866,9 @@ func (m Model) View() string {
 		}
 	}
 
-	help := m.st.Help.Render(helpLine())
+	// Clamp to the terminal width so a help line wider than the screen
+	// truncates cleanly instead of wrapping onto another row (which would
+	// corrupt the alt-screen frame). The full bar needs ~105 columns.
+	help := m.st.Help.MaxWidth(m.width).Render(helpLine())
 	return header + "\n" + filterBar + "\n" + body + "\n" + help
 }

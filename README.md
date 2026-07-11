@@ -23,7 +23,7 @@ runs `claude --resume` for you.
 │ ▸ william (12)                     ││ ⎿ Skill: superpowers:brainstorming  │
 │ ▸ prs-net (2)                      ││                                     │
 ╰────────────────────────────────────╯╰─────────────────────────────────────╯
- ↵ resume  tab focus  n new  d delete  / filter  g group  space fold  q quit
+ ↵ resume  n new  d delete  / filter  s search  g group  space fold  q quit
 ```
 
 ## Features

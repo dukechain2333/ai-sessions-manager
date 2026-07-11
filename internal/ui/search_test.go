@@ -715,3 +715,15 @@ func TestUpAtTopEntersBarDownReturns(t *testing.T) {
 		t.Error("down must keep the query, like enter")
 	}
 }
+
+func TestClickHelpSearchFocusesFullText(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(click(50, 29)) // inside "s search" [49,56]
+	m = m2.(Model)
+	if m.focus != focusFilter || !m.filterInput.Focused() {
+		t.Fatal("clicking 's search' must focus the search bar")
+	}
+	if !m.searchAll || m.filterInput.Placeholder != "search…" {
+		t.Error("clicking 's search' must land on the full-text layer")
+	}
+}
