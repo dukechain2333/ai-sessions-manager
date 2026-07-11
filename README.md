@@ -166,7 +166,7 @@ mouse-enabled TUIs).
 ### Search
 
 The filter bar has two layers — press `/` to focus it, then **Tab** (or
-click the 🔍 icon) to switch:
+click the `>` prompt) to switch:
 
 - **filter…** — the default fuzzy filter over title, project, and first
   prompt.

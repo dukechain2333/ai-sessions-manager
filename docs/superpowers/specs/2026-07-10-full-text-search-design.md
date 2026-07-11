@@ -27,7 +27,7 @@ Zero new dependencies; single static binary preserved.
 |---|---|
 | `/` or click the filter bar | focus the input (existing) |
 | **Tab while the filter is focused** | toggle title ⇄ full-text layer (Tab is currently a dead key in this state) |
-| **Click the 🔍 icon** (bar columns 0–1) | toggle layer AND focus the input; clicking the rest of the bar just focuses |
+| **Click the `>` prompt** (bar columns 0–1) | toggle layer AND focus the input; clicking the rest of the bar just focuses |
 | Placeholder | `filter…` (title layer) / `search…` (full-text layer) |
 | Enter | keep query, focus back to the list (existing semantics, both layers) |
 | Esc | clear query, blur, **and reset to the title layer** |
