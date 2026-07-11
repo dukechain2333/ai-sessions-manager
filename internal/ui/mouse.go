@@ -260,7 +260,19 @@ func (m Model) handleDialogMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// clickPickDir lands in Task 8; the stub keeps this task compiling.
+// clickPickDir selects the directory row under a click; a second click on
+// the same row within doubleClickWindow confirms it (same as enter).
 func (m Model) clickPickDir(cy int) (tea.Model, tea.Cmd) {
+	// content: 0 header, 1 blank, 2..2+len(dirs)-1 dir rows, then input/help
+	i := cy - 2
+	if i < 0 || i >= len(m.dirs) {
+		return m, nil
+	}
+	m.dirCursor = i
+	if m.isDoubleClick(zoneDialog, i) {
+		m.lastClickRow = -1
+		return m.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	m.recordClick(zoneDialog, i)
 	return m, nil
 }

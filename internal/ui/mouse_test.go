@@ -459,3 +459,87 @@ func TestErrorDialogClickDismisses(t *testing.T) {
 		t.Error("any click must dismiss the error dialog")
 	}
 }
+
+func pickerModel(t *testing.T) (Model, string, string, *resumeRecorder) {
+	t.Helper()
+	dirA, dirB := t.TempDir(), t.TempDir()
+	m := newTestModel()
+	m.list.sessions[0].CWD = dirA // s1, most recent → dirs[0]
+	m.list.sessions[1].CWD = dirB // s2 → dirs[1]
+	rec := &resumeRecorder{}
+	m.runClaude = rec.cmd
+	m2, _ := m.Update(key("n"))
+	m = m2.(Model)
+	if m.dialog != dialogPickDir || len(m.dirs) != 2 || m.dirs[1] != dirB {
+		t.Fatalf("setup: dialog=%v dirs=%v", m.dialog, m.dirs)
+	}
+	return m, dirA, dirB, rec
+}
+
+func TestPickDirClickSelectsRow(t *testing.T) {
+	m, _, _, _ := pickerModel(t)
+	cx, cy := dialogContentOrigin(m)
+	m2, _ := m.Update(click(cx+1, cy+3)) // content line 3 = dir row 1
+	m = m2.(Model)
+	if m.dirCursor != 1 {
+		t.Errorf("dirCursor = %d, want 1", m.dirCursor)
+	}
+	if m.dialog != dialogPickDir {
+		t.Error("a single click must not confirm")
+	}
+}
+
+func TestPickDirDoubleClickConfirms(t *testing.T) {
+	m, _, dirB, rec := pickerModel(t)
+	t0 := time.Now()
+	m.now = func() time.Time { return t0 }
+	cx, cy := dialogContentOrigin(m)
+	m2, _ := m.Update(click(cx+1, cy+3))
+	m = m2.(Model)
+	m.now = func() time.Time { return t0.Add(150 * time.Millisecond) }
+	m2, _ = m.Update(click(cx+1, cy+3))
+	m = m2.(Model)
+	if rec.dir != dirB || len(rec.args) != 0 {
+		t.Errorf("double-click confirm: dir=%q args=%v, want %q []", rec.dir, rec.args, dirB)
+	}
+	if m.dialog != dialogNone {
+		t.Error("confirming must close the dialog")
+	}
+}
+
+func TestPickDirWheelMovesCursor(t *testing.T) {
+	m, _, _, _ := pickerModel(t)
+	x0, y0 := m.dialogOrigin(m.dialogView())
+	m2, _ := m.Update(wheel(x0+2, y0+2, false))
+	m = m2.(Model)
+	if m.dirCursor != 1 {
+		t.Errorf("wheel down: dirCursor = %d, want 1", m.dirCursor)
+	}
+	m2, _ = m.Update(wheel(x0+2, y0+2, true))
+	m = m2.(Model)
+	if m.dirCursor != 0 {
+		t.Errorf("wheel up: dirCursor = %d, want 0", m.dirCursor)
+	}
+}
+
+func TestPickDirClickOutsideCancels(t *testing.T) {
+	m, _, _, rec := pickerModel(t)
+	m2, _ := m.Update(click(1, 3)) // far outside the centered box
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Error("clicking outside the picker must cancel it")
+	}
+	if rec.dir != "" {
+		t.Error("cancel must not launch claude")
+	}
+}
+
+func TestPickDirClickNonRowIsNoop(t *testing.T) {
+	m, _, _, _ := pickerModel(t)
+	cx, cy := dialogContentOrigin(m)
+	m2, _ := m.Update(click(cx+1, cy)) // header line
+	m = m2.(Model)
+	if m.dialog != dialogPickDir || m.dirCursor != 0 {
+		t.Errorf("header click: dialog=%v dirCursor=%d, want open dialog, cursor 0", m.dialog, m.dirCursor)
+	}
+}
