@@ -54,7 +54,7 @@ func validityKey(sessionPath string) (string, error) {
 // the validity key matches, otherwise a streaming re-extract written
 // atomically (temp file + rename) so a failed extraction never leaves a
 // half-indexed session behind.
-func (ix SearchIndex) EnsureSession(sessionPath string) error {
+func (ix SearchIndex) EnsureSession(sessionPath string, parse func() (Transcript, error)) error {
 	key, err := validityKey(sessionPath)
 	if err != nil {
 		return err
@@ -62,7 +62,7 @@ func (ix SearchIndex) EnsureSession(sessionPath string) error {
 	if cur, ok := ix.readKey(sessionPath); ok && cur == key {
 		return nil
 	}
-	tr, err := ParseTranscript(sessionPath)
+	tr, err := parse()
 	if err != nil {
 		return err
 	}
@@ -139,14 +139,14 @@ type IndexProgress struct {
 // EnsureAll freshens the cache for every session concurrently, sending one
 // IndexProgress per session and closing results when done — the same
 // shape as Enrich, so the UI can reuse its channel-pump pattern.
-func (ix SearchIndex) EnsureAll(sessions []Session, workers int, results chan<- IndexProgress) {
+func (ix SearchIndex) EnsureAll(sessions []Session, parse func(Session) (Transcript, error), workers int, results chan<- IndexProgress) {
 	if workers < 1 {
 		workers = 1
 	}
-	paths := make([]string, len(sessions))
-	for i, s := range sessions {
-		paths[i] = s.Path
-	}
+	// Snapshot the sessions up front so workers never read the caller's
+	// live slice concurrently (mirrors Enrich).
+	snap := make([]Session, len(sessions))
+	copy(snap, sessions)
 	jobs := make(chan int)
 	done := make(chan error)
 	var wg sync.WaitGroup
@@ -155,12 +155,13 @@ func (ix SearchIndex) EnsureAll(sessions []Session, workers int, results chan<- 
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				done <- ix.EnsureSession(paths[i])
+				s := snap[i]
+				done <- ix.EnsureSession(s.Path, func() (Transcript, error) { return parse(s) })
 			}
 		}()
 	}
 	go func() {
-		for i := range paths {
+		for i := range snap {
 			jobs <- i
 		}
 		close(jobs)
@@ -171,7 +172,7 @@ func (ix SearchIndex) EnsureAll(sessions []Session, workers int, results chan<- 
 		n := 0
 		for err := range done {
 			n++
-			results <- IndexProgress{Done: n, Total: len(paths), Err: err}
+			results <- IndexProgress{Done: n, Total: len(snap), Err: err}
 		}
 		close(results)
 	}()

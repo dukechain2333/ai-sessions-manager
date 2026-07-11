@@ -35,16 +35,17 @@ func TestTranscriptCache(t *testing.T) {
 	writeFile(t, p2, line)
 
 	c := NewTranscriptCache(1)
-	if _, err := c.Get(p1); err != nil {
+	if _, err := c.Get(p1, func() (Transcript, error) { return ParseTranscript(p1) }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Get(p2); err != nil { // evicts p1 (capacity 1)
+	if _, err := c.Get(p2, func() (Transcript, error) { return ParseTranscript(p2) }); err != nil { // evicts p1 (capacity 1)
 		t.Fatal(err)
 	}
 	if len(c.entries) != 1 {
 		t.Errorf("cache holds %d entries, want 1", len(c.entries))
 	}
-	if _, err := c.Get("/nonexistent.jsonl"); err == nil {
+	missing := "/nonexistent.jsonl"
+	if _, err := c.Get(missing, func() (Transcript, error) { return ParseTranscript(missing) }); err == nil {
 		t.Error("missing file should error")
 	}
 }
