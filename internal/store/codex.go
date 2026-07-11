@@ -173,9 +173,69 @@ func codexRealPrompt(text string) string {
 	return t
 }
 
-// --- stubs completed in Task 4 ---
-func (codexProvider) ParseTranscript(path string) (Transcript, error) { return Transcript{}, nil }
-func (codexProvider) Trash(s Session) (string, error)                 { return "", nil }
+// ParseTranscript extracts the human-readable conversation: real user
+// prompts, assistant text, and tool (function_call) one-liners. Developer
+// messages, reasoning, and <...> context are excluded.
+func (codexProvider) ParseTranscript(path string) (Transcript, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Transcript{}, err
+	}
+	defer f.Close()
+	var tr Transcript
+	sc := newScanner(f)
+	for sc.Scan() {
+		var rec codexRecord
+		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Type != "response_item" {
+			continue
+		}
+		var pl codexPayload
+		if json.Unmarshal(rec.Payload, &pl) != nil {
+			continue
+		}
+		switch pl.Type {
+		case "message":
+			text := strings.TrimSpace(codexText(pl))
+			switch pl.Role {
+			case "user":
+				if p := codexRealPrompt(text); p != "" {
+					tr.Messages = append(tr.Messages, Message{KindUser, p})
+				}
+			case "assistant":
+				if text != "" {
+					tr.Messages = append(tr.Messages, Message{KindAssistant, text})
+				}
+			}
+		case "function_call":
+			tr.Messages = append(tr.Messages, Message{KindTool, codexTool(pl)})
+		}
+	}
+	return tr, sc.Err()
+}
+
+// codexTool renders a function_call as "name: <first arg or cmd>".
+func codexTool(pl codexPayload) string {
+	var args map[string]any
+	json.Unmarshal([]byte(pl.Arguments), &args)
+	for _, k := range []string{"cmd", "command", "description", "path", "query", "input"} {
+		if v, ok := args[k].(string); ok && v != "" {
+			return pl.Name + ": " + Truncate(v, 80)
+		}
+	}
+	return pl.Name
+}
+
+// Trash moves a rollout file into <sessionsDir>/.trash/ (never rm).
+func (p codexProvider) Trash(s Session) (string, error) {
+	dest := filepath.Join(p.sessionsDir, ".trash", filepath.Base(s.Path))
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Rename(s.Path, dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
 func (codexProvider) ResumeCommand(s Session) (string, []string) {
 	return "codex", []string{"resume", s.ID}
 }
