@@ -82,6 +82,14 @@ no preview pane, list spans the width. List content line → row via
 
 ## Edge cases
 
+- While the filter is focused, ANY left click outside the filter bar row
+  blurs it (text kept) before the click is dispatched — including clicks on
+  borders, the title row, and help-bar gaps. "Blank areas are no-ops" refers
+  to actions, not to this focus hand-back.
+- A dialog taller/wider than the terminal is bottom-anchored by the renderer
+  rather than centered, so hit-testing cannot trust the centering math:
+  mouse input stands down for oversize dialogs (keyboard keeps working).
+
 - Filter active (flat, relevance-ordered rows): `RowAtLine` works unchanged —
   rows are rebuilt flat by `refresh()`.
 - Folded projects, scrolled lists: `layout()` already accounts for both.
