@@ -336,3 +336,17 @@ func TestClickHelpQuitReturnsQuit(t *testing.T) {
 		t.Error("the command must be tea.Quit")
 	}
 }
+
+func TestClickHelpWhilePreviewFocused(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(click(50, 10)) // focus the preview
+	m = m2.(Model)
+	if m.focus != focusPreview {
+		t.Fatal("setup: preview should be focused")
+	}
+	m2, _ = m.Update(click(30, 29)) // "d delete" [29,36]
+	m = m2.(Model)
+	if m.dialog != dialogDelete {
+		t.Errorf("dialog = %v, want dialogDelete (button must act on the list, not scroll the preview)", m.dialog)
+	}
+}

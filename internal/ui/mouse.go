@@ -135,6 +135,10 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.filterInput.Focus()
 		return m, nil
 	case zoneHelp:
+		// Buttons act from list focus: without this, a synthesized key would
+		// be eaten by whichever pane holds focus (e.g. "d" scrolls a focused
+		// preview half a page instead of opening the delete dialog).
+		m.focus = focusList
 		return m.clickHelp(msg.X)
 	}
 	return m, nil
