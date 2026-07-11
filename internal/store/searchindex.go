@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 )
 
 // indexMsgSep joins extracted messages in a cache file. \x1e (record
@@ -17,6 +19,7 @@ const indexMsgSep = "\n\x1e\n"
 // by the full-text search layer. One file per session under Dir; line 1 is
 // the validity key "path\tmtimeUnixNano\tsize", the body is the messages
 // joined by indexMsgSep. Tool messages are excluded at extraction time.
+// Session paths must not contain newlines — line 1 of a cache file is the header.
 type SearchIndex struct {
 	Dir string
 }
@@ -125,4 +128,113 @@ func (ix SearchIndex) Messages(sessionPath string) ([]string, bool) {
 		return []string{}, true
 	}
 	return strings.Split(body, indexMsgSep), true
+}
+
+// IndexProgress is one EnsureAll progress tick: Done sessions out of Total.
+type IndexProgress struct {
+	Done, Total int
+	Err         error
+}
+
+// EnsureAll freshens the cache for every session concurrently, sending one
+// IndexProgress per session and closing results when done — the same
+// shape as Enrich, so the UI can reuse its channel-pump pattern.
+func (ix SearchIndex) EnsureAll(sessions []Session, workers int, results chan<- IndexProgress) {
+	if workers < 1 {
+		workers = 1
+	}
+	paths := make([]string, len(sessions))
+	for i, s := range sessions {
+		paths[i] = s.Path
+	}
+	jobs := make(chan int)
+	done := make(chan error)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				done <- ix.EnsureSession(paths[i])
+			}
+		}()
+	}
+	go func() {
+		for i := range paths {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
+		close(done)
+	}()
+	go func() {
+		n := 0
+		for err := range done {
+			n++
+			results <- IndexProgress{Done: n, Total: len(paths), Err: err}
+		}
+		close(results)
+	}()
+}
+
+// SessionHits is one full-text search result: the session's index in the
+// slice handed to Search, how many messages hit, and the first hit message.
+type SessionHits struct {
+	Session int
+	MsgHits int
+	First   int
+}
+
+// SplitTerms lower-cases and splits a query on whitespace.
+func SplitTerms(q string) []string {
+	return strings.Fields(strings.ToLower(q))
+}
+
+// Search runs a case-insensitive AND-of-terms search over the cached
+// message text of sessions. Sessions without a fresh cache are skipped
+// (indexed reports how many were searchable). Hits are ordered by message
+// hit count desc, then recency desc, then slice order.
+func (ix SearchIndex) Search(query string, sessions []Session) (hits []SessionHits, indexed int) {
+	terms := SplitTerms(query)
+	if len(terms) == 0 {
+		return nil, 0
+	}
+	for si, s := range sessions {
+		msgs, fresh := ix.Messages(s.Path)
+		if !fresh {
+			continue
+		}
+		indexed++
+		h := SessionHits{Session: si, First: -1}
+		remaining := make(map[string]bool, len(terms))
+		for _, t := range terms {
+			remaining[t] = true
+		}
+		for mi, m := range msgs {
+			lower := strings.ToLower(m)
+			hit := false
+			for _, t := range terms {
+				if strings.Contains(lower, t) {
+					hit = true
+					delete(remaining, t)
+				}
+			}
+			if hit {
+				h.MsgHits++
+				if h.First < 0 {
+					h.First = mi
+				}
+			}
+		}
+		if h.MsgHits > 0 && len(remaining) == 0 { // every term appeared somewhere
+			hits = append(hits, h)
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].MsgHits != hits[j].MsgHits {
+			return hits[i].MsgHits > hits[j].MsgHits
+		}
+		return sessions[hits[i].Session].LastActivity.After(sessions[hits[j].Session].LastActivity)
+	})
+	return hits, indexed
 }
