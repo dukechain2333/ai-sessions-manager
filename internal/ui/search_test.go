@@ -416,3 +416,25 @@ func TestQueryChangeRefreshesPreviewHighlights(t *testing.T) {
 		t.Errorf("hitMsgs = %v, want [1] for query 'two' (stale highlights not refreshed)", m.hitMsgs)
 	}
 }
+
+func TestClickSearchIconTogglesLayer(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(click(1, 1)) // the 🔍 icon
+	m = m2.(Model)
+	if !m.searchAll {
+		t.Fatal("clicking the 🔍 icon must enable the full-text layer")
+	}
+	if m.focus != focusFilter || !m.filterInput.Focused() {
+		t.Error("icon click must also focus the input")
+	}
+	m2, _ = m.Update(click(10, 1)) // bar body: focus only, no toggle
+	m = m2.(Model)
+	if !m.searchAll {
+		t.Error("clicking the bar body must not toggle the layer")
+	}
+	m2, _ = m.Update(click(1, 1))
+	m = m2.(Model)
+	if m.searchAll {
+		t.Error("second icon click must toggle back")
+	}
+}
