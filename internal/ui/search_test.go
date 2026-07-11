@@ -665,3 +665,53 @@ func TestClaudeThemeChrome(t *testing.T) {
 		t.Error("filter prompt must be '> ', not 🔍")
 	}
 }
+
+func TestSKeyFocusesFullTextSearch(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(key("s"))
+	m = m2.(Model)
+	if m.focus != focusFilter || !m.filterInput.Focused() {
+		t.Fatal("s must focus the search bar")
+	}
+	if !m.searchAll || m.filterInput.Placeholder != "search…" {
+		t.Fatal("s must land on the full-text layer")
+	}
+	// leave the bar with the layer still on, press s again from the list
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = m2.(Model)
+	m2, _ = m.Update(key("s"))
+	m = m2.(Model)
+	if !m.searchAll {
+		t.Error("s with the layer already on must not flip it back off")
+	}
+	if m.focus != focusFilter {
+		t.Error("s must still focus the bar")
+	}
+}
+
+func TestUpAtTopEntersBarDownReturns(t *testing.T) {
+	m := searchModel(t)         // grouped: row 0 = alpha header, row 1 = s1 (initial cursor)
+	m2, _ := m.Update(key("k")) // row 1 → row 0 (normal move, no focus change)
+	m = m2.(Model)
+	if m.focus != focusList {
+		t.Fatal("k above the first session must stay in the list (moved to the header)")
+	}
+	m2, _ = m.Update(key("k")) // at row 0: enter the bar
+	m = m2.(Model)
+	if m.focus != focusFilter || !m.filterInput.Focused() {
+		t.Fatal("k at the top row must focus the search bar")
+	}
+	if m.searchAll {
+		t.Error("arrow entry must keep the current (title) layer")
+	}
+	// ↓ returns to the list keeping the text
+	m = typeInto(t, m, "abc")
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = m2.(Model)
+	if m.focus != focusList || m.filterInput.Focused() {
+		t.Fatal("down in the bar must return focus to the list")
+	}
+	if m.filterInput.Value() != "abc" {
+		t.Error("down must keep the query, like enter")
+	}
+}

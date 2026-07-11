@@ -548,6 +548,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterInput.Blur()
 			m.focus = focusList
 			return m, nil
+		case tea.KeyDown:
+			m.filterInput.Blur()
+			m.focus = focusList
+			return m, nil
 		case tea.KeyTab:
 			return m, m.toggleSearchLayer()
 		}
@@ -596,8 +600,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.list.MoveCursor(1)
 			return m, m.loadTranscriptCmd()
 		case "k", "up":
+			if m.list.cursor == 0 {
+				// walking up past the top row enters the search bar
+				m.focus = focusFilter
+				m.filterInput.Focus()
+				return m, nil
+			}
 			m.list.MoveCursor(-1)
 			return m, m.loadTranscriptCmd()
+		case "s":
+			// s = search: focus the bar on the full-text layer. / stays the
+			// title-filter entry; s never flips an already-on layer back.
+			m.focus = focusFilter
+			m.filterInput.Focus()
+			if !m.searchAll {
+				return m, m.toggleSearchLayer()
+			}
+			return m, nil
 		case "e":
 			m.list.ToggleEmpty()
 			return m, m.loadTranscriptCmd()
