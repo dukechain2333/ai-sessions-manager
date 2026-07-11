@@ -43,6 +43,7 @@ type listPane struct {
 	groupByProject bool
 	focused        bool
 	styles         styles
+	search         []store.SessionHits // non-nil: flat search-results mode
 }
 
 func (l *listPane) SetSize(w, h int) {
@@ -80,6 +81,27 @@ func (l *listPane) SetFilter(q string) {
 	l.lineOffset = 0
 	l.refresh()
 	l.cursorToFirstSession()
+}
+
+// SetSearchResults switches the pane to full-text results: sessions in the
+// given order, flat, with hit counts on the meta line. nil switches back.
+func (l *listPane) SetSearchResults(hits []store.SessionHits) {
+	l.search = hits
+	l.cursor = 0
+	l.lineOffset = 0
+	l.refresh()
+	l.cursorToFirstSession()
+}
+
+// searchHits returns the full-text hit count for a session index, 0 when
+// search mode is off or the session is not in the results.
+func (l *listPane) searchHits(sessionIdx int) int {
+	for _, h := range l.search {
+		if h.Session == sessionIdx {
+			return h.MsgHits
+		}
+	}
+	return 0
 }
 
 func (l *listPane) ToggleEmpty() {
@@ -221,6 +243,20 @@ func (l *listPane) RemoveSession(i int) {
 	}
 	l.sessions = append(l.sessions[:i], l.sessions[i+1:]...)
 	l.refresh()
+	if l.search != nil {
+		kept := l.search[:0]
+		for _, h := range l.search {
+			switch {
+			case h.Session == i:
+				continue
+			case h.Session > i:
+				h.Session--
+			}
+			kept = append(kept, h)
+		}
+		l.search = kept
+		l.refresh()
+	}
 }
 
 func haystack(s store.Session) string {
@@ -234,6 +270,28 @@ func (l *listPane) grouped() bool {
 }
 
 func (l *listPane) refresh() {
+	// Search-results mode: flat, given order, suppresses filter/grouping.
+	if l.search != nil {
+		l.rows = l.rows[:0]
+		l.counts = map[string]int{}
+		l.total = 0
+		for _, h := range l.search {
+			if h.Session < 0 || h.Session >= len(l.sessions) {
+				continue
+			}
+			l.total++
+			l.rows = append(l.rows, row{project: l.sessions[h.Session].Project(), session: h.Session})
+		}
+		if l.cursor >= len(l.rows) {
+			l.cursor = len(l.rows) - 1
+		}
+		if l.cursor < 0 {
+			l.cursor = 0
+		}
+		l.ensureVisible()
+		return
+	}
+
 	// 1. Select sessions (recency order, honoring the empty toggle / filter).
 	var base []int
 	if l.filter == "" {
@@ -383,6 +441,12 @@ func (l *listPane) View() string {
 		}
 		if s.Unreadable {
 			meta += " · (unreadable)"
+		}
+		if n := l.searchHits(r.session); n > 0 {
+			meta += " · " + fmt.Sprintf("%d hit", n)
+			if n != 1 {
+				meta += "s"
+			}
 		}
 		prefix := "  "
 		titleStyle, metaStyle := l.styles.ListTitle, l.styles.ListMeta

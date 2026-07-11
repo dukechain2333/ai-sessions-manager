@@ -336,3 +336,60 @@ func TestSetCursorClamps(t *testing.T) {
 		t.Errorf("SetCursor(-1) moved cursor to %v", s.ID)
 	}
 }
+
+func TestSearchResultsMode(t *testing.T) {
+	l := newTestPane()
+	l.ToggleGroup() // grouped, to prove search mode overrides grouping
+	l.SetSearchResults([]store.SessionHits{
+		{Session: 1, MsgHits: 3, First: 0}, // s2 first (more hits)
+		{Session: 0, MsgHits: 1, First: 2},
+	})
+	if got := l.Len(); got != 2 {
+		t.Fatalf("Len = %d, want 2", got)
+	}
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Fatalf("first result should be selected, got %v", s.ID)
+	}
+	for _, r := range l.rows {
+		if r.header {
+			t.Fatal("search mode must not render project headers")
+		}
+	}
+	view := l.View()
+	if !strings.Contains(view, "· 3 hits") {
+		t.Errorf("meta line should show hit count, view:\n%s", view)
+	}
+	l.SetSearchResults(nil)
+	if got := l.Len(); got != 2 {
+		t.Errorf("clearing search restores normal view, Len = %d", got)
+	}
+	if len(l.rows) == 0 || !l.rows[0].header {
+		t.Error("grouped headers should be back after clearing")
+	}
+}
+
+func TestRemoveSessionAdjustsSearchResults(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{
+		{Session: 1, MsgHits: 3}, // s2
+		{Session: 0, MsgHits: 1}, // s1
+	})
+	l.RemoveSession(0) // drop s1: s2's index shifts from 1 to 0
+	if got := l.Len(); got != 1 {
+		t.Fatalf("Len = %d, want 1 after removing a result", got)
+	}
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("remaining result should be s2, got %v", s.ID)
+	}
+	if n := l.searchHits(0); n != 3 {
+		t.Errorf("s2's hits must follow its shifted index, got %d", n)
+	}
+}
+
+func TestSearchResultsSingularHit(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 1}})
+	if view := l.View(); !strings.Contains(view, "· 1 hit ") && !strings.HasSuffix(strings.TrimRight(view, " \n"), "· 1 hit") && !strings.Contains(view, "· 1 hit\n") {
+		t.Errorf("singular form wanted, view:\n%s", view)
+	}
+}
