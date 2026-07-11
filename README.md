@@ -177,7 +177,7 @@ click the 🔍 icon) to switch:
 
 The first full-text search builds a plain-text index under your user cache
 directory (`sm-index/`); the title bar shows `indexing …` progress. After
-that, searches are instant and only changed sessions are re-indexed.
+that, searches are fast and only changed sessions are re-indexed.
 
 ### Resuming
 

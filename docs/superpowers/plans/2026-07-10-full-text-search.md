@@ -1006,10 +1006,15 @@ In `internal/ui/model.go`:
 	indexErr    error
 	indexReady  bool
 	indexing    bool
+	indexStale  bool
 	indexDone   int
 	indexTotal  int
 	indexCh     chan store.IndexProgress
 ```
+
+> **Updated 2026-07-11 (final-review fix, C1):** `indexStale` was added
+> after this task originally landed. See the addendum after step 6 and
+> `toggleSearchLayer` below for why.
 
 3. In `New()`: after the existing literal fields,
 
@@ -1109,6 +1114,30 @@ func waitIndex(ch chan store.IndexProgress) tea.Cmd {
 }
 ```
 
+> **Updated 2026-07-11 (final-review fix, C1):** `toggleSearchLayer`'s
+> enable branch (the `if m.searchAll { … }` arm above) now also
+> revalidates the index — per the spec's "re-entering full-text mode …
+> re-checks validity keys", which the version above missed (only the `r`
+> key revalidated). It gained two lines, mirroring the `scanDoneMsg`
+> addendum after step 6 below:
+>
+> ```go
+> 	if m.searchAll {
+> 		m.filterInput.Placeholder = "search…"
+> 		m.list.SetFilter("")
+> 		m.indexReady = false // re-entering full-text mode re-checks validity keys (spec)
+> 		if m.indexing {
+> 			m.indexStale = true
+> 		}
+> 		return m.dispatchSearch()
+> 	}
+> ```
+>
+> (A separate final-review fix, I2, also touches this function's disable
+> branch, below the `if`, to clear stale preview-highlight state on the
+> way out of the layer — out of scope for this mirror; see the I2
+> finding in `.superpowers/sdd/search-final-fixes-report.md`.)
+
 6. `Update()` — new cases (alongside the existing msg cases):
 
 ```go
@@ -1156,6 +1185,66 @@ func waitIndex(ch chan store.IndexProgress) tea.Cmd {
 		return m, nil
 ```
 
+> **Addendum (final-review fix, C1, 2026-07-11):** two follow-ups tightened
+> index invalidation beyond what this task originally shipped, closing a
+> gap where `indexReady` was only ever reset by the `r` key.
+>
+> `scanDoneMsg` (defined earlier in `Update()`, outside this task, in the
+> base session-manager plan) now resets `indexReady` — and, if a build is
+> currently in flight, sets the new `indexStale` field (see the Model
+> struct fields addendum in step 2) — on every successful (re)scan, not
+> just when `r` triggers one. This is what makes `claudeExitMsg`'s rescan
+> revalidate too: a resumed session's mtime/size may have changed while
+> claude was running.
+>
+> ```go
+> 	case scanDoneMsg:
+> 		if msg.err != nil {
+> 			m.dialog = dialogError
+> 			m.errText = fmt.Sprintf("cannot read %s: %v", m.projectsDir, msg.err)
+> 			return m, nil
+> 		}
+> 		m.indexReady = false
+> 		if m.indexing {
+> 			m.indexStale = true
+> 		}
+> 		m.list.SetSessions(msg.sessions)
+> 		// … unchanged from here (SetSessions/Enrich/searchAll batch) …
+> ```
+>
+> `indexDoneMsg` (the case just above) now branches on `indexStale`: a
+> build that was already in flight when one of the above invalidations
+> landed was dispatched against state we now know is outdated, so it
+> cannot be trusted as "ready" once it completes. It leaves `indexReady`
+> false and re-arms the debounce path (`dispatchSearch`, not `runSearch`
+> directly) so the next tick re-kicks `EnsureAll`:
+>
+> ```go
+> 	case indexDoneMsg:
+> 		if msg.ch != m.indexCh {
+> 			return m, nil
+> 		}
+> 		if m.indexStale {
+> 			m.indexStale = false
+> 			m.indexing = false
+> 			if m.searchAll && m.activeQuery != "" {
+> 				return m, m.dispatchSearch()
+> 			}
+> 			return m, nil
+> 		}
+> 		m.indexReady = true
+> 		m.indexing = false
+> 		if m.searchAll && m.activeQuery != "" {
+> 			return m, m.runSearch(m.searchSeq)
+> 		}
+> 		return m, nil
+> ```
+>
+> Full details, RED/GREEN test evidence: `TestClaudeExitRevalidatesIndex`,
+> `TestToggleOnRevalidates`, `TestStaleBuildDoesNotMarkReady` in
+> `internal/ui/search_test.go`, and
+> `.superpowers/sdd/search-final-fixes-report.md`.
+
 7. focusFilter key branch — extend. Today it special-cases Esc and Enter, then feeds `filterInput.Update` + `SetFilter`. New shape:
 
 ```go
@@ -1197,6 +1286,21 @@ func waitIndex(ch chan store.IndexProgress) tea.Cmd {
 			m.indexReady = false // next full-text search revalidates the cache
 			return m, m.scanCmd()
 ```
+
+> **Updated 2026-07-11 (final-review fix, C1):** this key's own
+> `m.indexReady = false` became redundant once `scanDoneMsg`'s success
+> path started resetting it centrally for every completed rescan
+> (addendum after step 6) — `r`'s rescan is just one more caller of
+> `scanCmd()`/`scanDoneMsg`, same as startup and the post-claudeExit
+> rescan. The line was removed; the case is now exactly the pre-Task-4
+> `case "r": return m, m.scanCmd()`:
+>
+> ```go
+> 		case "r":
+> 			// indexReady reset now happens centrally in scanDoneMsg's
+> 			// success path (covers every rescan source, not just this key).
+> 			return m, m.scanCmd()
+> ```
 
 9. Title bar count in `View()` — replace the `count := …` block with exactly:
 
