@@ -86,11 +86,11 @@ type codexMeta struct {
 }
 
 type codexPayload struct {
-	Type    string          `json:"type"`
-	Role    string          `json:"role"`
-	Content []codexContent  `json:"content"`
-	Name    string          `json:"name"`      // function_call
-	Arguments string        `json:"arguments"` // function_call (JSON string)
+	Type      string         `json:"type"`
+	Role      string         `json:"role"`
+	Content   []codexContent `json:"content"`
+	Name      string         `json:"name"`      // function_call
+	Arguments string         `json:"arguments"` // function_call (JSON string)
 }
 
 type codexContent struct {
@@ -176,5 +176,7 @@ func codexRealPrompt(text string) string {
 // --- stubs completed in Task 4 ---
 func (codexProvider) ParseTranscript(path string) (Transcript, error) { return Transcript{}, nil }
 func (codexProvider) Trash(s Session) (string, error)                 { return "", nil }
-func (codexProvider) ResumeCommand(s Session) (string, []string)      { return "codex", []string{"resume", s.ID} }
-func (codexProvider) NewCommand() (string, []string)                  { return "codex", nil }
+func (codexProvider) ResumeCommand(s Session) (string, []string) {
+	return "codex", []string{"resume", s.ID}
+}
+func (codexProvider) NewCommand() (string, []string) { return "codex", nil }
