@@ -106,7 +106,14 @@ func (l *listPane) searchHits(sessionIdx int) int {
 	return 0
 }
 
+// ToggleEmpty flips whether "empty" (hook-only) sessions are shown. No-op
+// while browsing search results: search mode has its own row set that
+// ignores this flag, so toggling it would silently change state that only
+// takes visible effect after the user leaves search mode.
 func (l *listPane) ToggleEmpty() {
+	if l.search != nil {
+		return
+	}
 	sel, ok := l.selectedSession()
 	l.showEmpty = !l.showEmpty
 	l.refresh()
@@ -116,8 +123,12 @@ func (l *listPane) ToggleEmpty() {
 }
 
 // ToggleGroup switches between project-clustered and flat recency order,
-// keeping the current session selected.
+// keeping the current session selected. No-op while browsing search
+// results (same reasoning as ToggleEmpty).
 func (l *listPane) ToggleGroup() {
+	if l.search != nil {
+		return
+	}
 	sel, ok := l.selectedSession()
 	l.groupByProject = !l.groupByProject
 	l.refresh()
@@ -266,9 +277,12 @@ func haystack(s store.Session) string {
 }
 
 // grouped reports whether project headers are shown. Filtering falls back
-// to a flat, relevance-ordered list.
+// to a flat, relevance-ordered list; so does search-results mode (whose
+// rows are already flat and never carry header:true, but ToggleFold must
+// still stand down explicitly rather than silently folding a project the
+// current search-result row happens to belong to).
 func (l *listPane) grouped() bool {
-	return l.groupByProject && l.filter == ""
+	return l.groupByProject && l.filter == "" && l.search == nil
 }
 
 func (l *listPane) refresh() {
@@ -406,7 +420,7 @@ func (l *listPane) ensureVisible() {
 
 func (l *listPane) View() string {
 	if l.total == 0 {
-		if l.filter != "" {
+		if l.search != nil || l.filter != "" {
 			return l.styles.ListMeta.Render("no matches")
 		}
 		return l.styles.ListMeta.Render("no sessions")

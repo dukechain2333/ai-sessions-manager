@@ -393,3 +393,50 @@ func TestSearchResultsSingularHit(t *testing.T) {
 		t.Errorf("singular form wanted, view:\n%s", view)
 	}
 }
+
+// TestSearchModeSpaceDoesNotMutateFold is the I3 regression: space (via
+// ToggleFold) must not silently fold/unfold a project while browsing
+// search results, even though search-mode rows don't visually reflect
+// fold state — the mutation would surface unexpectedly once the user
+// leaves search mode.
+func TestSearchModeSpaceDoesNotMutateFold(t *testing.T) {
+	l := newTestPane()
+	l.ToggleGroup() // groupByProject=true, filter=="" — grouped() would (bug) say true
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 1}, {Session: 1, MsgHits: 1}})
+	l.ToggleFold()
+	if len(l.folded) != 0 {
+		t.Errorf("space in search-results mode must not fold any project, folded = %v", l.folded)
+	}
+}
+
+// TestSearchModeGDoesNotToggleGroup is the I3 regression for ToggleGroup.
+func TestSearchModeGDoesNotToggleGroup(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 1}})
+	before := l.groupByProject
+	l.ToggleGroup()
+	if l.groupByProject != before {
+		t.Error("g in search-results mode must not change groupByProject")
+	}
+}
+
+// TestSearchModeEDoesNotToggleEmpty is the I3 regression for ToggleEmpty.
+func TestSearchModeEDoesNotToggleEmpty(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 1}})
+	before := l.showEmpty
+	l.ToggleEmpty()
+	if l.showEmpty != before {
+		t.Error("e in search-results mode must not change showEmpty")
+	}
+}
+
+// TestSearchResultsEmptyShowsNoMatches is the M3 regression: a zero-hit
+// search must say "no matches", not the generic "no sessions".
+func TestSearchResultsEmptyShowsNoMatches(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{})
+	if v := l.View(); !strings.Contains(v, "no matches") {
+		t.Errorf("empty search-results view = %q, want it to contain %q", v, "no matches")
+	}
+}
