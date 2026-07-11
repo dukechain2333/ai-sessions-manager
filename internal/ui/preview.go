@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -39,31 +40,54 @@ func renderTranscript(t store.Transcript, width int, st styles) (string, []int) 
 }
 
 // highlightTerms wraps every case-insensitive occurrence of each term in
-// reverse-video toggles. lipgloss wraps ANSI-aware, so the inline codes
-// survive width-wrapping; the closing toggle only clears reverse, leaving
-// the message's own foreground styling intact.
+// reverse-video toggles. All match spans are located against the ORIGINAL
+// text and merged before any codes are inserted, so overlapping terms
+// ("test", "testing") highlight as one contiguous region instead of
+// corrupting each other's escape codes. lipgloss wraps ANSI-aware, so the
+// inline codes survive width-wrapping; the closing toggle only clears
+// reverse, leaving the message's own foreground styling intact.
 func highlightTerms(text string, terms []string) string {
+	lower := strings.ToLower(text)
+	type span struct{ start, end int }
+	var spans []span
 	for _, term := range terms {
 		if term == "" {
 			continue
 		}
-		lower := strings.ToLower(text)
-		var b strings.Builder
-		pos := 0
-		for {
+		for pos := 0; ; {
 			i := strings.Index(lower[pos:], term)
 			if i < 0 {
-				b.WriteString(text[pos:])
 				break
 			}
 			i += pos
-			b.WriteString(text[pos:i])
-			b.WriteString("\x1b[7m")
-			b.WriteString(text[i : i+len(term)])
-			b.WriteString("\x1b[27m")
+			spans = append(spans, span{i, i + len(term)})
 			pos = i + len(term)
 		}
-		text = b.String()
 	}
-	return text
+	if len(spans) == 0 {
+		return text
+	}
+	sort.Slice(spans, func(a, b int) bool { return spans[a].start < spans[b].start })
+	merged := spans[:1]
+	for _, s := range spans[1:] {
+		last := &merged[len(merged)-1]
+		if s.start <= last.end {
+			if s.end > last.end {
+				last.end = s.end
+			}
+			continue
+		}
+		merged = append(merged, s)
+	}
+	var b strings.Builder
+	pos := 0
+	for _, s := range merged {
+		b.WriteString(text[pos:s.start])
+		b.WriteString("\x1b[7m")
+		b.WriteString(text[s.start:s.end])
+		b.WriteString("\x1b[27m")
+		pos = s.end
+	}
+	b.WriteString(text[pos:])
+	return b.String()
 }

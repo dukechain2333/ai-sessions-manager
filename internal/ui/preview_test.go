@@ -57,3 +57,21 @@ func TestHighlightTerms(t *testing.T) {
 		t.Error("no-match text must pass through unchanged")
 	}
 }
+
+func TestHighlightTermsOverlappingSubstrings(t *testing.T) {
+	cases := []struct {
+		name  string
+		terms []string
+		text  string
+		want  string
+	}{
+		{"shorter first", []string{"cat", "cats"}, "the cats sat", "the \x1b[7mcats\x1b[27m sat"},
+		{"longer first", []string{"cats", "cat"}, "the cats sat", "the \x1b[7mcats\x1b[27m sat"},
+		{"prefix pair", []string{"test", "testing"}, "testing framework", "\x1b[7mtesting\x1b[27m framework"},
+	}
+	for _, c := range cases {
+		if got := highlightTerms(c.text, c.terms); got != c.want {
+			t.Errorf("%s: highlightTerms(%q, %v) = %q, want %q", c.name, c.text, c.terms, got, c.want)
+		}
+	}
+}
