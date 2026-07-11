@@ -115,6 +115,7 @@ type Model struct {
 	indexStale  bool
 	indexDone   int
 	indexTotal  int
+	indexFailed int
 	indexCh     chan store.IndexProgress
 
 	// preview hit navigation
@@ -443,6 +444,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.indexCh = ch
 			m.indexing = true
 			m.indexDone, m.indexTotal = 0, len(m.list.Sessions())
+			m.indexFailed = 0
 			m.index.EnsureAll(m.list.Sessions(), 4, ch)
 			cmds = append(cmds, waitIndex(ch))
 		}
@@ -465,6 +467,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.indexDone, m.indexTotal = msg.p.Done, msg.p.Total
+		if msg.p.Err != nil {
+			m.indexFailed++
+		}
 		return m, waitIndex(msg.ch)
 
 	case indexDoneMsg:
@@ -792,6 +797,9 @@ func (m Model) View() string {
 	}
 	if m.indexing {
 		count += fmt.Sprintf(" · indexing %d/%d…", m.indexDone, m.indexTotal)
+	}
+	if m.indexFailed > 0 {
+		count += fmt.Sprintf(" · %d unindexed", m.indexFailed)
 	}
 	if m.loading {
 		count += " · scanning…"

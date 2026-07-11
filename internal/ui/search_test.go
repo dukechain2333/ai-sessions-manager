@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,6 +208,30 @@ func TestIndexingProgressShownAndSearchRedispatched(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("index completion must re-dispatch the search")
+	}
+}
+
+// TestIndexFailureShownAsUnindexed is the I1 regression: extraction
+// failures reported through IndexProgress.Err were discarded, leaving
+// failed sessions silently unsearchable with no visible indication.
+func TestIndexFailureShownAsUnindexed(t *testing.T) {
+	m := searchModel(t)
+	m.indexReady = false
+	m2, _ := m.Update(key("/"))
+	m = m2.(Model)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = m2.(Model)
+	m = typeInto(t, m, "quick")
+	m2, _ = m.Update(searchTickMsg{seq: m.searchSeq})
+	m = m2.(Model)
+	if !m.indexing {
+		t.Fatal("setup: expected indexing to have kicked off")
+	}
+	ch := m.indexCh
+	m2, _ = m.Update(indexProgressMsg{p: store.IndexProgress{Done: 1, Total: 2, Err: errors.New("boom")}, ch: ch})
+	m = m2.(Model)
+	if !strings.Contains(m.View(), "1 unindexed") {
+		t.Errorf("title bar must show the unindexed count, view head: %.160s", m.View())
 	}
 }
 
