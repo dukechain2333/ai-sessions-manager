@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -460,9 +461,24 @@ func TestErrorDialogClickDismisses(t *testing.T) {
 	}
 }
 
+// shortTempDir returns a real, empty directory with a short, fixed-length
+// name. Unlike t.TempDir(), whose path embeds the full (sub)test name, this
+// keeps the rendered picker dialog's width independent of the caller's test
+// name — a long test name alone was enough to push the box past the 100-col
+// test terminal and (correctly) trip the oversize-dialog mouse guard.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 func pickerModel(t *testing.T) (Model, string, string, *resumeRecorder) {
 	t.Helper()
-	dirA, dirB := t.TempDir(), t.TempDir()
+	dirA, dirB := shortTempDir(t), shortTempDir(t)
 	m := newTestModel()
 	m.list.sessions[0].CWD = dirA // s1, most recent → dirs[0]
 	m.list.sessions[1].CWD = dirB // s2 → dirs[1]
@@ -541,5 +557,29 @@ func TestPickDirClickNonRowIsNoop(t *testing.T) {
 	m = m2.(Model)
 	if m.dialog != dialogPickDir || m.dirCursor != 0 {
 		t.Errorf("header click: dialog=%v dirCursor=%d, want open dialog, cursor 0", m.dialog, m.dirCursor)
+	}
+}
+
+func TestOversizeDialogIgnoresMouse(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 11}) // delete box (9 rows) > body area (8)
+	m = m2.(Model)
+	trashed := ""
+	m.trashFn = func(_ string, s store.Session) (string, error) {
+		trashed = s.ID
+		return "/trash/" + s.ID, nil
+	}
+	m2, _ = m.Update(key("d"))
+	m = m2.(Model)
+	x0, y0 := m.dialogOrigin(m.dialogView())
+	m2, _ = m.Update(click(x0+3+4, y0+2+4)) // where the naive math puts "y confirm"
+	m = m2.(Model)
+	if trashed != "" || m.dialog != dialogDelete {
+		t.Fatalf("oversize dialog must ignore mouse: trashed=%q dialog=%v", trashed, m.dialog)
+	}
+	m2, _ = m.Update(key("y")) // keyboard still works
+	m = m2.(Model)
+	if trashed != "s1" || m.dialog != dialogNone {
+		t.Errorf("keyboard confirm broken: trashed=%q dialog=%v", trashed, m.dialog)
 	}
 }

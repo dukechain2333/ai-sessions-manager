@@ -225,6 +225,12 @@ func (m Model) handleDialogMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	box := m.dialogView()
+	// An oversize dialog is bottom-anchored by the renderer rather than
+	// centered, so the origin math below would mis-map clicks; mouse input
+	// stands down and the keyboard keeps working.
+	if lipgloss.Height(box) > m.height-3 || lipgloss.Width(box) > m.width {
+		return m, nil
+	}
 	x0, y0 := m.dialogOrigin(box)
 	inside := msg.X >= x0 && msg.X < x0+lipgloss.Width(box) &&
 		msg.Y >= y0 && msg.Y < y0+lipgloss.Height(box)
