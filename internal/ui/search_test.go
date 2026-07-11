@@ -206,6 +206,32 @@ func TestRunSearchSnapshotsSessions(t *testing.T) {
 	}
 }
 
+func TestRescanRefreshesActiveSearch(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(key("/"))
+	m = m2.(Model)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = m2.(Model)
+	m = typeInto(t, m, "quick")
+	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
+	m = m2.(Model)
+	m2, _ = m.Update(cmd().(searchResultMsg))
+	m = m2.(Model)
+	if m.list.search == nil {
+		t.Fatal("setup: expected active results")
+	}
+	reordered := append([]store.Session(nil), m.list.Sessions()...)
+	reordered[0], reordered[1] = reordered[1], reordered[0] // rescan re-sorts
+	m2, cmd = m.Update(scanDoneMsg{sessions: reordered})
+	m = m2.(Model)
+	if m.list.search != nil {
+		t.Error("rescan must clear results computed against the old ordering")
+	}
+	if cmd == nil {
+		t.Fatal("rescan with an active query must re-dispatch the search")
+	}
+}
+
 func TestDeleteInvalidatesInFlightSearch(t *testing.T) {
 	m := searchModel(t)
 	m.trashFn = func(string, store.Session) (string, error) { return "/trash/x", nil }

@@ -326,6 +326,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.enrichCh = ch
 		m.loading = true
 		store.Enrich(msg.sessions, 8, ch)
+		if m.searchAll && m.activeQuery != "" {
+			m.searchSeq++ // orphan in-flight results computed against the pre-scan ordering
+			m.list.SetSearchResults(nil)
+			return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd(), m.runSearch(m.searchSeq))
+		}
 		return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd())
 
 	case enrichMsg:
