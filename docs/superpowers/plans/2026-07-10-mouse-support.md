@@ -1033,7 +1033,29 @@ In `handleMouse`, replace the `case zoneHelp:` no-op with:
 
 ```go
 	case zoneHelp:
+		// Buttons act from list focus: without this, a synthesized key would
+		// be eaten by whichever pane holds focus (e.g. "d" scrolls a focused
+		// preview half a page instead of opening the delete dialog).
+		m.focus = focusList
 		return m.clickHelp(msg.X)
+```
+
+and add a regression test:
+
+```go
+func TestClickHelpWhilePreviewFocused(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(click(50, 10)) // focus the preview
+	m = m2.(Model)
+	if m.focus != focusPreview {
+		t.Fatal("setup: preview should be focused")
+	}
+	m2, _ = m.Update(click(30, 29)) // "d delete" [29,36]
+	m = m2.(Model)
+	if m.dialog != dialogDelete {
+		t.Errorf("dialog = %v, want dialogDelete (button must act on the list, not scroll the preview)", m.dialog)
+	}
+}
 ```
 
 In `model.go`'s `View()`, replace the hardcoded help line:

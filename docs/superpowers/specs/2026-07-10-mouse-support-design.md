@@ -29,7 +29,7 @@ keyboard behavior, with zero new dependencies:
 | Project header row | toggle fold (same as `enter` on header) | — (second click folds again) | move selection |
 | Preview pane | focus preview (same as `tab`) | — | scroll transcript; no focus needed |
 | Filter bar row | focus filter (same as `/`) | — | — |
-| Help bar segment | same as pressing that key | — | — |
+| Help bar segment | same as pressing that key from the list (the click first returns focus to the list, so the labeled action always fires) | — | — |
 | Delete dialog | `[y] confirm` / `[n] cancel` buttons; click outside cancels | — | — |
 | Dir-picker dialog | row click selects; input row is already focused; click outside = `esc` | row double-click confirms (same as `enter`) | moves `dirCursor` |
 | Error dialog | any click dismisses ("press any key") | — | — |
