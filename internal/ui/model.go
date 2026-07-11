@@ -213,9 +213,13 @@ func (m *Model) dispatchSearch() tea.Cmd {
 	return tea.Tick(searchDebounce, func(time.Time) tea.Msg { return searchTickMsg{seq: seq} })
 }
 
-// runSearch is the async search over the index cache.
+// runSearch is the async search over the index cache. It snapshots the
+// sessions slice on the Update goroutine first — the enrich pump mutates
+// session structs in place, so the search goroutine must never read the
+// live slice (same reason Enrich itself snapshots up front).
 func (m *Model) runSearch(seq int) tea.Cmd {
-	ix, q, sessions := m.index, m.filterInput.Value(), m.list.Sessions()
+	ix, q := m.index, m.filterInput.Value()
+	sessions := append([]store.Session(nil), m.list.Sessions()...)
 	return func() tea.Msg {
 		hits, _ := ix.Search(q, sessions)
 		return searchResultMsg{seq: seq, hits: hits}
@@ -578,6 +582,10 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.list.RemoveSession(idx)
 				m.previewFor = ""
+			}
+			if m.searchAll && m.activeQuery != "" {
+				m.searchSeq++ // orphan any in-flight result computed against pre-delete indices
+				return m, tea.Batch(m.loadTranscriptCmd(), m.runSearch(m.searchSeq))
 			}
 			return m, m.loadTranscriptCmd()
 		case "n", "esc":

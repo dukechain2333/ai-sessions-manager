@@ -53,7 +53,7 @@ func typeInto(t *testing.T, m Model, s string) Model {
 }
 
 func TestTabTogglesSearchLayer(t *testing.T) {
-	m := newTestModel()
+	m := searchModel(t)
 	m2, _ := m.Update(key("/"))
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -183,5 +183,49 @@ func TestIndexingProgressShownAndSearchRedispatched(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("index completion must re-dispatch the search")
+	}
+}
+
+func TestRunSearchSnapshotsSessions(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(key("/"))
+	m = m2.(Model)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = m2.(Model)
+	m = typeInto(t, m, "quick")
+	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
+	m = m2.(Model)
+	m.list.sessions[1].Path = "/mutated/after/dispatch.jsonl" // enrich-style in-place mutation
+	msg := cmd()
+	res, ok := msg.(searchResultMsg)
+	if !ok {
+		t.Fatalf("got %T", msg)
+	}
+	if len(res.hits) != 2 {
+		t.Errorf("snapshot must shield the in-flight search from mutations: hits=%v", res.hits)
+	}
+}
+
+func TestDeleteInvalidatesInFlightSearch(t *testing.T) {
+	m := searchModel(t)
+	m.trashFn = func(string, store.Session) (string, error) { return "/trash/x", nil }
+	m2, _ := m.Update(key("/"))
+	m = m2.(Model)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = m2.(Model)
+	m = typeInto(t, m, "quick")
+	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
+	m = m2.(Model)
+	inflight := cmd                                  // result computed against pre-delete indices
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // leave filter focus
+	m = m2.(Model)
+	m2, _ = m.Update(key("d"))
+	m = m2.(Model)
+	m2, _ = m.Update(key("y"))
+	m = m2.(Model)
+	m2, _ = m.Update(inflight().(searchResultMsg)) // stale seq now
+	m = m2.(Model)
+	if m.list.search != nil && len(m.list.search) == 2 {
+		t.Error("stale in-flight result must not be applied after a delete")
 	}
 }
