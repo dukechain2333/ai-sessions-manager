@@ -52,6 +52,29 @@ func typeInto(t *testing.T, m Model, s string) Model {
 	return m
 }
 
+// runCmds executes a cmd synchronously, flattening one level of BatchMsg,
+// and returns every message produced. A scheduled debounce tick genuinely
+// elapses here — that is the point: only a really-scheduled tick may drive
+// the heal path in the rescan test below.
+func runCmds(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var msgs []tea.Msg
+	for _, c := range batch {
+		if c != nil {
+			msgs = append(msgs, c())
+		}
+	}
+	return msgs
+}
+
 func TestTabTogglesSearchLayer(t *testing.T) {
 	m := searchModel(t)
 	m2, _ := m.Update(key("/"))
@@ -220,6 +243,8 @@ func TestRescanRefreshesActiveSearch(t *testing.T) {
 	if m.list.search == nil {
 		t.Fatal("setup: expected active results")
 	}
+	seqBefore := m.searchSeq
+	m.indexReady = false // as `r` does right before its rescan
 	reordered := append([]store.Session(nil), m.list.Sessions()...)
 	reordered[0], reordered[1] = reordered[1], reordered[0] // rescan re-sorts
 	m2, cmd = m.Update(scanDoneMsg{sessions: reordered})
@@ -227,8 +252,49 @@ func TestRescanRefreshesActiveSearch(t *testing.T) {
 	if m.list.search != nil {
 		t.Error("rescan must clear results computed against the old ordering")
 	}
+	if m.searchSeq <= seqBefore {
+		t.Error("rescan must advance searchSeq to orphan in-flight results")
+	}
+	// The re-search must arrive via a really-scheduled debounce tick — a
+	// direct search would skip the tick path's EnsureAll revalidation kick.
+	var tick searchTickMsg
+	gotTick := false
+	for _, msg := range runCmds(t, cmd) {
+		switch msg := msg.(type) {
+		case searchResultMsg:
+			t.Error("rescan must not search directly; revalidation would be skipped")
+		case searchTickMsg:
+			tick, gotTick = msg, true
+		}
+	}
+	if !gotTick {
+		t.Fatal("rescan with an active query must schedule the debounce tick")
+	}
+	if tick.seq != m.searchSeq {
+		t.Fatalf("scheduled tick seq = %d, want live %d", tick.seq, m.searchSeq)
+	}
+	m2, cmd = m.Update(tick)
+	m = m2.(Model)
+	if !m.indexing {
+		t.Error("the rescan's tick must kick index revalidation (EnsureAll)")
+	}
 	if cmd == nil {
-		t.Fatal("rescan with an active query must re-dispatch the search")
+		t.Fatal("live tick must return the async search cmd")
+	}
+	var res searchResultMsg
+	gotRes := false
+	for _, msg := range runCmds(t, cmd) {
+		if r, ok := msg.(searchResultMsg); ok {
+			res, gotRes = r, true
+		}
+	}
+	if !gotRes {
+		t.Fatal("the rescan's tick must produce a search result")
+	}
+	m2, _ = m.Update(res)
+	m = m2.(Model)
+	if m.list.search == nil || m.matched != 2 {
+		t.Errorf("heal must repopulate results against the new ordering, matched=%d", m.matched)
 	}
 }
 
