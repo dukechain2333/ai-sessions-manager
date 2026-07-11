@@ -1033,11 +1033,20 @@ In `handleMouse`, replace the `case zoneHelp:` no-op with:
 
 ```go
 	case zoneHelp:
-		// Buttons act from list focus: without this, a synthesized key would
-		// be eaten by whichever pane holds focus (e.g. "d" scrolls a focused
-		// preview half a page instead of opening the delete dialog).
-		m.focus = focusList
 		return m.clickHelp(msg.X)
+```
+
+with the focus reset inside `clickHelp`'s hit branch (so gap clicks stay pure no-ops per the spec's "blank areas → no-op" rule):
+
+```go
+		if x >= pos && x < pos+w {
+			// Buttons act from list focus: without this, a synthesized key
+			// would be eaten by whichever pane holds focus (e.g. "d" scrolls
+			// a focused preview half a page instead of opening the delete
+			// dialog). Gap clicks fall through and change nothing.
+			m.focus = focusList
+			return m.handleKey(it.key)
+		}
 ```
 
 and add a regression test:
@@ -1054,6 +1063,17 @@ func TestClickHelpWhilePreviewFocused(t *testing.T) {
 	m = m2.(Model)
 	if m.dialog != dialogDelete {
 		t.Errorf("dialog = %v, want dialogDelete (button must act on the list, not scroll the preview)", m.dialog)
+	}
+}
+
+func TestClickHelpGapKeepsFocus(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(click(50, 10)) // focus the preview
+	m = m2.(Model)
+	m2, _ = m.Update(click(47, 29)) // gap between "/ filter" and "g group"
+	m = m2.(Model)
+	if m.focus != focusPreview {
+		t.Errorf("focus = %v, want focusPreview (a gap click must be a pure no-op)", m.focus)
 	}
 }
 ```
