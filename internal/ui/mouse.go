@@ -89,7 +89,7 @@ func (m *Model) zoneAt(x, y int) (zone, int) {
 // never touched.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.dialog != dialogNone {
-		return m, nil // dialog mouse support lands in a later task
+		return m.handleDialogMouse(msg)
 	}
 	if msg.Action != tea.MouseActionPress {
 		return m, nil
@@ -190,5 +190,77 @@ func (m Model) clickHelp(x int) (tea.Model, tea.Cmd) {
 		}
 		pos += w + 2
 	}
+	return m, nil
+}
+
+// dialogOrigin returns the top-left screen cell of the centered dialog box.
+// It must match lipgloss.Place(Center, Center): the leading gap is
+// gap - round(gap/2), i.e. floor(gap/2); the box area starts at row 2
+// (title + filter rows above it). Pinned by TestDialogOriginMatchesRender.
+func (m Model) dialogOrigin(box string) (x0, y0 int) {
+	x0 = (m.width - lipgloss.Width(box)) / 2
+	y0 = 2 + (m.height-3-lipgloss.Height(box))/2
+	return x0, y0
+}
+
+// handleDialogMouse gives the active dialog the same mouse affordances as
+// the main screen: buttons are clickable, wheel moves the dir cursor, and
+// clicking outside is a non-destructive cancel.
+func (m Model) handleDialogMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+		if m.dialog == dialogPickDir {
+			k := tea.KeyMsg{Type: tea.KeyDown}
+			if msg.Button == tea.MouseButtonWheelUp {
+				k = tea.KeyMsg{Type: tea.KeyUp}
+			}
+			return m.handleDialogKey(k)
+		}
+		return m, nil
+	}
+	if msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+
+	box := m.dialogView()
+	x0, y0 := m.dialogOrigin(box)
+	inside := msg.X >= x0 && msg.X < x0+lipgloss.Width(box) &&
+		msg.Y >= y0 && msg.Y < y0+lipgloss.Height(box)
+	cx := msg.X - x0 - m.st.DialogBox.GetBorderLeftSize() - m.st.DialogBox.GetPaddingLeft()
+	cy := msg.Y - y0 - m.st.DialogBox.GetBorderTopSize() - m.st.DialogBox.GetPaddingTop()
+
+	switch m.dialog {
+	case dialogError:
+		// "press any key" — any click counts
+		return m.handleDialogKey(tea.KeyMsg{Type: tea.KeyEsc})
+
+	case dialogDelete:
+		if !inside {
+			return m.handleDialogKey(runeKey("n"))
+		}
+		// content: 0 question, 1 blank, 2 title, 3 blank, 4 "y confirm · n cancel"
+		if cy == 4 {
+			switch {
+			case cx >= 0 && cx <= 8: // "y confirm"
+				return m.handleDialogKey(runeKey("y"))
+			case cx >= 12 && cx <= 19: // "n cancel"
+				return m.handleDialogKey(runeKey("n"))
+			}
+		}
+		return m, nil
+
+	case dialogPickDir:
+		if !inside {
+			return m.handleDialogKey(tea.KeyMsg{Type: tea.KeyEsc})
+		}
+		return m.clickPickDir(cy)
+	}
+	return m, nil
+}
+
+// clickPickDir lands in Task 8; the stub keeps this task compiling.
+func (m Model) clickPickDir(cy int) (tea.Model, tea.Cmd) {
 	return m, nil
 }

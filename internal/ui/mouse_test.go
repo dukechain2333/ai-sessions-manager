@@ -6,6 +6,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
 func click(x, y int) tea.MouseMsg {
@@ -359,5 +361,101 @@ func TestClickHelpGapKeepsFocus(t *testing.T) {
 	m = m2.(Model)
 	if m.focus != focusPreview {
 		t.Errorf("focus = %v, want focusPreview (a gap click must be a pure no-op)", m.focus)
+	}
+}
+
+// dialogContentOrigin returns the screen cell of the dialog's content (0,0),
+// i.e. the box origin shifted past border and padding.
+func dialogContentOrigin(m Model) (int, int) {
+	x0, y0 := m.dialogOrigin(m.dialogView())
+	return x0 + m.st.DialogBox.GetBorderLeftSize() + m.st.DialogBox.GetPaddingLeft(),
+		y0 + m.st.DialogBox.GetBorderTopSize() + m.st.DialogBox.GetPaddingTop()
+}
+
+func TestDialogOriginMatchesRender(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(key("d")) // delete dialog for s1
+	m = m2.(Model)
+	x0, y0 := m.dialogOrigin(m.dialogView())
+	lines := strings.Split(m.View(), "\n")
+	for y, ln := range lines {
+		if x := strings.Index(ln, "╭"); x >= 0 {
+			// bytes == cells here: everything left of the corner is spaces
+			if x != x0 || y != y0 {
+				t.Fatalf("corner rendered at (%d,%d), dialogOrigin says (%d,%d)", x, y, x0, y0)
+			}
+			return
+		}
+	}
+	t.Fatal("no dialog border corner found in the rendered view")
+}
+
+func TestDeleteDialogButtons(t *testing.T) {
+	m := newTestModel()
+	trashed := ""
+	m.trashFn = func(_ string, s store.Session) (string, error) {
+		trashed = s.ID
+		return "/trash/" + s.ID, nil
+	}
+	m2, _ := m.Update(key("d"))
+	m = m2.(Model)
+	cx, cy := dialogContentOrigin(m)
+	m2, _ = m.Update(click(cx+4, cy+4)) // inside "y confirm" [0,8]
+	m = m2.(Model)
+	if trashed != "s1" || m.dialog != dialogNone {
+		t.Fatalf("y-button: trashed=%q dialog=%v, want s1 trashed and dialog closed", trashed, m.dialog)
+	}
+
+	// n cancel
+	m2, _ = m.Update(key("d"))
+	m = m2.(Model)
+	trashed = ""
+	cx, cy = dialogContentOrigin(m)
+	m2, _ = m.Update(click(cx+14, cy+4)) // inside "n cancel" [12,19]
+	m = m2.(Model)
+	if trashed != "" || m.dialog != dialogNone {
+		t.Errorf("n-button: trashed=%q dialog=%v, want nothing trashed and dialog closed", trashed, m.dialog)
+	}
+}
+
+func TestDeleteDialogClickOutsideCancels(t *testing.T) {
+	m := newTestModel()
+	m.trashFn = func(string, store.Session) (string, error) {
+		t.Error("trashFn must not run on an outside click")
+		return "", nil
+	}
+	m2, _ := m.Update(key("d"))
+	m = m2.(Model)
+	x0, y0 := m.dialogOrigin(m.dialogView())
+	m2, _ = m.Update(click(x0-2, y0))
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Error("clicking outside the delete dialog must cancel it")
+	}
+}
+
+func TestDeleteDialogDeadZoneClickKeepsDialog(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(key("d"))
+	m = m2.(Model)
+	cx, cy := dialogContentOrigin(m)
+	m2, _ = m.Update(click(cx+10, cy+4)) // the " · " separator between buttons
+	m = m2.(Model)
+	if m.dialog != dialogDelete {
+		t.Error("clicking between the buttons must keep the dialog open")
+	}
+}
+
+func TestErrorDialogClickDismisses(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(claudeMissingMsg{})
+	m = m2.(Model)
+	if m.dialog != dialogError {
+		t.Fatal("setup: expected the error dialog")
+	}
+	m2, _ = m.Update(click(3, 3)) // anywhere
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Error("any click must dismiss the error dialog")
 	}
 }
