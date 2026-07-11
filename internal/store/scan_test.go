@@ -59,8 +59,12 @@ func TestEnrich(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i := range sessions {
+		sessions[i].Agent = AgentClaude
+	}
 	results := make(chan EnrichResult, len(sessions))
-	Enrich(sessions, 2, results)
+	prov := []Provider{NewClaudeProvider(dir)}
+	Enrich(sessions, prov, 2, results)
 	n := 0
 	for r := range results {
 		n++
@@ -85,8 +89,12 @@ func TestEnrichZeroWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i := range sessions {
+		sessions[i].Agent = AgentClaude
+	}
 	results := make(chan EnrichResult, len(sessions))
-	Enrich(sessions, 0, results)
+	prov := []Provider{NewClaudeProvider(dir)}
+	Enrich(sessions, prov, 0, results)
 	n := 0
 	for range results {
 		n++
@@ -130,6 +138,9 @@ func TestEnrichConcurrentWithSliceMutation(t *testing.T) {
 	if len(sessions) != n {
 		t.Fatalf("got %d sessions, want %d", len(sessions), n)
 	}
+	for i := range sessions {
+		sessions[i].Agent = AgentClaude
+	}
 
 	results := make(chan EnrichResult, len(sessions))
 	// Enrich is called synchronously, exactly like the UI's Update handler
@@ -138,7 +149,8 @@ func TestEnrichConcurrentWithSliceMutation(t *testing.T) {
 	// caller's slice, mirroring the real timeline (RemoveSession runs from
 	// a later, sequential Update call while a prior scan's workers are
 	// still draining in the background).
-	Enrich(sessions, 4, results)
+	prov := []Provider{NewClaudeProvider(dir)}
+	Enrich(sessions, prov, 4, results)
 
 	// Concurrently perform the same in-place shift RemoveSession(0) does
 	// (append(sessions[:0], sessions[1:]...)) on the SAME backing array
@@ -173,6 +185,26 @@ func TestEnrichConcurrentWithSliceMutation(t *testing.T) {
 	if got != n {
 		t.Fatalf("got %d results, want %d", got, n)
 	}
+}
+
+func TestEnrichDispatchesByAgent(t *testing.T) {
+	cdir := t.TempDir()
+	// one codex session with a real prompt
+	cf := filepath.Join(cdir, "2026", "06", "26", "rollout-x-bbbb.jsonl")
+	writeFile(t, cf, `{"type":"session_meta","payload":{"cwd":"/home/w/p","timestamp":"2026-06-26T03:52:34.743Z"}}`+"\n"+
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello codex"}]}}`+"\n")
+	sessions := []Session{{ID: "bbbb", Path: cf, Agent: AgentCodex}}
+	provs := []Provider{NewClaudeProvider(t.TempDir()), NewCodexProvider(cdir)}
+	results := make(chan EnrichResult, 1)
+	Enrich(sessions, provs, 2, results)
+	r := <-results
+	if r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if r.Meta.CWD != "/home/w/p" || r.Meta.FirstPrompt != "hello codex" {
+		t.Errorf("codex enrich = %+v", r.Meta)
+	}
+	<-results // drain enrichDone (channel close)
 }
 
 func TestResolveSlug(t *testing.T) {
