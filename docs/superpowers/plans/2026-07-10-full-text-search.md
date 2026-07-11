@@ -261,18 +261,22 @@ func (ix SearchIndex) EnsureSession(sessionPath string) error {
 		}
 		return cerr
 	}
-	return os.Rename(tmp.Name(), ix.cacheFile(sessionPath))
+	if err := os.Rename(tmp.Name(), ix.cacheFile(sessionPath)); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
+// readKey returns the cache file's header line. Freshness is decided by
+// the callers' direct comparison against the recomputed validity key —
+// any corruption simply fails that comparison and triggers a rebuild.
 func (ix SearchIndex) readKey(sessionPath string) (string, bool) {
 	data, err := os.ReadFile(ix.cacheFile(sessionPath))
 	if err != nil {
 		return "", false
 	}
 	head, _, _ := strings.Cut(string(data), "\n")
-	if strings.Count(head, "\t") != 2 {
-		return "", false // corrupt header
-	}
 	return head, true
 }
 
