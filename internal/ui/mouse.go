@@ -133,7 +133,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case zoneFilter:
 		m.focus = focusFilter
 		m.filterInput.Focus()
-		if msg.X <= 2 { // the 🔍 icon toggles the search layer
+		if msg.X <= 1 { // the "> " prompt glyph toggles the search layer
 			return m, m.toggleSearchLayer()
 		}
 		return m, nil

@@ -128,7 +128,8 @@ func New(projectsDir string) Model {
 	st := defaultStyles()
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
-	fi.Prompt = "🔍 "
+	fi.Prompt = "> "
+	fi.PromptStyle = lipgloss.NewStyle().Foreground(st.Accent)
 	di := textinput.New()
 	di.Placeholder = "…or type a path"
 	di.Prompt = "> "
@@ -185,7 +186,7 @@ func waitEnrich(ch chan store.EnrichResult) tea.Cmd {
 }
 
 // toggleSearchLayer flips between the title fuzzy filter and the full-text
-// layer. Shared by Tab in the filter and the 🔍 icon click.
+// layer. Shared by Tab in the filter and the "> " prompt glyph click.
 func (m *Model) toggleSearchLayer() tea.Cmd {
 	if m.indexErr != nil {
 		m.dialog = dialogError
@@ -820,6 +821,7 @@ func (m Model) View() string {
 		count += " · scanning…"
 	}
 	header := lipgloss.JoinHorizontal(lipgloss.Top,
+		m.st.TitleMark(), // ✻ in accent
 		m.st.AppTitle.Render(" sm · AI Sessions  "),
 		m.st.Count.Render(count),
 	)

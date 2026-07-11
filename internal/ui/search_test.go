@@ -637,3 +637,31 @@ func TestClickSearchIconTogglesLayer(t *testing.T) {
 		t.Error("second icon click must toggle back")
 	}
 }
+
+func TestPromptZoneNarrowedToPromptGlyph(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(click(2, 1)) // column 2 is now input area, not the prompt
+	m = m2.(Model)
+	if m.searchAll {
+		t.Fatal("clicking column 2 must not toggle the layer (prompt is columns 0-1)")
+	}
+	if m.focus != focusFilter {
+		t.Error("clicking the bar must still focus the filter")
+	}
+	m2, _ = m.Update(click(1, 1))
+	m = m2.(Model)
+	if !m.searchAll {
+		t.Error("clicking the prompt glyph must still toggle")
+	}
+}
+
+func TestClaudeThemeChrome(t *testing.T) {
+	m := newTestModel()
+	view := m.View()
+	if !strings.Contains(view, "✻ sm · AI Sessions") {
+		t.Errorf("title must carry the ✻ mark; head: %.80s", view)
+	}
+	if !strings.Contains(view, "> ") || strings.Contains(view, "🔍") {
+		t.Error("filter prompt must be '> ', not 🔍")
+	}
+}

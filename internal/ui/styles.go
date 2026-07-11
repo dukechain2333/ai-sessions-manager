@@ -9,6 +9,7 @@ import (
 )
 
 type styles struct {
+	Accent         lipgloss.AdaptiveColor
 	AppTitle       lipgloss.Style
 	Count          lipgloss.Style
 	ListTitle      lipgloss.Style
@@ -17,6 +18,7 @@ type styles struct {
 	ListMetaSel    lipgloss.Style
 	GroupHeader    lipgloss.Style
 	GroupHeaderSel lipgloss.Style
+	GroupCount     lipgloss.Style
 	UserMsg        lipgloss.Style
 	AssistantMsg   lipgloss.Style
 	ToolMsg        lipgloss.Style
@@ -28,28 +30,36 @@ type styles struct {
 }
 
 func defaultStyles() styles {
-	accent := lipgloss.AdaptiveColor{Light: "56", Dark: "212"}
-	dim := lipgloss.AdaptiveColor{Light: "245", Dark: "241"}
-	text := lipgloss.AdaptiveColor{Light: "235", Dark: "252"}
+	accent := lipgloss.AdaptiveColor{Light: "#C15F3C", Dark: "#D97757"}
+	text := lipgloss.AdaptiveColor{Light: "#333333", Dark: "#DEDEDE"}
+	dim := lipgloss.AdaptiveColor{Light: "#8A8A8A", Dark: "#767676"}
+	faint := lipgloss.AdaptiveColor{Light: "#D0D0D0", Dark: "#3A3A3A"}
 	warn := lipgloss.AdaptiveColor{Light: "160", Dark: "203"}
 	return styles{
-		AppTitle:       lipgloss.NewStyle().Bold(true).Foreground(accent),
+		Accent:         accent,
+		AppTitle:       lipgloss.NewStyle().Bold(true).Foreground(text),
 		Count:          lipgloss.NewStyle().Foreground(dim),
 		ListTitle:      lipgloss.NewStyle().Foreground(text),
 		ListTitleSel:   lipgloss.NewStyle().Bold(true).Foreground(accent),
 		ListMeta:       lipgloss.NewStyle().Foreground(dim),
 		ListMetaSel:    lipgloss.NewStyle().Foreground(accent),
-		GroupHeader:    lipgloss.NewStyle().Bold(true).Foreground(text).Underline(true),
-		GroupHeaderSel: lipgloss.NewStyle().Bold(true).Foreground(accent).Underline(true),
+		GroupHeader:    lipgloss.NewStyle().Bold(true).Foreground(text),
+		GroupHeaderSel: lipgloss.NewStyle().Bold(true).Foreground(accent),
+		GroupCount:     lipgloss.NewStyle().Foreground(accent),
 		UserMsg:        lipgloss.NewStyle().Bold(true).Foreground(text),
 		AssistantMsg:   lipgloss.NewStyle().Foreground(text),
 		ToolMsg:        lipgloss.NewStyle().Foreground(dim),
 		PaneFocused:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent),
-		PaneBlurred:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(dim),
+		PaneBlurred:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(faint),
 		Help:           lipgloss.NewStyle().Foreground(dim),
 		ErrorText:      lipgloss.NewStyle().Bold(true).Foreground(warn),
 		DialogBox:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 2),
 	}
+}
+
+// TitleMark is the Claude-style ✻ rendered in the accent color.
+func (s styles) TitleMark() string {
+	return lipgloss.NewStyle().Foreground(s.Accent).Render("✻")
 }
 
 func humanTime(t, now time.Time) string {

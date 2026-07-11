@@ -433,12 +433,24 @@ func (l *listPane) View() string {
 			if l.folded[r.project] {
 				indicator = "▸"
 			}
-			label := fmt.Sprintf("%s %s (%d)", indicator, r.project, l.counts[r.project])
+			name := fmt.Sprintf("%s %s", indicator, r.project)
+			count := fmt.Sprintf("(%d)", l.counts[r.project])
+			label := store.Truncate(name+" "+count, l.width)
 			style := l.styles.GroupHeader
 			if i == l.cursor {
 				style = l.styles.GroupHeaderSel
 			}
-			lines = append(lines, style.Render(store.Truncate(label, l.width)))
+			// Split the name from the "(n)" count so they can carry
+			// different styles while the rendered text stays byte-identical
+			// to the un-split label. If truncation ate into (or removed)
+			// the count suffix, fall back to a single style for the whole
+			// (already-truncated) string — still exactly the same visible
+			// characters, just without the count's distinct color.
+			rendered := style.Render(label)
+			if suffix := " " + count; strings.HasSuffix(label, suffix) {
+				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + l.styles.GroupCount.Render(count)
+			}
+			lines = append(lines, rendered)
 			continue
 		}
 
