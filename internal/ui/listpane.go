@@ -85,6 +85,8 @@ func (l *listPane) SetFilter(q string) {
 
 // SetSearchResults switches the pane to full-text results: sessions in the
 // given order, flat, with hit counts on the meta line. nil switches back.
+// SetSearchResults takes ownership of hits and may mutate it (RemoveSession);
+// callers must not retain or reuse the slice.
 func (l *listPane) SetSearchResults(hits []store.SessionHits) {
 	l.search = hits
 	l.cursor = 0

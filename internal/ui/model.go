@@ -53,6 +53,21 @@ type (
 	claudeMissingMsg struct{}
 )
 
+const searchDebounce = 150 * time.Millisecond
+
+type (
+	searchTickMsg   struct{ seq int }
+	searchResultMsg struct {
+		seq  int
+		hits []store.SessionHits
+	}
+	indexProgressMsg struct {
+		p  store.IndexProgress
+		ch chan store.IndexProgress
+	}
+	indexDoneMsg struct{ ch chan store.IndexProgress }
+)
+
 type Model struct {
 	projectsDir string
 	st          styles
@@ -87,6 +102,19 @@ type Model struct {
 	lastClickRow  int
 	lastClickAt   time.Time
 	now           func() time.Time
+
+	// full-text search layer
+	searchAll   bool
+	searchSeq   int
+	activeQuery string
+	matched     int
+	index       store.SearchIndex
+	indexErr    error
+	indexReady  bool
+	indexing    bool
+	indexDone   int
+	indexTotal  int
+	indexCh     chan store.IndexProgress
 }
 
 func New(projectsDir string) Model {
@@ -97,7 +125,7 @@ func New(projectsDir string) Model {
 	di := textinput.New()
 	di.Placeholder = "…or type a path"
 	di.Prompt = "> "
-	return Model{
+	ret := Model{
 		projectsDir:   projectsDir,
 		st:            st,
 		list:          listPane{styles: st, groupByProject: true},
@@ -110,6 +138,8 @@ func New(projectsDir string) Model {
 		lastClickRow:  -1,
 		now:           time.Now,
 	}
+	ret.index, ret.indexErr = store.NewSearchIndex()
+	return ret
 }
 
 func execClaude(dir string, args ...string) tea.Cmd {
@@ -144,6 +174,61 @@ func waitEnrich(ch chan store.EnrichResult) tea.Cmd {
 			return enrichDoneMsg{ch: ch}
 		}
 		return enrichMsg{EnrichResult: r, ch: ch}
+	}
+}
+
+// toggleSearchLayer flips between the title fuzzy filter and the full-text
+// layer. Shared by Tab in the filter and the 🔍 icon click.
+func (m *Model) toggleSearchLayer() tea.Cmd {
+	if m.indexErr != nil {
+		m.dialog = dialogError
+		m.errText = "search index unavailable: " + m.indexErr.Error()
+		return nil
+	}
+	m.searchAll = !m.searchAll
+	if m.searchAll {
+		m.filterInput.Placeholder = "search…"
+		m.list.SetFilter("")
+		return m.dispatchSearch()
+	}
+	m.filterInput.Placeholder = "filter…"
+	m.matched = 0
+	m.list.SetSearchResults(nil)
+	m.list.SetFilter(m.filterInput.Value())
+	return m.loadTranscriptCmd()
+}
+
+// dispatchSearch starts (or restarts) the debounce clock for the current
+// query. Empty queries clear results immediately.
+func (m *Model) dispatchSearch() tea.Cmd {
+	m.searchSeq++
+	q := strings.TrimSpace(m.filterInput.Value())
+	if q == "" {
+		m.activeQuery = ""
+		m.matched = 0
+		m.list.SetSearchResults(nil)
+		return m.loadTranscriptCmd()
+	}
+	seq := m.searchSeq
+	return tea.Tick(searchDebounce, func(time.Time) tea.Msg { return searchTickMsg{seq: seq} })
+}
+
+// runSearch is the async search over the index cache.
+func (m *Model) runSearch(seq int) tea.Cmd {
+	ix, q, sessions := m.index, m.filterInput.Value(), m.list.Sessions()
+	return func() tea.Msg {
+		hits, _ := ix.Search(q, sessions)
+		return searchResultMsg{seq: seq, hits: hits}
+	}
+}
+
+func waitIndex(ch chan store.IndexProgress) tea.Cmd {
+	return func() tea.Msg {
+		p, ok := <-ch
+		if !ok {
+			return indexDoneMsg{ch: ch}
+		}
+		return indexProgressMsg{p: p, ch: ch}
 	}
 }
 
@@ -289,6 +374,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.scanCmd()
 
+	case searchTickMsg:
+		if !m.searchAll || msg.seq != m.searchSeq {
+			return m, nil
+		}
+		m.activeQuery = strings.TrimSpace(m.filterInput.Value())
+		var cmds []tea.Cmd
+		if !m.indexReady && !m.indexing {
+			ch := make(chan store.IndexProgress, 8)
+			m.indexCh = ch
+			m.indexing = true
+			m.indexDone, m.indexTotal = 0, len(m.list.Sessions())
+			m.index.EnsureAll(m.list.Sessions(), 4, ch)
+			cmds = append(cmds, waitIndex(ch))
+		}
+		cmds = append(cmds, m.runSearch(msg.seq))
+		return m, tea.Batch(cmds...)
+
+	case searchResultMsg:
+		if !m.searchAll || msg.seq != m.searchSeq {
+			return m, nil
+		}
+		m.matched = len(msg.hits)
+		m.list.SetSearchResults(msg.hits)
+		return m, m.loadTranscriptCmd()
+
+	case indexProgressMsg:
+		if msg.ch != m.indexCh {
+			return m, nil
+		}
+		m.indexDone, m.indexTotal = msg.p.Done, msg.p.Total
+		return m, waitIndex(msg.ch)
+
+	case indexDoneMsg:
+		if msg.ch != m.indexCh {
+			return m, nil
+		}
+		m.indexReady = true
+		m.indexing = false
+		if m.searchAll && m.activeQuery != "" {
+			return m, m.runSearch(m.searchSeq)
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
@@ -313,14 +441,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterInput.Blur()
 			m.list.SetFilter("")
 			m.focus = focusList
+			if m.searchAll {
+				m.searchAll = false
+				m.filterInput.Placeholder = "filter…"
+				m.matched = 0
+				m.activeQuery = ""
+				m.list.SetSearchResults(nil)
+			}
 			return m, m.loadTranscriptCmd()
 		case tea.KeyEnter:
 			m.filterInput.Blur()
 			m.focus = focusList
 			return m, nil
+		case tea.KeyTab:
+			return m, m.toggleSearchLayer()
 		}
 		var cmd tea.Cmd
 		m.filterInput, cmd = m.filterInput.Update(msg)
+		if m.searchAll {
+			return m, tea.Batch(cmd, m.dispatchSearch())
+		}
 		m.list.SetFilter(m.filterInput.Value())
 		return m, tea.Batch(cmd, m.loadTranscriptCmd())
 
@@ -363,6 +503,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.list.ToggleFold()
 			return m, m.loadTranscriptCmd()
 		case "r":
+			m.indexReady = false // next full-text search revalidates the cache
 			return m, m.scanCmd()
 		case "enter":
 			if m.list.OnHeader() {
@@ -552,6 +693,15 @@ func (m Model) View() string {
 		return "loading…"
 	}
 	count := fmt.Sprintf("%d sessions", m.list.Len())
+	if m.searchAll && m.activeQuery != "" {
+		count = fmt.Sprintf("%d sessions · %d matched", len(m.list.Sessions()), m.matched)
+		if !m.indexReady {
+			count += "…"
+		}
+	}
+	if m.indexing {
+		count += fmt.Sprintf(" · indexing %d/%d…", m.indexDone, m.indexTotal)
+	}
 	if m.loading {
 		count += " · scanning…"
 	}
