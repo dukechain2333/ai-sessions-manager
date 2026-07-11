@@ -26,7 +26,7 @@ func main() {
 		fmt.Println("sm", version)
 		return
 	}
-	p := tea.NewProgram(ui.New(*projectsDir), tea.WithAltScreen())
+	p := tea.NewProgram(ui.New(*projectsDir), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "sm:", err)
 		os.Exit(1)

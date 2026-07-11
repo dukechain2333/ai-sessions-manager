@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -52,6 +53,21 @@ type (
 	claudeMissingMsg struct{}
 )
 
+const searchDebounce = 150 * time.Millisecond
+
+type (
+	searchTickMsg   struct{ seq int }
+	searchResultMsg struct {
+		seq  int
+		hits []store.SessionHits
+	}
+	indexProgressMsg struct {
+		p  store.IndexProgress
+		ch chan store.IndexProgress
+	}
+	indexDoneMsg struct{ ch chan store.IndexProgress }
+)
+
 type Model struct {
 	projectsDir string
 	st          styles
@@ -80,17 +96,44 @@ type Model struct {
 	// injected for tests
 	trashFn   func(string, store.Session) (string, error)
 	runClaude func(dir string, args ...string) tea.Cmd
+
+	// mouse double-click tracking; now is injected for tests
+	lastClickZone zone
+	lastClickRow  int
+	lastClickAt   time.Time
+	now           func() time.Time
+
+	// full-text search layer
+	searchAll   bool
+	searchSeq   int
+	activeQuery string
+	matched     int
+	index       store.SearchIndex
+	indexErr    error
+	indexReady  bool
+	indexing    bool
+	indexStale  bool
+	indexDone   int
+	indexTotal  int
+	indexFailed int
+	indexCh     chan store.IndexProgress
+
+	// preview hit navigation
+	msgStarts []int
+	hitMsgs   []int
+	curHit    int
 }
 
 func New(projectsDir string) Model {
 	st := defaultStyles()
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
-	fi.Prompt = "🔍 "
+	fi.Prompt = "> "
+	fi.PromptStyle = lipgloss.NewStyle().Foreground(st.Accent)
 	di := textinput.New()
 	di.Placeholder = "…or type a path"
 	di.Prompt = "> "
-	return Model{
+	ret := Model{
 		projectsDir:   projectsDir,
 		st:            st,
 		list:          listPane{styles: st, groupByProject: true},
@@ -100,7 +143,11 @@ func New(projectsDir string) Model {
 		pendingDelete: -1,
 		trashFn:       store.TrashSession,
 		runClaude:     execClaude,
+		lastClickRow:  -1,
+		now:           time.Now,
 	}
+	ret.index, ret.indexErr = store.NewSearchIndex()
+	return ret
 }
 
 func execClaude(dir string, args ...string) tea.Cmd {
@@ -138,6 +185,75 @@ func waitEnrich(ch chan store.EnrichResult) tea.Cmd {
 	}
 }
 
+// toggleSearchLayer flips between the title fuzzy filter and the full-text
+// layer. Shared by Tab in the filter and the "> " prompt glyph click.
+func (m *Model) toggleSearchLayer() tea.Cmd {
+	if m.indexErr != nil {
+		m.dialog = dialogError
+		m.errText = "search index unavailable: " + m.indexErr.Error()
+		return nil
+	}
+	m.searchAll = !m.searchAll
+	if m.searchAll {
+		m.filterInput.Placeholder = "search…"
+		m.list.SetFilter("")
+		m.indexReady = false // re-entering full-text mode re-checks validity keys (spec)
+		if m.indexing {
+			m.indexStale = true
+		}
+		return m.dispatchSearch()
+	}
+	m.filterInput.Placeholder = "filter…"
+	m.matched = 0
+	m.list.SetSearchResults(nil)
+	m.list.SetFilter(m.filterInput.Value())
+	// Same reasoning as the Esc path: force a reload so a selection that
+	// lands back on the same session doesn't keep the stale highlighted
+	// render (and its hitMsgs/n-N state) alive.
+	m.previewFor = ""
+	m.hitMsgs = nil
+	m.curHit = 0
+	return m.loadTranscriptCmd()
+}
+
+// dispatchSearch starts (or restarts) the debounce clock for the current
+// query. Empty queries clear results immediately.
+func (m *Model) dispatchSearch() tea.Cmd {
+	m.searchSeq++
+	q := strings.TrimSpace(m.filterInput.Value())
+	if q == "" {
+		m.activeQuery = ""
+		m.matched = 0
+		m.list.SetSearchResults(nil)
+		return m.loadTranscriptCmd()
+	}
+	seq := m.searchSeq
+	return tea.Tick(searchDebounce, func(time.Time) tea.Msg { return searchTickMsg{seq: seq} })
+}
+
+// runSearch is the async search over the index cache. It snapshots the
+// sessions slice on the Update goroutine first — the enrich pump mutates
+// session structs in place, so the search goroutine must never read the
+// live slice (same reason Enrich itself snapshots up front).
+func (m *Model) runSearch(seq int) tea.Cmd {
+	ix, q := m.index, m.filterInput.Value()
+	sessions := append([]store.Session(nil), m.list.Sessions()...)
+	return func() tea.Msg {
+		hits, _ := ix.Search(q, sessions)
+		return searchResultMsg{seq: seq, hits: hits}
+	}
+}
+
+func waitIndex(ch chan store.IndexProgress) tea.Cmd {
+	return func() tea.Msg {
+		p, ok := <-ch
+		if !ok {
+			return indexDoneMsg{ch: ch}
+		}
+		return indexProgressMsg{p: p, ch: ch}
+	}
+}
+
 func (m *Model) loadTranscriptCmd() tea.Cmd {
 	s, _, ok := m.list.Selected()
 	if !ok {
@@ -161,24 +277,38 @@ func (m *Model) loadTranscriptCmd() tea.Cmd {
 // below 80 columns the preview pane is hidden (per spec).
 func (m Model) narrow() bool { return m.width < 80 }
 
-// Layout: 1 header row + 1 filter row + body + 1 help row; borders eat
-// 2 rows/cols per pane.
-func (m *Model) layout() {
-	bodyH := m.height - 5
-	if bodyH < 3 {
-		bodyH = 3
+// bodyHeight is the pane content height: total height minus title, filter,
+// help, and the panes' top/bottom border rows.
+func (m *Model) bodyHeight() int {
+	h := m.height - 5
+	if h < 3 {
+		return 3
 	}
-	listW := m.width * 2 / 5
+	return h
+}
+
+// paneWidths returns the outer widths of the list and preview panes.
+// layout() and mouse hit-testing must agree on these, so they live here.
+func (m *Model) paneWidths() (listW, previewW int) {
+	listW = m.width * 2 / 5
 	if listW < 20 {
 		listW = 20
 	}
 	if m.narrow() {
 		listW = m.width - 2
 	}
-	previewW := m.width - listW - 2
+	previewW = m.width - listW - 2
 	if previewW < 10 {
 		previewW = 10
 	}
+	return listW, previewW
+}
+
+// Layout: 1 header row + 1 filter row + body + 1 help row; borders eat
+// 2 rows/cols per pane.
+func (m *Model) layout() {
+	bodyH := m.bodyHeight()
+	listW, previewW := m.paneWidths()
 	m.list.SetSize(listW-2, bodyH)
 	if !m.ready {
 		m.preview = viewport.New(previewW, bodyH)
@@ -202,7 +332,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errText = fmt.Sprintf("cannot read %s: %v", m.projectsDir, msg.err)
 			return m, nil
 		}
+		// Every successful (re)scan revalidates the full-text index —
+		// covers startup, `r`, and the rescan claudeExitMsg triggers after
+		// a resumed session's mtime/size may have changed. An EnsureAll
+		// build already in flight when this lands cannot be trusted as
+		// "ready" once it completes (it was dispatched against the
+		// pre-scan session list); indexStale flags that for indexDoneMsg.
+		m.indexReady = false
+		if m.indexing {
+			m.indexStale = true
+		}
 		m.list.SetSessions(msg.sessions)
+		m.lastClickRow = -1 // rows renumbered — stale click index must not pair into a double-click
 		m.previewFor = ""
 		if len(msg.sessions) == 0 {
 			if m.ready {
@@ -214,6 +355,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.enrichCh = ch
 		m.loading = true
 		store.Enrich(msg.sessions, 8, ch)
+		if m.searchAll && m.activeQuery != "" {
+			m.list.SetSearchResults(nil) // never render old indices over the new ordering
+			return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd(), m.dispatchSearch())
+		}
 		return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd())
 
 	case enrichMsg:
@@ -227,6 +372,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.list.ApplyEnrich(msg.Index, msg.Meta)
+			// Enrichment can flip a session to Empty and drop it from the
+			// visible rows, renumbering them. Invalidate any pending click so a
+			// second click at the same coordinates can't pair with a stale row
+			// index and resume the wrong session.
+			m.lastClickRow = -1
 		}
 		cmd := m.loadTranscriptCmd()
 		return m, tea.Batch(waitEnrich(msg.ch), cmd)
@@ -246,8 +396,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.preview.SetContent(m.st.ErrorText.Render(msg.err.Error()))
 			return m, nil
 		}
-		m.preview.SetContent(renderTranscript(msg.t, m.preview.Width, m.st))
+		tr := msg.t
+		// tr is a copy of the message slice header, but tr.Messages[i].Text =
+		// … below mutates the shared backing array of the cached transcript.
+		// Deep-copy the messages first so highlighting never poisons the cache.
+		msgs := make([]store.Message, len(tr.Messages))
+		copy(msgs, tr.Messages)
+		tr.Messages = msgs
+		m.hitMsgs = nil
+		m.curHit = 0
+		terms := store.SplitTerms(m.activeQuery)
+		if m.searchAll && len(terms) > 0 {
+			for i := range tr.Messages {
+				if tr.Messages[i].Kind == store.KindTool {
+					continue
+				}
+				lower := strings.ToLower(tr.Messages[i].Text)
+				for _, t := range terms {
+					if strings.Contains(lower, t) {
+						tr.Messages[i].Text = highlightTerms(tr.Messages[i].Text, terms)
+						m.hitMsgs = append(m.hitMsgs, i)
+						break
+					}
+				}
+			}
+		}
+		content, starts := renderTranscript(tr, m.preview.Width, m.st)
+		m.msgStarts = starts
+		m.preview.SetContent(content)
 		m.preview.GotoTop()
+		if len(m.hitMsgs) > 0 {
+			m.preview.SetYOffset(m.msgStarts[m.hitMsgs[0]])
+		}
 		return m, nil
 
 	case claudeMissingMsg:
@@ -266,8 +446,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.scanCmd()
 
+	case searchTickMsg:
+		if !m.searchAll || msg.seq != m.searchSeq {
+			return m, nil
+		}
+		m.activeQuery = strings.TrimSpace(m.filterInput.Value())
+		var cmds []tea.Cmd
+		if !m.indexReady && !m.indexing {
+			ch := make(chan store.IndexProgress, 8)
+			m.indexCh = ch
+			m.indexing = true
+			m.indexDone, m.indexTotal = 0, len(m.list.Sessions())
+			m.indexFailed = 0
+			m.index.EnsureAll(m.list.Sessions(), 4, ch)
+			cmds = append(cmds, waitIndex(ch))
+		}
+		cmds = append(cmds, m.runSearch(msg.seq))
+		return m, tea.Batch(cmds...)
+
+	case searchResultMsg:
+		if !m.searchAll || msg.seq != m.searchSeq {
+			return m, nil
+		}
+		m.matched = len(msg.hits)
+		m.list.SetSearchResults(msg.hits)
+		m.lastClickRow = -1 // rows renumbered — stale indexes must not pair (same precedent as the fold path in clickList)
+		// the highlight set depends on the query, not just the session —
+		// force the preview to re-render
+		m.previewFor = ""
+		return m, m.loadTranscriptCmd()
+
+	case indexProgressMsg:
+		if msg.ch != m.indexCh {
+			return m, nil
+		}
+		m.indexDone, m.indexTotal = msg.p.Done, msg.p.Total
+		if msg.p.Err != nil {
+			m.indexFailed++
+		}
+		return m, waitIndex(msg.ch)
+
+	case indexDoneMsg:
+		if msg.ch != m.indexCh {
+			return m, nil
+		}
+		if m.indexStale {
+			// An invalidation landed while this build was in flight; it was
+			// dispatched against state we now know is outdated, so it
+			// cannot be trusted as "ready". Leave indexReady false and, if
+			// a search is still active, dispatch through the debounce path
+			// (not runSearch directly) so the next tick re-kicks EnsureAll.
+			m.indexStale = false
+			m.indexing = false
+			if m.searchAll && m.activeQuery != "" {
+				return m, m.dispatchSearch()
+			}
+			return m, nil
+		}
+		m.indexReady = true
+		m.indexing = false
+		if m.searchAll && m.activeQuery != "" {
+			return m, m.runSearch(m.searchSeq)
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 	return m, nil
 }
@@ -287,14 +534,38 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterInput.Blur()
 			m.list.SetFilter("")
 			m.focus = focusList
+			if m.searchAll {
+				m.searchAll = false
+				m.filterInput.Placeholder = "filter…"
+				m.matched = 0
+				m.activeQuery = ""
+				m.list.SetSearchResults(nil)
+				// Force the preview to reload: without this, a selection
+				// that lands back on the same session would keep showing
+				// the stale highlighted render (and its hitMsgs/n-N state)
+				// because loadTranscriptCmd short-circuits on an unchanged
+				// previewFor.
+				m.previewFor = ""
+				m.hitMsgs = nil
+				m.curHit = 0
+			}
 			return m, m.loadTranscriptCmd()
 		case tea.KeyEnter:
 			m.filterInput.Blur()
 			m.focus = focusList
 			return m, nil
+		case tea.KeyDown:
+			m.filterInput.Blur()
+			m.focus = focusList
+			return m, nil
+		case tea.KeyTab:
+			return m, m.toggleSearchLayer()
 		}
 		var cmd tea.Cmd
 		m.filterInput, cmd = m.filterInput.Update(msg)
+		if m.searchAll {
+			return m, tea.Batch(cmd, m.dispatchSearch())
+		}
 		m.list.SetFilter(m.filterInput.Value())
 		return m, tea.Batch(cmd, m.loadTranscriptCmd())
 
@@ -305,6 +576,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "tab", "esc":
 			m.focus = focusList
 			return m, nil
+		case "n", "N":
+			if len(m.hitMsgs) > 0 {
+				if msg.String() == "n" {
+					m.curHit = (m.curHit + 1) % len(m.hitMsgs)
+				} else {
+					m.curHit = (m.curHit - 1 + len(m.hitMsgs)) % len(m.hitMsgs)
+				}
+				m.preview.SetYOffset(m.msgStarts[m.hitMsgs[m.curHit]])
+				return m, nil
+			}
 		}
 		var cmd tea.Cmd
 		m.preview, cmd = m.preview.Update(msg)
@@ -325,8 +606,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.list.MoveCursor(1)
 			return m, m.loadTranscriptCmd()
 		case "k", "up":
+			if m.list.cursor == 0 {
+				// walking up past the top row enters the search bar
+				m.focus = focusFilter
+				m.filterInput.Focus()
+				return m, nil
+			}
 			m.list.MoveCursor(-1)
 			return m, m.loadTranscriptCmd()
+		case "s":
+			// s = search: focus the bar on the full-text layer. / stays the
+			// title-filter entry; s never flips an already-on layer back.
+			m.focus = focusFilter
+			m.filterInput.Focus()
+			if !m.searchAll {
+				return m, m.toggleSearchLayer()
+			}
+			return m, nil
 		case "e":
 			m.list.ToggleEmpty()
 			return m, m.loadTranscriptCmd()
@@ -337,6 +633,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.list.ToggleFold()
 			return m, m.loadTranscriptCmd()
 		case "r":
+			// indexReady reset now happens centrally in scanDoneMsg's
+			// success path (covers every rescan source, not just this key).
 			return m, m.scanCmd()
 		case "enter":
 			if m.list.OnHeader() {
@@ -411,6 +709,12 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.list.RemoveSession(idx)
 				m.previewFor = ""
+			}
+			if m.searchAll && m.activeQuery != "" {
+				// dispatchSearch self-bumps the seq — orphaning any in-flight
+				// result computed against pre-delete indices — and its tick
+				// path revalidates the index when needed.
+				return m, tea.Batch(m.loadTranscriptCmd(), m.dispatchSearch())
 			}
 			return m, m.loadTranscriptCmd()
 		case "n", "esc":
@@ -526,10 +830,23 @@ func (m Model) View() string {
 		return "loading…"
 	}
 	count := fmt.Sprintf("%d sessions", m.list.Len())
+	if m.searchAll && m.activeQuery != "" {
+		count = fmt.Sprintf("%d sessions · %d matched", len(m.list.Sessions()), m.matched)
+		if !m.indexReady {
+			count += "…"
+		}
+	}
+	if m.indexing {
+		count += fmt.Sprintf(" · indexing %d/%d…", m.indexDone, m.indexTotal)
+	}
+	if m.indexFailed > 0 {
+		count += fmt.Sprintf(" · %d unindexed", m.indexFailed)
+	}
 	if m.loading {
 		count += " · scanning…"
 	}
 	header := lipgloss.JoinHorizontal(lipgloss.Top,
+		m.st.TitleMark(), // ✻ in accent
 		m.st.AppTitle.Render(" sm · AI Sessions  "),
 		m.st.Count.Render(count),
 	)
@@ -546,7 +863,11 @@ func (m Model) View() string {
 			listStyle = m.st.PaneFocused
 		}
 		if m.narrow() {
-			body = listStyle.Render(m.list.View())
+			// Pad the list to the full body height. Without this the frame is
+			// only as tall as the list, the help bar floats above the bottom
+			// row, and mouse hit-testing (which assumes help is the last row)
+			// maps clicks on the blank strip to help-bar actions.
+			body = listStyle.Height(m.bodyHeight()).Render(m.list.View())
 		} else {
 			body = lipgloss.JoinHorizontal(lipgloss.Top,
 				listStyle.Render(m.list.View()),
@@ -555,6 +876,9 @@ func (m Model) View() string {
 		}
 	}
 
-	help := m.st.Help.Render(" ↵ resume  tab focus  n new  d delete  / filter  g group  space fold  e empty  r rescan  q quit")
+	// Clamp to the terminal width so a help line wider than the screen
+	// truncates cleanly instead of wrapping onto another row (which would
+	// corrupt the alt-screen frame). The full bar needs ~105 columns.
+	help := m.st.Help.MaxWidth(m.width).Render(helpLine())
 	return header + "\n" + filterBar + "\n" + body + "\n" + help
 }

@@ -257,3 +257,186 @@ func TestHumanTime(t *testing.T) {
 		}
 	}
 }
+
+func TestRowAtLineGrouped(t *testing.T) {
+	l := newTestPane()
+	l.ToggleGroup() // fixture pane starts flat; model default is grouped
+	// rows: 0 hdr alpha, 1 s1 (3 lines), 2 hdr beta, 3 s2 (3 lines)
+	cases := []struct {
+		line int
+		row  int
+		ok   bool
+	}{
+		{0, 0, true}, {1, 1, true}, {3, 1, true}, {4, 2, true},
+		{5, 3, true}, {7, 3, true}, {8, 0, false}, {-1, 0, false},
+	}
+	for _, c := range cases {
+		row, ok := l.RowAtLine(c.line)
+		if ok != c.ok || (ok && row != c.row) {
+			t.Errorf("RowAtLine(%d) = (%d,%v), want (%d,%v)", c.line, row, ok, c.row, c.ok)
+		}
+	}
+}
+
+func TestRowAtLineFlat(t *testing.T) {
+	l := newTestPane() // flat: rows 0 s1 (lines 0-2), 1 s2 (lines 3-5)
+	for line, want := range map[int]int{0: 0, 2: 0, 3: 1, 5: 1} {
+		if row, ok := l.RowAtLine(line); !ok || row != want {
+			t.Errorf("RowAtLine(%d) = (%d,%v), want (%d,true)", line, row, ok, want)
+		}
+	}
+	if _, ok := l.RowAtLine(6); ok {
+		t.Error("RowAtLine(6) should be out of range")
+	}
+}
+
+func TestRowAtLineFolded(t *testing.T) {
+	l := newTestPane()
+	l.ToggleGroup()
+	l.ToggleFold() // cursor starts on s1 → folds alpha; rows: hdr alpha, hdr beta, s2
+	if row, ok := l.RowAtLine(1); !ok || row != 1 {
+		t.Errorf("folded: RowAtLine(1) = %d, want 1 (beta header)", row)
+	}
+	if row, ok := l.RowAtLine(3); !ok || row != 2 {
+		t.Errorf("folded: RowAtLine(3) = %d, want 2 (s2 middle line)", row)
+	}
+}
+
+func TestRowAtLineScrolledSmallPane(t *testing.T) {
+	l := listPane{styles: defaultStyles()}
+	l.SetSize(50, 3)
+	l.SetSessions(testSessions())
+	l.ToggleGroup()
+	l.SetCursor(3)
+	// ensureVisible keeps title+meta visible (the blank separator may hang
+	// off-screen): cursor on s2 (lines 5-7, height 3) → lineOffset 4.
+	if l.lineOffset == 0 {
+		t.Fatal("setup: expected a scrolled pane")
+	}
+	if row, ok := l.RowAtLine(0); !ok || row != 2 {
+		t.Errorf("scrolled: RowAtLine(0) = %d, want 2 (beta header at line 4)", row)
+	}
+	if row, ok := l.RowAtLine(1); !ok || row != 3 {
+		t.Errorf("scrolled: RowAtLine(1) = %d, want 3 (s2 title line)", row)
+	}
+}
+
+func TestSetCursorClamps(t *testing.T) {
+	l := newTestPane()
+	l.SetCursor(1)
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("SetCursor(1) selected %v, want s2", s.ID)
+	}
+	l.SetCursor(99) // out of range: no-op
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("SetCursor(99) moved cursor to %v", s.ID)
+	}
+	l.SetCursor(-1)
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("SetCursor(-1) moved cursor to %v", s.ID)
+	}
+}
+
+func TestSearchResultsMode(t *testing.T) {
+	l := newTestPane()
+	l.ToggleGroup() // grouped, to prove search mode overrides grouping
+	l.SetSearchResults([]store.SessionHits{
+		{Session: 1, MsgHits: 3, First: 0}, // s2 first (more hits)
+		{Session: 0, MsgHits: 1, First: 2},
+	})
+	if got := l.Len(); got != 2 {
+		t.Fatalf("Len = %d, want 2", got)
+	}
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Fatalf("first result should be selected, got %v", s.ID)
+	}
+	for _, r := range l.rows {
+		if r.header {
+			t.Fatal("search mode must not render project headers")
+		}
+	}
+	view := l.View()
+	if !strings.Contains(view, "· 3 hits") {
+		t.Errorf("meta line should show hit count, view:\n%s", view)
+	}
+	l.SetSearchResults(nil)
+	if got := l.Len(); got != 2 {
+		t.Errorf("clearing search restores normal view, Len = %d", got)
+	}
+	if len(l.rows) == 0 || !l.rows[0].header {
+		t.Error("grouped headers should be back after clearing")
+	}
+}
+
+func TestRemoveSessionAdjustsSearchResults(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{
+		{Session: 1, MsgHits: 3}, // s2
+		{Session: 0, MsgHits: 1}, // s1
+	})
+	l.RemoveSession(0) // drop s1: s2's index shifts from 1 to 0
+	if got := l.Len(); got != 1 {
+		t.Fatalf("Len = %d, want 1 after removing a result", got)
+	}
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("remaining result should be s2, got %v", s.ID)
+	}
+	if n := l.searchHits(0); n != 3 {
+		t.Errorf("s2's hits must follow its shifted index, got %d", n)
+	}
+}
+
+func TestSearchResultsSingularHit(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 1}})
+	if view := l.View(); !strings.Contains(view, "· 1 hit ") && !strings.HasSuffix(strings.TrimRight(view, " \n"), "· 1 hit") && !strings.Contains(view, "· 1 hit\n") {
+		t.Errorf("singular form wanted, view:\n%s", view)
+	}
+}
+
+// TestSearchModeSpaceDoesNotMutateFold is the I3 regression: space (via
+// ToggleFold) must not silently fold/unfold a project while browsing
+// search results, even though search-mode rows don't visually reflect
+// fold state — the mutation would surface unexpectedly once the user
+// leaves search mode.
+func TestSearchModeSpaceDoesNotMutateFold(t *testing.T) {
+	l := newTestPane()
+	l.ToggleGroup() // groupByProject=true, filter=="" — grouped() would (bug) say true
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 1}, {Session: 1, MsgHits: 1}})
+	l.ToggleFold()
+	if len(l.folded) != 0 {
+		t.Errorf("space in search-results mode must not fold any project, folded = %v", l.folded)
+	}
+}
+
+// TestSearchModeGDoesNotToggleGroup is the I3 regression for ToggleGroup.
+func TestSearchModeGDoesNotToggleGroup(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 1}})
+	before := l.groupByProject
+	l.ToggleGroup()
+	if l.groupByProject != before {
+		t.Error("g in search-results mode must not change groupByProject")
+	}
+}
+
+// TestSearchModeEDoesNotToggleEmpty is the I3 regression for ToggleEmpty.
+func TestSearchModeEDoesNotToggleEmpty(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 1}})
+	before := l.showEmpty
+	l.ToggleEmpty()
+	if l.showEmpty != before {
+		t.Error("e in search-results mode must not change showEmpty")
+	}
+}
+
+// TestSearchResultsEmptyShowsNoMatches is the M3 regression: a zero-hit
+// search must say "no matches", not the generic "no sessions".
+func TestSearchResultsEmptyShowsNoMatches(t *testing.T) {
+	l := newTestPane()
+	l.SetSearchResults([]store.SessionHits{})
+	if v := l.View(); !strings.Contains(v, "no matches") {
+		t.Errorf("empty search-results view = %q, want it to contain %q", v, "no matches")
+	}
+}

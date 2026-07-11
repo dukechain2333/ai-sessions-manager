@@ -43,6 +43,7 @@ type listPane struct {
 	groupByProject bool
 	focused        bool
 	styles         styles
+	search         []store.SessionHits // non-nil: flat search-results mode
 }
 
 func (l *listPane) SetSize(w, h int) {
@@ -82,7 +83,37 @@ func (l *listPane) SetFilter(q string) {
 	l.cursorToFirstSession()
 }
 
+// SetSearchResults switches the pane to full-text results: sessions in the
+// given order, flat, with hit counts on the meta line. nil switches back.
+// SetSearchResults takes ownership of hits and may mutate it (RemoveSession);
+// callers must not retain or reuse the slice.
+func (l *listPane) SetSearchResults(hits []store.SessionHits) {
+	l.search = hits
+	l.cursor = 0
+	l.lineOffset = 0
+	l.refresh()
+	l.cursorToFirstSession()
+}
+
+// searchHits returns the full-text hit count for a session index, 0 when
+// search mode is off or the session is not in the results.
+func (l *listPane) searchHits(sessionIdx int) int {
+	for _, h := range l.search {
+		if h.Session == sessionIdx {
+			return h.MsgHits
+		}
+	}
+	return 0
+}
+
+// ToggleEmpty flips whether "empty" (hook-only) sessions are shown. No-op
+// while browsing search results: search mode has its own row set that
+// ignores this flag, so toggling it would silently change state that only
+// takes visible effect after the user leaves search mode.
 func (l *listPane) ToggleEmpty() {
+	if l.search != nil {
+		return
+	}
 	sel, ok := l.selectedSession()
 	l.showEmpty = !l.showEmpty
 	l.refresh()
@@ -92,8 +123,12 @@ func (l *listPane) ToggleEmpty() {
 }
 
 // ToggleGroup switches between project-clustered and flat recency order,
-// keeping the current session selected.
+// keeping the current session selected. No-op while browsing search
+// results (same reasoning as ToggleEmpty).
 func (l *listPane) ToggleGroup() {
+	if l.search != nil {
+		return
+	}
 	sel, ok := l.selectedSession()
 	l.groupByProject = !l.groupByProject
 	l.refresh()
@@ -145,6 +180,36 @@ func (l *listPane) MoveCursor(delta int) {
 	l.ensureVisible()
 }
 
+// RowAtLine maps a visible content line (0 = the first line currently on
+// screen) to the row under it, accounting for scroll offset and the mixed
+// one-line-header / three-line-session heights. ok is false below the last
+// row or above the top.
+func (l *listPane) RowAtLine(visible int) (int, bool) {
+	if visible < 0 {
+		return 0, false
+	}
+	line := visible + l.lineOffset
+	start, total := l.layout()
+	if line >= total {
+		return 0, false
+	}
+	for i := len(start) - 1; i >= 0; i-- {
+		if line >= start[i] {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// SetCursor moves the cursor to row i, ignoring out-of-range values.
+func (l *listPane) SetCursor(i int) {
+	if i < 0 || i >= len(l.rows) {
+		return
+	}
+	l.cursor = i
+	l.ensureVisible()
+}
+
 // Selected returns the session under the cursor. ok is false when the
 // cursor is on a header row or the list is empty.
 func (l *listPane) Selected() (store.Session, int, bool) {
@@ -191,6 +256,20 @@ func (l *listPane) RemoveSession(i int) {
 	}
 	l.sessions = append(l.sessions[:i], l.sessions[i+1:]...)
 	l.refresh()
+	if l.search != nil {
+		kept := l.search[:0]
+		for _, h := range l.search {
+			switch {
+			case h.Session == i:
+				continue
+			case h.Session > i:
+				h.Session--
+			}
+			kept = append(kept, h)
+		}
+		l.search = kept
+		l.refresh()
+	}
 }
 
 func haystack(s store.Session) string {
@@ -198,12 +277,37 @@ func haystack(s store.Session) string {
 }
 
 // grouped reports whether project headers are shown. Filtering falls back
-// to a flat, relevance-ordered list.
+// to a flat, relevance-ordered list; so does search-results mode (whose
+// rows are already flat and never carry header:true, but ToggleFold must
+// still stand down explicitly rather than silently folding a project the
+// current search-result row happens to belong to).
 func (l *listPane) grouped() bool {
-	return l.groupByProject && l.filter == ""
+	return l.groupByProject && l.filter == "" && l.search == nil
 }
 
 func (l *listPane) refresh() {
+	// Search-results mode: flat, given order, suppresses filter/grouping.
+	if l.search != nil {
+		l.rows = l.rows[:0]
+		l.counts = map[string]int{}
+		l.total = 0
+		for _, h := range l.search {
+			if h.Session < 0 || h.Session >= len(l.sessions) {
+				continue
+			}
+			l.total++
+			l.rows = append(l.rows, row{project: l.sessions[h.Session].Project(), session: h.Session})
+		}
+		if l.cursor >= len(l.rows) {
+			l.cursor = len(l.rows) - 1
+		}
+		if l.cursor < 0 {
+			l.cursor = 0
+		}
+		l.ensureVisible()
+		return
+	}
+
 	// 1. Select sessions (recency order, honoring the empty toggle / filter).
 	var base []int
 	if l.filter == "" {
@@ -316,7 +420,7 @@ func (l *listPane) ensureVisible() {
 
 func (l *listPane) View() string {
 	if l.total == 0 {
-		if l.filter != "" {
+		if l.search != nil || l.filter != "" {
 			return l.styles.ListMeta.Render("no matches")
 		}
 		return l.styles.ListMeta.Render("no sessions")
@@ -329,12 +433,24 @@ func (l *listPane) View() string {
 			if l.folded[r.project] {
 				indicator = "▸"
 			}
-			label := fmt.Sprintf("%s %s (%d)", indicator, r.project, l.counts[r.project])
+			name := fmt.Sprintf("%s %s", indicator, r.project)
+			count := fmt.Sprintf("(%d)", l.counts[r.project])
+			label := store.Truncate(name+" "+count, l.width)
 			style := l.styles.GroupHeader
 			if i == l.cursor {
 				style = l.styles.GroupHeaderSel
 			}
-			lines = append(lines, style.Render(store.Truncate(label, l.width)))
+			// Split the name from the "(n)" count so they can carry
+			// different styles while the rendered text stays byte-identical
+			// to the un-split label. If truncation ate into (or removed)
+			// the count suffix, fall back to a single style for the whole
+			// (already-truncated) string — still exactly the same visible
+			// characters, just without the count's distinct color.
+			rendered := style.Render(label)
+			if suffix := " " + count; strings.HasSuffix(label, suffix) {
+				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + l.styles.GroupCount.Render(count)
+			}
+			lines = append(lines, rendered)
 			continue
 		}
 
@@ -353,6 +469,12 @@ func (l *listPane) View() string {
 		}
 		if s.Unreadable {
 			meta += " · (unreadable)"
+		}
+		if n := l.searchHits(r.session); n > 0 {
+			meta += " · " + fmt.Sprintf("%d hit", n)
+			if n != 1 {
+				meta += "s"
+			}
 		}
 		prefix := "  "
 		titleStyle, metaStyle := l.styles.ListTitle, l.styles.ListMeta
