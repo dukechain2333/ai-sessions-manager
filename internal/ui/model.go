@@ -588,8 +588,10 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.previewFor = ""
 			}
 			if m.searchAll && m.activeQuery != "" {
-				m.searchSeq++ // orphan any in-flight result computed against pre-delete indices
-				return m, tea.Batch(m.loadTranscriptCmd(), m.runSearch(m.searchSeq))
+				// dispatchSearch self-bumps the seq — orphaning any in-flight
+				// result computed against pre-delete indices — and its tick
+				// path revalidates the index when needed.
+				return m, tea.Batch(m.loadTranscriptCmd(), m.dispatchSearch())
 			}
 			return m, m.loadTranscriptCmd()
 		case "n", "esc":
