@@ -149,10 +149,16 @@ func TestSearchPipelineEndToEnd(t *testing.T) {
 	if !ok {
 		t.Fatalf("cmd produced %T, want searchResultMsg", msg)
 	}
+	m.lastClickRow = 1 // M5 setup: simulate a stale click recorded before this refresh
 	m2, _ = m.Update(res)
 	m = m2.(Model)
 	if m.matched != 2 {
 		t.Fatalf("matched = %d, want 2", m.matched)
+	}
+	// M5: a fresh search result renumbers rows — a stale lastClickRow must
+	// not survive to pair with a click on the new layout.
+	if m.lastClickRow != -1 {
+		t.Error("a fresh search result must reset lastClickRow (rows renumbered — same precedent as the fold path in clickList)")
 	}
 	if s, _, ok := m.list.Selected(); !ok || s.ID != "s2" {
 		t.Errorf("s2 has more hits and must rank first, got %v", s.ID)
@@ -558,6 +564,55 @@ func TestStaleBuildDoesNotMarkReady(t *testing.T) {
 	}
 	if m.indexing {
 		t.Error("indexDoneMsg must still clear indexing even for a stale build")
+	}
+}
+
+// TestEscClearsStaleHighlights is the I2 regression: esc out of the
+// full-text layer must not leave the previous highlighted render (and its
+// hitMsgs/n-N state) live when the selection happens to land back on the
+// same session. The query "fox" matches only s1, and s1 is also the
+// natural top pick in the default (non-search) grouped view, so the
+// selection is unchanged across the esc — the exact condition under which
+// loadTranscriptCmd would otherwise skip the reload (s.ID == previewFor).
+func TestEscClearsStaleHighlights(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(key("/"))
+	m = m2.(Model)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = m2.(Model)
+	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
+	m = typeInto(t, m, "fox")
+	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
+	m = m2.(Model)
+	m2, _ = m.Update(cmd().(searchResultMsg))
+	m = m2.(Model)
+	s, _, ok := m.list.Selected()
+	if !ok || s.ID != "s1" {
+		t.Fatalf("setup: expected s1 selected by the single-hit search, got %v ok=%v", s.ID, ok)
+	}
+	tr := store.Transcript{SessionID: "s1", Messages: []store.Message{
+		{Kind: store.KindUser, Text: "the quick brown fox"},
+	}}
+	m2, _ = m.Update(transcriptMsg{id: "s1", t: tr})
+	m = m2.(Model)
+	if len(m.hitMsgs) == 0 || !strings.Contains(m.preview.View(), "\x1b[7m") {
+		t.Fatal("setup: expected the preview to be highlighted")
+	}
+
+	m2, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = m2.(Model)
+	if len(m.hitMsgs) != 0 {
+		t.Error("esc must clear hitMsgs immediately, even before the reload lands")
+	}
+	for _, msg := range runCmds(t, cmd) {
+		m2, _ = m.Update(msg)
+		m = m2.(Model)
+	}
+	if after, _, _ := m.list.Selected(); after.ID != "s1" {
+		t.Fatalf("setup invariant broken: selection moved off s1 (%v) — test no longer exercises the same-session path", after.ID)
+	}
+	if strings.Contains(m.preview.View(), "\x1b[7m") {
+		t.Error("esc must clear the stale highlighted render even when the selection lands on the same session")
 	}
 }
 

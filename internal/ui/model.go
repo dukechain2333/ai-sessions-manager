@@ -206,6 +206,12 @@ func (m *Model) toggleSearchLayer() tea.Cmd {
 	m.matched = 0
 	m.list.SetSearchResults(nil)
 	m.list.SetFilter(m.filterInput.Value())
+	// Same reasoning as the Esc path: force a reload so a selection that
+	// lands back on the same session doesn't keep the stale highlighted
+	// render (and its hitMsgs/n-N state) alive.
+	m.previewFor = ""
+	m.hitMsgs = nil
+	m.curHit = 0
 	return m.loadTranscriptCmd()
 }
 
@@ -457,6 +463,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.matched = len(msg.hits)
 		m.list.SetSearchResults(msg.hits)
+		m.lastClickRow = -1 // rows renumbered — stale indexes must not pair (same precedent as the fold path in clickList)
 		// the highlight set depends on the query, not just the session —
 		// force the preview to re-render
 		m.previewFor = ""
@@ -526,6 +533,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.matched = 0
 				m.activeQuery = ""
 				m.list.SetSearchResults(nil)
+				// Force the preview to reload: without this, a selection
+				// that lands back on the same session would keep showing
+				// the stale highlighted render (and its hitMsgs/n-N state)
+				// because loadTranscriptCmd short-circuits on an unchanged
+				// previewFor.
+				m.previewFor = ""
+				m.hitMsgs = nil
+				m.curHit = 0
 			}
 			return m, m.loadTranscriptCmd()
 		case tea.KeyEnter:
