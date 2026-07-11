@@ -163,6 +163,22 @@ The whole UI is clickable — `sm` enables mouse reporting:
 With mouse reporting on, select text with **Shift+drag** (standard for
 mouse-enabled TUIs).
 
+### Search
+
+The filter bar has two layers — press `/` to focus it, then **Tab** (or
+click the 🔍 icon) to switch:
+
+- **filter…** — the default fuzzy filter over title, project, and first
+  prompt.
+- **search…** — full-text search over everything said in every session.
+  Space-separated terms must all appear in a session (AND). Results are
+  ordered by hit count; the preview jumps to the first hit with matches
+  highlighted, and `n` / `N` (preview focused) step through hits.
+
+The first full-text search builds a plain-text index under your user cache
+directory (`sm-index/`); the title bar shows `indexing …` progress. After
+that, searches are instant and only changed sessions are re-indexed.
+
 ### Resuming
 
 Pressing `enter` on a session suspends `sm`, runs `claude --resume <id>` in the
