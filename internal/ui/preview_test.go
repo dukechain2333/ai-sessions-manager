@@ -14,7 +14,7 @@ func TestRenderTranscript(t *testing.T) {
 		{Kind: store.KindTool, Text: "Bash: Run tests"},
 	}}
 	out, _ := renderTranscript(tr, 40, defaultStyles())
-	for _, want := range []string{"› make slides", "● I'll read", "⚒ Bash: Run tests"} {
+	for _, want := range []string{"> make slides", "⏺ I'll read", "⎿ Bash: Run tests"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}

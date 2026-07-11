@@ -11,7 +11,7 @@ import (
 
 // renderTranscript renders a transcript as styled, wrapped text for the
 // preview viewport, returning each message's first rendered line so hit
-// navigation can jump by message. Prefixes: › user, ● assistant, ⚒ tool.
+// navigation can jump by message. Prefixes: > user, ⏺ assistant, ⎿ tool call.
 func renderTranscript(t store.Transcript, width int, st styles) (string, []int) {
 	if len(t.Messages) == 0 {
 		return st.ListMeta.Render("no messages"), nil
@@ -24,12 +24,12 @@ func renderTranscript(t store.Transcript, width int, st styles) (string, []int) 
 	line := 0
 	for _, m := range t.Messages {
 		var style = st.AssistantMsg
-		prefix := "● "
+		prefix := "⏺ "
 		switch m.Kind {
 		case store.KindUser:
-			style, prefix = st.UserMsg, "› "
+			style, prefix = st.UserMsg, "> "
 		case store.KindTool:
-			style, prefix = st.ToolMsg, "⚒ "
+			style, prefix = st.ToolMsg, "⎿ "
 		}
 		rendered := style.Width(width).Render(prefix + m.Text)
 		starts = append(starts, line)

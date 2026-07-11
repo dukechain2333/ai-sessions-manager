@@ -618,10 +618,10 @@ func TestEscClearsStaleHighlights(t *testing.T) {
 
 func TestClickSearchIconTogglesLayer(t *testing.T) {
 	m := searchModel(t)
-	m2, _ := m.Update(click(1, 1)) // the 🔍 icon
+	m2, _ := m.Update(click(1, 1)) // the prompt glyph
 	m = m2.(Model)
 	if !m.searchAll {
-		t.Fatal("clicking the 🔍 icon must enable the full-text layer")
+		t.Fatal("clicking the prompt glyph must enable the full-text layer")
 	}
 	if m.focus != focusFilter || !m.filterInput.Focused() {
 		t.Error("icon click must also focus the input")
