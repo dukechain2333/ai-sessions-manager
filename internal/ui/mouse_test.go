@@ -350,3 +350,14 @@ func TestClickHelpWhilePreviewFocused(t *testing.T) {
 		t.Errorf("dialog = %v, want dialogDelete (button must act on the list, not scroll the preview)", m.dialog)
 	}
 }
+
+func TestClickHelpGapKeepsFocus(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(click(50, 10)) // focus the preview
+	m = m2.(Model)
+	m2, _ = m.Update(click(47, 29)) // gap between "/ filter" and "g group"
+	m = m2.(Model)
+	if m.focus != focusPreview {
+		t.Errorf("focus = %v, want focusPreview (a gap click must be a pure no-op)", m.focus)
+	}
+}
