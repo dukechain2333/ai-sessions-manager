@@ -321,3 +321,62 @@ func TestDeleteInvalidatesInFlightSearch(t *testing.T) {
 		t.Error("stale in-flight result must not be applied after a delete")
 	}
 }
+
+func TestPreviewJumpsAndCyclesHits(t *testing.T) {
+	m := searchModel(t)
+	m.searchAll = true
+	m.activeQuery = "quick"
+	// Each filler renders ~25 wrapped lines at the fixture's preview width
+	// (58), so consecutive hits land at viewport offsets that stay distinct
+	// even after SetYOffset clamping (content ≫ viewport height 25).
+	long := strings.Repeat("filler words here ", 80)
+	tr := store.Transcript{SessionID: "s1", Messages: []store.Message{
+		{Kind: store.KindAssistant, Text: long},
+		{Kind: store.KindUser, Text: "the quick brown fox"},
+		{Kind: store.KindAssistant, Text: long},
+		{Kind: store.KindUser, Text: "quick again"},
+	}}
+	m.previewFor = "s1"
+	m2, _ := m.Update(transcriptMsg{id: "s1", t: tr})
+	m = m2.(Model)
+	if len(m.hitMsgs) != 2 || m.hitMsgs[0] != 1 || m.hitMsgs[1] != 3 {
+		t.Fatalf("hitMsgs = %v, want [1 3]", m.hitMsgs)
+	}
+	if m.preview.YOffset == 0 {
+		t.Error("preview must jump to the first hit (message 1 sits below a long message)")
+	}
+	if !strings.Contains(m.preview.View(), "\x1b[7m") {
+		t.Error("hit terms must be reverse-video highlighted")
+	}
+	first := m.preview.YOffset
+	m.focus = focusPreview
+	m2, _ = m.Update(key("n"))
+	m = m2.(Model)
+	if m.preview.YOffset <= first {
+		t.Error("n must jump to the next hit further down")
+	}
+	m2, _ = m.Update(key("n")) // wraps to the first hit
+	m = m2.(Model)
+	if m.preview.YOffset != first {
+		t.Errorf("n past the last hit must wrap: YOffset=%d want %d", m.preview.YOffset, first)
+	}
+	m2, _ = m.Update(key("N")) // back to the last hit
+	m = m2.(Model)
+	if m.preview.YOffset <= first {
+		t.Error("N must wrap backwards to the last hit")
+	}
+}
+
+func TestPreviewNoQueryNoHighlight(t *testing.T) {
+	m := searchModel(t)
+	tr := store.Transcript{SessionID: "s1", Messages: []store.Message{{Kind: store.KindUser, Text: "quick"}}}
+	m.previewFor = "s1"
+	m2, _ := m.Update(transcriptMsg{id: "s1", t: tr})
+	m = m2.(Model)
+	if strings.Contains(m.preview.View(), "\x1b[7m") {
+		t.Error("no active query → no highlight")
+	}
+	if m.preview.YOffset != 0 {
+		t.Error("no active query → no jump")
+	}
+}

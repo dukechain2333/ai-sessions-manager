@@ -115,6 +115,11 @@ type Model struct {
 	indexDone   int
 	indexTotal  int
 	indexCh     chan store.IndexProgress
+
+	// preview hit navigation
+	msgStarts []int
+	hitMsgs   []int
+	curHit    int
 }
 
 func New(projectsDir string) Model {
@@ -362,8 +367,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.preview.SetContent(m.st.ErrorText.Render(msg.err.Error()))
 			return m, nil
 		}
-		m.preview.SetContent(renderTranscript(msg.t, m.preview.Width, m.st))
+		tr := msg.t
+		// tr is a copy of the message slice header, but tr.Messages[i].Text =
+		// … below mutates the shared backing array of the cached transcript.
+		// Deep-copy the messages first so highlighting never poisons the cache.
+		msgs := make([]store.Message, len(tr.Messages))
+		copy(msgs, tr.Messages)
+		tr.Messages = msgs
+		m.hitMsgs = nil
+		m.curHit = 0
+		terms := store.SplitTerms(m.activeQuery)
+		if m.searchAll && len(terms) > 0 {
+			for i := range tr.Messages {
+				if tr.Messages[i].Kind == store.KindTool {
+					continue
+				}
+				lower := strings.ToLower(tr.Messages[i].Text)
+				for _, t := range terms {
+					if strings.Contains(lower, t) {
+						tr.Messages[i].Text = highlightTerms(tr.Messages[i].Text, terms)
+						m.hitMsgs = append(m.hitMsgs, i)
+						break
+					}
+				}
+			}
+		}
+		content, starts := renderTranscript(tr, m.preview.Width, m.st)
+		m.msgStarts = starts
+		m.preview.SetContent(content)
 		m.preview.GotoTop()
+		if len(m.hitMsgs) > 0 {
+			m.preview.SetYOffset(m.msgStarts[m.hitMsgs[0]])
+		}
 		return m, nil
 
 	case claudeMissingMsg:
@@ -479,6 +514,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "tab", "esc":
 			m.focus = focusList
 			return m, nil
+		case "n", "N":
+			if len(m.hitMsgs) > 0 {
+				if msg.String() == "n" {
+					m.curHit = (m.curHit + 1) % len(m.hitMsgs)
+				} else {
+					m.curHit = (m.curHit - 1 + len(m.hitMsgs)) % len(m.hitMsgs)
+				}
+				m.preview.SetYOffset(m.msgStarts[m.hitMsgs[m.curHit]])
+				return m, nil
+			}
 		}
 		var cmd tea.Cmd
 		m.preview, cmd = m.preview.Update(msg)
