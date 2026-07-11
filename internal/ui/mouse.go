@@ -277,6 +277,7 @@ func (m Model) clickPickDir(cy int) (tea.Model, tea.Cmd) {
 	m.dirCursor = i
 	if m.isDoubleClick(zoneDialog, i) {
 		m.lastClickRow = -1
+		m.dirInput.SetValue("") // the click names its target; typed text must not override it
 		return m.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
 	}
 	m.recordClick(zoneDialog, i)

@@ -560,6 +560,25 @@ func TestPickDirClickNonRowIsNoop(t *testing.T) {
 	}
 }
 
+func TestPickDirDoubleClickOverridesTypedPath(t *testing.T) {
+	m, _, dirB, rec := pickerModel(t)
+	m.dirInput.SetValue("~/definitely/not/here")
+	t0 := time.Now()
+	m.now = func() time.Time { return t0 }
+	cx, cy := dialogContentOrigin(m)
+	m2, _ := m.Update(click(cx+1, cy+3)) // dir row 1
+	m = m2.(Model)
+	m.now = func() time.Time { return t0.Add(150 * time.Millisecond) }
+	m2, _ = m.Update(click(cx+1, cy+3))
+	m = m2.(Model)
+	if rec.dir != dirB {
+		t.Errorf("double-click launched %q, want the clicked row %q", rec.dir, dirB)
+	}
+	if m.dialog != dialogNone {
+		t.Error("confirm must close the dialog")
+	}
+}
+
 func TestOversizeDialogIgnoresMouse(t *testing.T) {
 	m := newTestModel()
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 11}) // delete box (9 rows) > body area (8)
