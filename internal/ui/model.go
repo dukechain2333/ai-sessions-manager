@@ -440,6 +440,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.matched = len(msg.hits)
 		m.list.SetSearchResults(msg.hits)
+		// the highlight set depends on the query, not just the session —
+		// force the preview to re-render
+		m.previewFor = ""
 		return m, m.loadTranscriptCmd()
 
 	case indexProgressMsg:

@@ -380,3 +380,39 @@ func TestPreviewNoQueryNoHighlight(t *testing.T) {
 		t.Error("no active query → no jump")
 	}
 }
+
+func TestQueryChangeRefreshesPreviewHighlights(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(key("/"))
+	m = m2.(Model)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = m2.(Model)
+	m = typeInto(t, m, "quick")
+	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
+	m = m2.(Model)
+	m2, cmd = m.Update(cmd().(searchResultMsg))
+	m = m2.(Model)
+	if cmd == nil {
+		t.Fatal("setup: first result must reload the preview")
+	}
+	m2, _ = m.Update(cmd()) // transcriptMsg for the selected session (s2)
+	m = m2.(Model)
+	if len(m.hitMsgs) != 2 {
+		t.Fatalf("setup: query 'quick' must hit both s2 messages, got %v", m.hitMsgs)
+	}
+	// change the query without changing the selection: only msg 1 ("quick two") contains "two"
+	m.filterInput.SetValue("two")
+	_ = m.dispatchSearch() // bumps searchSeq; the live tick is fed manually below
+	m2, cmd = m.Update(searchTickMsg{seq: m.searchSeq})
+	m = m2.(Model)
+	m2, cmd = m.Update(cmd().(searchResultMsg))
+	m = m2.(Model)
+	if cmd == nil {
+		t.Fatal("query change with unchanged selection must still reload the preview")
+	}
+	m2, _ = m.Update(cmd())
+	m = m2.(Model)
+	if len(m.hitMsgs) != 1 || m.hitMsgs[0] != 1 {
+		t.Errorf("hitMsgs = %v, want [1] for query 'two' (stale highlights not refreshed)", m.hitMsgs)
+	}
+}
