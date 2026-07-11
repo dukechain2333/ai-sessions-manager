@@ -11,7 +11,7 @@ import (
 	"github.com/dukechain2333/ai-sessions-manager/internal/ui"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() {
 	home, err := os.UserHomeDir()
