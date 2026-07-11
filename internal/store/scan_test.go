@@ -19,6 +19,13 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func touch(t *testing.T, path string, mt time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, mt, mt); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestScan(t *testing.T) {
 	dir := t.TempDir()
 	old := filepath.Join(dir, "-home-w-proja", "aaaa.jsonl")
