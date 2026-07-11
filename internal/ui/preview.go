@@ -48,6 +48,13 @@ func renderTranscript(t store.Transcript, width int, st styles) (string, []int) 
 // reverse, leaving the message's own foreground styling intact.
 func highlightTerms(text string, terms []string) string {
 	lower := strings.ToLower(text)
+	if len(lower) != len(text) {
+		// ToLower changed some rune's byte length (İ, K, Ⱥ, …): byte
+		// offsets in lower no longer map onto text, so slicing would
+		// misalign or panic. Degrade to no highlight — hit detection and
+		// jumps don't slice and are unaffected.
+		return text
+	}
 	type span struct{ start, end int }
 	var spans []span
 	for _, term := range terms {

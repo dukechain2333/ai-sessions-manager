@@ -75,3 +75,18 @@ func TestHighlightTermsOverlappingSubstrings(t *testing.T) {
 		}
 	}
 }
+
+func TestHighlightTermsLengthChangingRunes(t *testing.T) {
+	// Ⱥ's lowercase is one byte LONGER (2→3): pre-guard this panicked.
+	if got := highlightTerms("Ⱥx quick", []string{"quick"}); got != "Ⱥx quick" {
+		t.Errorf("length-growing rune: got %q, want unhighlighted pass-through", got)
+	}
+	// İ's lowercase is one byte SHORTER (2→1): pre-guard this misaligned.
+	if got := highlightTerms("İstanbul quick", []string{"quick"}); got != "İstanbul quick" {
+		t.Errorf("length-shrinking rune: got %q, want unhighlighted pass-through", got)
+	}
+	// plain multi-byte text without case-length changes must still highlight
+	if got := highlightTerms("你好 quick 世界", []string{"quick"}); got != "你好 \x1b[7mquick\x1b[27m 世界" {
+		t.Errorf("CJK text must still highlight: got %q", got)
+	}
+}
