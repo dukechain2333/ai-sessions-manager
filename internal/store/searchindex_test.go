@@ -118,3 +118,46 @@ func TestMessagesMissingSource(t *testing.T) {
 		t.Error("EnsureSession on a missing source must error")
 	}
 }
+
+func TestEnsureSessionFreshnessWithTabInPath(t *testing.T) {
+	ix := testIndex(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "odd\tname.jsonl")
+	line := `{"type":"user","message":{"role":"user","content":"tabbed path"}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Skip("filesystem rejects tab in filename")
+	}
+	if err := ix.EnsureSession(path); err != nil {
+		t.Fatal(err)
+	}
+	cache := ix.cacheFile(path)
+	st1, _ := os.Stat(cache)
+	time.Sleep(10 * time.Millisecond)
+	if err := ix.EnsureSession(path); err != nil {
+		t.Fatal(err)
+	}
+	st2, _ := os.Stat(cache)
+	if !st2.ModTime().Equal(st1.ModTime()) {
+		t.Error("EnsureSession must agree with Messages that a tabbed-path cache is fresh")
+	}
+	if _, fresh := ix.Messages(path); !fresh {
+		t.Error("Messages must read the tabbed-path cache as fresh")
+	}
+}
+
+func TestZeroMessageSessionRoundTrip(t *testing.T) {
+	ix := testIndex(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "toolonly.jsonl")
+	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ix.EnsureSession(path); err != nil {
+		t.Fatal(err)
+	}
+	msgs, fresh := ix.Messages(path)
+	if !fresh || msgs == nil || len(msgs) != 0 {
+		t.Errorf("tool-only session: msgs=%v fresh=%v, want empty slice and fresh", msgs, fresh)
+	}
+}
