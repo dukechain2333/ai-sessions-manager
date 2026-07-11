@@ -145,6 +145,24 @@ sm --version
 | `r` | rescan |
 | `q` | quit |
 
+### Mouse
+
+The whole UI is clickable — `sm` enables mouse reporting:
+
+| Gesture | Action |
+|---|---|
+| click a session | select it (the preview follows) |
+| double-click a session | resume it |
+| click a project header | fold / unfold that project |
+| scroll wheel | move the selection; over the preview, scroll the transcript |
+| click the preview pane | focus it (like `tab`) |
+| click the filter bar | start filtering (like `/`) |
+| click a help-bar action or dialog button | same as pressing its key |
+| click outside a dialog | cancel it |
+
+With mouse reporting on, select text with **Shift+drag** (standard for
+mouse-enabled TUIs).
+
 ### Resuming
 
 Pressing `enter` on a session suspends `sm`, runs `claude --resume <id>` in the
