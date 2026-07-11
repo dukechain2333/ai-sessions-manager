@@ -112,6 +112,7 @@ type Model struct {
 	indexErr    error
 	indexReady  bool
 	indexing    bool
+	indexStale  bool
 	indexDone   int
 	indexTotal  int
 	indexCh     chan store.IndexProgress
@@ -194,6 +195,10 @@ func (m *Model) toggleSearchLayer() tea.Cmd {
 	if m.searchAll {
 		m.filterInput.Placeholder = "search…"
 		m.list.SetFilter("")
+		m.indexReady = false // re-entering full-text mode re-checks validity keys (spec)
+		if m.indexing {
+			m.indexStale = true
+		}
 		return m.dispatchSearch()
 	}
 	m.filterInput.Placeholder = "filter…"
@@ -318,6 +323,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dialog = dialogError
 			m.errText = fmt.Sprintf("cannot read %s: %v", m.projectsDir, msg.err)
 			return m, nil
+		}
+		// Every successful (re)scan revalidates the full-text index —
+		// covers startup, `r`, and the rescan claudeExitMsg triggers after
+		// a resumed session's mtime/size may have changed. An EnsureAll
+		// build already in flight when this lands cannot be trusted as
+		// "ready" once it completes (it was dispatched against the
+		// pre-scan session list); indexStale flags that for indexDoneMsg.
+		m.indexReady = false
+		if m.indexing {
+			m.indexStale = true
 		}
 		m.list.SetSessions(msg.sessions)
 		m.previewFor = ""
@@ -456,6 +471,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.ch != m.indexCh {
 			return m, nil
 		}
+		if m.indexStale {
+			// An invalidation landed while this build was in flight; it was
+			// dispatched against state we now know is outdated, so it
+			// cannot be trusted as "ready". Leave indexReady false and, if
+			// a search is still active, dispatch through the debounce path
+			// (not runSearch directly) so the next tick re-kicks EnsureAll.
+			m.indexStale = false
+			m.indexing = false
+			if m.searchAll && m.activeQuery != "" {
+				return m, m.dispatchSearch()
+			}
+			return m, nil
+		}
 		m.indexReady = true
 		m.indexing = false
 		if m.searchAll && m.activeQuery != "" {
@@ -559,7 +587,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.list.ToggleFold()
 			return m, m.loadTranscriptCmd()
 		case "r":
-			m.indexReady = false // next full-text search revalidates the cache
+			// indexReady reset now happens centrally in scanDoneMsg's
+			// success path (covers every rescan source, not just this key).
 			return m, m.scanCmd()
 		case "enter":
 			if m.list.OnHeader() {

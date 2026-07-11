@@ -135,6 +135,7 @@ func TestSearchPipelineEndToEnd(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
+	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
 	m = typeInto(t, m, "quick")
 	// drive the debounce deterministically: fire the tick for the live seq
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
@@ -215,6 +216,7 @@ func TestRunSearchSnapshotsSessions(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
+	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
@@ -235,6 +237,7 @@ func TestRescanRefreshesActiveSearch(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
+	m.indexReady = true // arrange: the rescan below is what exercises revalidation, not this first search
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
@@ -244,7 +247,7 @@ func TestRescanRefreshesActiveSearch(t *testing.T) {
 		t.Fatal("setup: expected active results")
 	}
 	seqBefore := m.searchSeq
-	m.indexReady = false // as `r` does right before its rescan
+	m.indexReady = false // scanDoneMsg's success path resets this on every rescan (including r's); simulated here since we drive scanDoneMsg directly, bypassing the real scanCmd
 	reordered := append([]store.Session(nil), m.list.Sessions()...)
 	reordered[0], reordered[1] = reordered[1], reordered[0] // rescan re-sorts
 	m2, cmd = m.Update(scanDoneMsg{sessions: reordered})
@@ -305,6 +308,7 @@ func TestDeleteInvalidatesInFlightSearch(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
+	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
@@ -387,6 +391,7 @@ func TestQueryChangeRefreshesPreviewHighlights(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
+	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
@@ -414,6 +419,120 @@ func TestQueryChangeRefreshesPreviewHighlights(t *testing.T) {
 	m = m2.(Model)
 	if len(m.hitMsgs) != 1 || m.hitMsgs[0] != 1 {
 		t.Errorf("hitMsgs = %v, want [1] for query 'two' (stale highlights not refreshed)", m.hitMsgs)
+	}
+}
+
+// TestClaudeExitRevalidatesIndex is the C1 regression: search → resume a
+// session → chat → exit rescans the session list, but must also revalidate
+// the full-text index (the resumed session's mtime/size may have changed
+// while claude was running). Before the fix, only the `r` key did this.
+func TestClaudeExitRevalidatesIndex(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(key("/"))
+	m = m2.(Model)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = m2.(Model)
+	m.indexReady = true // arrange: this test isn't exercising the entry-triggered indexing pass itself
+	m = typeInto(t, m, "quick")
+	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
+	m = m2.(Model)
+	m2, _ = m.Update(cmd().(searchResultMsg))
+	m = m2.(Model)
+	if m.list.search == nil {
+		t.Fatal("setup: expected active search results")
+	}
+
+	// The returned scanCmd is irrelevant (it would hit the fake projects
+	// dir) — drive the rescan's completion directly with the same sessions,
+	// the way the real scanCmd's result would look after a resumed
+	// session's mtime/size changed.
+	m2, _ = m.Update(claudeExitMsg{})
+	m = m2.(Model)
+	m2, cmd = m.Update(scanDoneMsg{sessions: m.list.Sessions()})
+	m = m2.(Model)
+
+	var tick searchTickMsg
+	gotTick := false
+	for _, msg := range runCmds(t, cmd) {
+		if tk, ok := msg.(searchTickMsg); ok {
+			tick, gotTick = tk, true
+		}
+	}
+	if !gotTick {
+		t.Fatal("the post-exit rescan with an active query must schedule the debounce tick")
+	}
+	m2, _ = m.Update(tick)
+	m = m2.(Model)
+	if !m.indexing {
+		t.Error("the rescan after claude exits must revalidate the index (EnsureAll re-kicked)")
+	}
+}
+
+// TestToggleOnRevalidates is the C1 regression for spec's "re-entering
+// full-text mode … re-checks validity keys": toggling the layer off must
+// not itself disturb indexReady, but toggling it back on must.
+func TestToggleOnRevalidates(t *testing.T) {
+	m := searchModel(t)
+	// Arrange: already in the full-text layer with a previously built,
+	// ready index (searchModel sets indexReady=true) — bypass
+	// toggleSearchLayer itself so entering this state doesn't touch it.
+	m.searchAll = true
+	m.focus = focusFilter // Tab only toggles the layer while the filter is focused
+	if !m.indexReady {
+		t.Fatal("setup: expected a ready index")
+	}
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab}) // layer off
+	m = m2.(Model)
+	if m.searchAll {
+		t.Fatal("setup: expected the layer off")
+	}
+	if !m.indexReady {
+		t.Fatal("setup: toggling off must not itself touch indexReady")
+	}
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab}) // layer on again
+	m = m2.(Model)
+	if !m.searchAll {
+		t.Fatal("setup: expected the layer on again")
+	}
+	if m.indexReady {
+		t.Error("re-entering the full-text layer must revalidate the index (indexReady must go false)")
+	}
+}
+
+// TestStaleBuildDoesNotMarkReady is the C1 regression for the indexDoneMsg
+// overwrite subtlety: an EnsureAll build in flight when a new invalidation
+// lands (e.g. a rescan completing concurrently) must not be trusted as
+// "ready" once it completes — it was dispatched against pre-invalidation
+// state.
+func TestStaleBuildDoesNotMarkReady(t *testing.T) {
+	m := searchModel(t)
+	m.indexReady = false
+	m2, _ := m.Update(key("/"))
+	m = m2.(Model)
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = m2.(Model)
+	m = typeInto(t, m, "quick")
+	m2, _ = m.Update(searchTickMsg{seq: m.searchSeq}) // kicks EnsureAll: indexing=true
+	m = m2.(Model)
+	if !m.indexing {
+		t.Fatal("setup: expected indexing to be in flight")
+	}
+	ch := m.indexCh
+
+	// An invalidation lands mid-build (e.g. a rescan completing concurrently).
+	m2, _ = m.Update(scanDoneMsg{sessions: m.list.Sessions()})
+	m = m2.(Model)
+	if !m.indexStale {
+		t.Fatal("setup: expected the in-flight build to be marked stale")
+	}
+
+	m2, _ = m.Update(indexDoneMsg{ch: ch})
+	m = m2.(Model)
+	if m.indexReady {
+		t.Error("a build that went stale mid-flight must not be marked ready")
+	}
+	if m.indexing {
+		t.Error("indexDoneMsg must still clear indexing even for a stale build")
 	}
 }
 
