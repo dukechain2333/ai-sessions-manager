@@ -613,3 +613,28 @@ func TestHelpBarTruncatesToWidth(t *testing.T) {
 		t.Errorf("help line width %d exceeds terminal width 60 — it must truncate, not wrap", w)
 	}
 }
+
+func TestEnrichResetsClickTracker(t *testing.T) {
+	m := newTestModel()
+	m.lastClickRow = 1 // a prior click recorded this row
+	m2, _ := m.Update(enrichMsg{
+		EnrichResult: store.EnrichResult{Index: 0, Meta: store.Meta{
+			Title: "x", CWD: "/x/alpha", UserMessages: 1, LastActivity: time.Now(),
+		}},
+		ch: m.enrichCh,
+	})
+	m = m2.(Model)
+	if m.lastClickRow != -1 {
+		t.Errorf("enrichMsg must reset lastClickRow (rows can renumber), got %d", m.lastClickRow)
+	}
+}
+
+func TestScanResetsClickTracker(t *testing.T) {
+	m := newTestModel()
+	m.lastClickRow = 2
+	m2, _ := m.Update(scanDoneMsg{sessions: testSessions()})
+	m = m2.(Model)
+	if m.lastClickRow != -1 {
+		t.Errorf("scanDoneMsg must reset lastClickRow (rows renumber), got %d", m.lastClickRow)
+	}
+}

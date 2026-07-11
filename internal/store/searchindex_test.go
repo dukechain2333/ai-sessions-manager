@@ -273,3 +273,24 @@ func TestSplitTerms(t *testing.T) {
 		t.Errorf("blank query → %v, want empty", terms)
 	}
 }
+
+func TestSearchZeroHitsReturnsNonNil(t *testing.T) {
+	ix := testIndex(t)
+	path := writeSessionFixture(t, t.TempDir())
+	if err := ix.EnsureSession(path); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty query that matches nothing must return a non-nil empty
+	// slice: callers treat a nil result as "not searching", so nil here would
+	// make the list fall back to showing every session.
+	hits, indexed := ix.Search("zzzznomatchxyz", []Session{{Path: path}})
+	if hits == nil {
+		t.Fatal("zero-hit search returned nil; must be non-nil to stay distinct from 'not searching'")
+	}
+	if len(hits) != 0 {
+		t.Errorf("hits = %d, want 0", len(hits))
+	}
+	if indexed != 1 {
+		t.Errorf("indexed = %d, want 1", indexed)
+	}
+}

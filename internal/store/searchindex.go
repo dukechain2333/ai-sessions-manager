@@ -199,6 +199,11 @@ func (ix SearchIndex) Search(query string, sessions []Session) (hits []SessionHi
 	if len(terms) == 0 {
 		return nil, 0
 	}
+	// Non-nil even with zero hits: callers use a nil result slice as the
+	// "not searching" sentinel, so a real 0-match search must stay distinct
+	// from "no search active" (otherwise the list falls back to showing every
+	// session while the header claims 0 matched).
+	hits = []SessionHits{}
 	for si, s := range sessions {
 		msgs, fresh := ix.Messages(s.Path)
 		if !fresh {

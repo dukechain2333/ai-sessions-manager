@@ -343,6 +343,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.indexStale = true
 		}
 		m.list.SetSessions(msg.sessions)
+		m.lastClickRow = -1 // rows renumbered — stale click index must not pair into a double-click
 		m.previewFor = ""
 		if len(msg.sessions) == 0 {
 			if m.ready {
@@ -371,6 +372,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.list.ApplyEnrich(msg.Index, msg.Meta)
+			// Enrichment can flip a session to Empty and drop it from the
+			// visible rows, renumbering them. Invalidate any pending click so a
+			// second click at the same coordinates can't pair with a stale row
+			// index and resume the wrong session.
+			m.lastClickRow = -1
 		}
 		cmd := m.loadTranscriptCmd()
 		return m, tea.Batch(waitEnrich(msg.ch), cmd)
@@ -857,7 +863,11 @@ func (m Model) View() string {
 			listStyle = m.st.PaneFocused
 		}
 		if m.narrow() {
-			body = listStyle.Render(m.list.View())
+			// Pad the list to the full body height. Without this the frame is
+			// only as tall as the list, the help bar floats above the bottom
+			// row, and mouse hit-testing (which assumes help is the last row)
+			// maps clicks on the blank strip to help-bar actions.
+			body = listStyle.Height(m.bodyHeight()).Render(m.list.View())
 		} else {
 			body = lipgloss.JoinHorizontal(lipgloss.Top,
 				listStyle.Render(m.list.View()),
