@@ -1,0 +1,9 @@
+{"timestamp":"2026-06-26T03:52:47.516Z","type":"session_meta","payload":{"session_id":"019f020e-d6ab-7ff2-99b4-c3274454ea14","cwd":"/home/w/proj","timestamp":"2026-06-26T03:52:34.743Z","cli_version":"0.142.2"}}
+{"timestamp":"2026-06-26T03:52:48.000Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>ignore me"}]}}
+{"timestamp":"2026-06-26T03:52:49.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context><cwd>/home/w/proj</cwd></environment_context>"}]}}
+not valid json {{{
+{"timestamp":"2026-06-26T03:52:50.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Identify the bug in this project"}]}}
+{"timestamp":"2026-06-26T03:52:55.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll inspect the repo first."}]}}
+{"timestamp":"2026-06-26T03:52:56.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git status --short\"}"}}
+{"timestamp":"2026-06-26T03:52:57.000Z","type":"response_item","payload":{"type":"reasoning","content":[{"type":"reasoning_text","text":"thinking..."}]}}
+{"timestamp":"2026-06-26T03:52:58.000Z","type":"event_msg","payload":{"type":"task_started"}}
