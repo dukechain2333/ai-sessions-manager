@@ -128,14 +128,19 @@ A new session has no UUID at launch, so it starts in a provisional tmux:
 tmux new-session -s sm-<agent>-pending-<unixnano> -c <cwd> <new-cmd…>
 ```
 
-with `tmux set-option -t <name> @sm_cwd <cwd>` and `@sm_agent <agent>` recorded
-on the session so adoption can find it. (`-A` is irrelevant for a fresh name.)
+The launch runs through `ExecProcess`, which attaches immediately and blocks
+sm until detach, so there is no window to run a separate `set-option` between
+create and attach. Adoption therefore recovers the two facts it needs without
+options: the **agent** is encoded in the provisional name
+(`sm-<agent>-pending-…`), and the **cwd** is read back from the session's
+`#{pane_current_path}` (which the `-c <cwd>` above sets as the pane's start
+directory). (`-A` is irrelevant for a fresh name.)
 
 ### Adoption (best-effort new-session linking)
 
 On each rescan, for every live provisional tmux (`sm-<agent>-pending-*`):
 
-1. Read its `@sm_cwd` and `@sm_agent`.
+1. Parse its agent from the name and read its cwd from `#{pane_current_path}`.
 2. Among scanned sessions with the same `CWD` and `Agent` that are **not**
    already backed by a live `sm-<agent>-<id8>` tmux, pick the one with the most
    recent `LastActivity`.
@@ -154,9 +159,10 @@ All tmux calls go through a small injectable interface on the model
 (default implementation shells out; tests inject a fake), covering:
 
 - `List() (map[string]bool, error)` — the `sm-`-prefixed live set.
+- `Path(name string) (string, error)` — a session's `#{pane_current_path}`,
+  used by adoption to place a provisional new-session tmux.
 - `Kill(name string) error`.
 - `Rename(from, to string) error`.
-- `Option(name, key string) (string, error)` — read `@sm_cwd` / `@sm_agent`.
 - command builders for resume/new that produce the `tmux …` argv (so the
   `ExecProcess` launch itself stays the existing injected `runCmd`).
 
@@ -179,7 +185,7 @@ runs in unit tests.
   Immediate (no confirm) — re-resuming is cheap.
 - On a project header: kill every live tmux belonging to that project's
   sessions (iterate the header's child rows; include provisional tmux whose
-  `@sm_cwd` maps to this project). Guarded by a confirm dialog
+  `#{pane_current_path}` base maps to this project). Guarded by a confirm dialog
   ("Kill N tmux in `<project>`? y/n") because it is plural and destructive.
 - After any kill, refresh the discovery set immediately.
 
