@@ -90,3 +90,58 @@ func TestPathHonorsXDGAndOverride(t *testing.T) {
 		t.Errorf("XDG path = %q, want /xdg/sm/config.json", got)
 	}
 }
+
+func TestDefaultFileJSONParsesToDefault(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(p, []byte(DefaultFileJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("DefaultFileJSON must be valid loadable JSON: %v", err)
+	}
+	if c != Default() {
+		t.Errorf("DefaultFileJSON loaded as %+v, want Default() %+v", c, Default())
+	}
+}
+
+func TestEnsureDefaultCreatesWhenMissing(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sub", "sm", "config.json") // parent dirs absent
+	created, err := EnsureDefault(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("EnsureDefault should report created=true for a missing file")
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("file should exist after EnsureDefault: %v", err)
+	}
+	if string(data) != DefaultFileJSON {
+		t.Errorf("written contents = %q, want DefaultFileJSON", string(data))
+	}
+	c, err := Load(p)
+	if err != nil || c != Default() {
+		t.Errorf("created file should load as Default(): c=%+v err=%v", c, err)
+	}
+}
+
+func TestEnsureDefaultNoOpWhenPresent(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	custom := `{"tmux":{"enabled":true}}`
+	if err := os.WriteFile(p, []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	created, err := EnsureDefault(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Error("EnsureDefault must not report created=true for an existing file")
+	}
+	data, _ := os.ReadFile(p)
+	if string(data) != custom {
+		t.Errorf("EnsureDefault overwrote an existing file: got %q, want %q", string(data), custom)
+	}
+}
