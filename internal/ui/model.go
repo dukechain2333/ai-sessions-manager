@@ -192,6 +192,14 @@ var tmuxLookPath = func() bool {
 	return err == nil
 }
 
+// binLookPath reports an error when an agent binary (claude/codex) is not on
+// PATH. Overridable in tests so the suite does not depend on those binaries
+// being installed on the runner.
+var binLookPath = func(bin string) error {
+	_, err := exec.LookPath(bin)
+	return err
+}
+
 func (m Model) Init() tea.Cmd {
 	if m.tmuxEnabled {
 		return tea.Batch(m.scanCmd(), m.refreshTmuxCmd(), m.tmuxTickCmd())
@@ -934,7 +942,7 @@ func (m Model) startResume() (tea.Model, tea.Cmd) {
 		m.errText = "no handler for agent " + s.Agent.Label()
 		return m, nil
 	}
-	if _, err := exec.LookPath(p.Binary()); err != nil {
+	if err := binLookPath(p.Binary()); err != nil {
 		m.dialog = dialogError
 		m.errText = p.Binary() + " not found on PATH"
 		return m, nil
@@ -962,7 +970,7 @@ func (m Model) launchNewSession(dir string) (Model, tea.Cmd) {
 	m.dialog = dialogNone
 	if len(m.providers) == 1 {
 		p := m.providers[0]
-		if _, err := exec.LookPath(p.Binary()); err != nil {
+		if err := binLookPath(p.Binary()); err != nil {
 			m.dialog = dialogError
 			m.errText = p.Binary() + " not found on PATH"
 			return m, nil
@@ -1077,7 +1085,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errText = "no handler for agent " + pending.Agent.Label()
 					return m, nil
 				}
-				if _, err := exec.LookPath(p.Binary()); err != nil {
+				if err := binLookPath(p.Binary()); err != nil {
 					m.dialog = dialogError
 					m.errText = p.Binary() + " not found on PATH"
 					return m, nil
@@ -1113,7 +1121,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.errText = agent.Label() + " is not available"
 			return m, nil
 		}
-		if _, err := exec.LookPath(p.Binary()); err != nil {
+		if err := binLookPath(p.Binary()); err != nil {
 			m.dialog = dialogError
 			m.errText = p.Binary() + " not found on PATH"
 			return m, nil

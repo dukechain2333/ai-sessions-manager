@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -13,6 +14,43 @@ import (
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
+
+// TestMain makes the resume/new launch paths independent of the runner's
+// environment: they check that the agent binary is on PATH, but CI runners
+// have no claude/codex installed. Default the lookup to "present" for the
+// whole package; the missing-binary branch is exercised explicitly by
+// TestResumeErrorsWhenBinaryMissing, which overrides binLookPath itself.
+func TestMain(m *testing.M) {
+	binLookPath = func(string) error { return nil }
+	os.Exit(m.Run())
+}
+
+// TestResumeErrorsWhenBinaryMissing covers the branch TestMain stubs away:
+// when the agent binary is absent from PATH, resume raises an error dialog
+// and does not launch anything.
+func TestResumeErrorsWhenBinaryMissing(t *testing.T) {
+	orig := binLookPath
+	binLookPath = func(string) error { return errors.New("not found") }
+	defer func() { binLookPath = orig }()
+
+	m := newTestModel()
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir // real dir, so resume reaches the binary check
+	launched := false
+	m.runCmd = func(string, string, ...string) tea.Cmd {
+		launched = true
+		return nil
+	}
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	m = m2.(Model)
+	if m.dialog != dialogError {
+		t.Errorf("missing binary should raise an error dialog, got dialog=%v", m.dialog)
+	}
+	if launched {
+		t.Error("resume must not launch anything when the binary is missing")
+	}
+}
 
 func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {
 	m := newTestModel()
