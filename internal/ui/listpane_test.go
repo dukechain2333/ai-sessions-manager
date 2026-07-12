@@ -10,9 +10,9 @@ import (
 
 func testSessions() []store.Session {
 	return []store.Session{
-		{ID: "s1", Slug: "-p1", CWD: "/x/alpha", Title: "Create slides from notes", FirstPrompt: "make slides", UserMessages: 3, Enriched: true, LastActivity: time.Now()},
-		{ID: "s2", Slug: "-p2", CWD: "/x/beta", Title: "Fix backup script", FirstPrompt: "backup is broken", UserMessages: 2, Enriched: true, LastActivity: time.Now().Add(-time.Hour)},
-		{ID: "s3", Slug: "-p3", CWD: "/x/gamma", Title: "", FirstPrompt: "", UserMessages: 0, Enriched: true, LastActivity: time.Now().Add(-2 * time.Hour)},
+		{ID: "s1", Slug: "-p1", CWD: "/x/alpha", Title: "Create slides from notes", FirstPrompt: "make slides", Agent: store.AgentClaude, UserMessages: 3, Enriched: true, LastActivity: time.Now()},
+		{ID: "s2", Slug: "-p2", CWD: "/x/beta", Title: "Fix backup script", FirstPrompt: "backup is broken", Agent: store.AgentClaude, UserMessages: 2, Enriched: true, LastActivity: time.Now().Add(-time.Hour)},
+		{ID: "s3", Slug: "-p3", CWD: "/x/gamma", Title: "", FirstPrompt: "", Agent: store.AgentClaude, UserMessages: 0, Enriched: true, LastActivity: time.Now().Add(-2 * time.Hour)},
 	}
 }
 

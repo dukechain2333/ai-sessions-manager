@@ -43,8 +43,15 @@ func key(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
+func TestNewBuildsProviders(t *testing.T) {
+	m := New("/nope/claude", "/nope/codex")
+	if len(m.providers) == 0 {
+		t.Error("expected at least the claude provider")
+	}
+}
+
 func newTestModel() Model {
-	m := New("/nonexistent-projects-dir")
+	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir")
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
 	m2, _ = m.Update(scanDoneMsg{sessions: testSessions()})

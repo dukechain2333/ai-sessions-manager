@@ -70,6 +70,7 @@ type (
 
 type Model struct {
 	projectsDir string
+	providers   []store.Provider
 	st          styles
 
 	list        listPane
@@ -124,7 +125,7 @@ type Model struct {
 	curHit    int
 }
 
-func New(projectsDir string) Model {
+func New(projectsDir, codexDir string) Model {
 	st := defaultStyles()
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
@@ -146,6 +147,11 @@ func New(projectsDir string) Model {
 		lastClickRow:  -1,
 		now:           time.Now,
 	}
+	provs := []store.Provider{store.NewClaudeProvider(projectsDir)}
+	if cp := store.NewCodexProvider(codexDir); cp.Available() {
+		provs = append(provs, cp)
+	}
+	ret.providers = provs
 	ret.index, ret.indexErr = store.NewSearchIndex()
 	return ret
 }
@@ -168,9 +174,9 @@ func checkClaudeCmd() tea.Msg {
 }
 
 func (m Model) scanCmd() tea.Cmd {
-	dir := m.projectsDir
+	provs := m.providers
 	return func() tea.Msg {
-		sessions, err := store.Scan(dir)
+		sessions, err := store.ScanAll(provs)
 		return scanDoneMsg{sessions: sessions, err: err}
 	}
 }
@@ -265,9 +271,16 @@ func (m *Model) loadTranscriptCmd() tea.Cmd {
 		return nil
 	}
 	m.previewFor = s.ID
-	cache, path, id := m.cache, s.Path, s.ID
+	cache, path, id, agent := m.cache, s.Path, s.ID, s.Agent
+	provs := m.providers
 	return func() tea.Msg {
-		t, err := cache.Get(path)
+		t, err := cache.Get(path, func() (store.Transcript, error) {
+			p := store.ProviderFor(provs, agent)
+			if p == nil {
+				return store.Transcript{}, fmt.Errorf("no provider for %s", agent.Label())
+			}
+			return p.ParseTranscript(path)
+		})
 		t.SessionID = id
 		return transcriptMsg{id: id, t: t, err: err}
 	}
@@ -354,7 +367,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ch := make(chan store.EnrichResult, len(msg.sessions))
 		m.enrichCh = ch
 		m.loading = true
-		store.Enrich(msg.sessions, 8, ch)
+		store.Enrich(msg.sessions, m.providers, 8, ch)
 		if m.searchAll && m.activeQuery != "" {
 			m.list.SetSearchResults(nil) // never render old indices over the new ordering
 			return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd(), m.dispatchSearch())
@@ -458,7 +471,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.indexing = true
 			m.indexDone, m.indexTotal = 0, len(m.list.Sessions())
 			m.indexFailed = 0
-			m.index.EnsureAll(m.list.Sessions(), 4, ch)
+			provs := m.providers
+			m.index.EnsureAll(m.list.Sessions(), func(s store.Session) (store.Transcript, error) {
+				p := store.ProviderFor(provs, s.Agent)
+				if p == nil {
+					return store.Transcript{}, fmt.Errorf("no provider for %s", s.Agent.Label())
+				}
+				return p.ParseTranscript(s.Path)
+			}, 4, ch)
 			cmds = append(cmds, waitIndex(ch))
 		}
 		cmds = append(cmds, m.runSearch(msg.seq))

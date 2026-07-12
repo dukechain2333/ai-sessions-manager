@@ -36,7 +36,10 @@ func searchModel(t *testing.T) Model {
 	m.list.sessions[0].Path = write("s1", "the quick brown fox")
 	m.list.sessions[1].Path = write("s2", "quick one", "quick two")
 	for _, s := range m.list.sessions[:2] {
-		if err := m.index.EnsureSession(s.Path); err != nil {
+		path := s.Path
+		if err := m.index.EnsureSession(path, func() (store.Transcript, error) {
+			return store.ParseTranscript(path)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
