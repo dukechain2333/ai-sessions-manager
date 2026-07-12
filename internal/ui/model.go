@@ -312,6 +312,24 @@ func (m Model) projectLabelText() string {
 	return " ▸ " + store.Truncate(s.Project(), 40) + "  "
 }
 
+// focusedBorderColor is the border color of the focused pane: the selected
+// session's agent accent, or the default accent when nothing is selected.
+func (m Model) focusedBorderColor() lipgloss.AdaptiveColor {
+	if s, _, ok := m.list.Selected(); ok {
+		return m.st.AgentAccent(s.Agent)
+	}
+	return m.st.Accent
+}
+
+// projectLabelColor is the bottom-left label color: the accent of the majority
+// agent in the selected session's project.
+func (m Model) projectLabelColor() lipgloss.AdaptiveColor {
+	if s, _, ok := m.list.Selected(); ok {
+		return m.st.AgentAccent(m.list.projectMajorityAgent(s.Project()))
+	}
+	return m.st.Accent
+}
+
 // paneWidths returns the outer widths of the list and preview panes.
 // layout() and mouse hit-testing must agree on these, so they live here.
 func (m *Model) paneWidths() (listW, previewW int) {
@@ -974,11 +992,13 @@ func (m Model) View() string {
 	if m.dialog != dialogNone {
 		body = lipgloss.Place(m.width, m.height-3, lipgloss.Center, lipgloss.Center, m.dialogView())
 	} else {
+		focused := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
+			BorderForeground(m.focusedBorderColor())
 		listStyle, prevStyle := m.st.PaneBlurred, m.st.PaneBlurred
 		if m.focus == focusPreview {
-			prevStyle = m.st.PaneFocused
+			prevStyle = focused
 		} else {
-			listStyle = m.st.PaneFocused
+			listStyle = focused
 		}
 		if m.narrow() {
 			// Pad the list to the full body height. Without this the frame is
@@ -1003,7 +1023,7 @@ func (m Model) View() string {
 	if helpBudget < 0 {
 		helpBudget = 0
 	}
-	styledLabel := lipgloss.NewStyle().Bold(true).Foreground(m.st.Accent).
+	styledLabel := lipgloss.NewStyle().Bold(true).Foreground(m.projectLabelColor()).
 		MaxWidth(m.width).Render(label)
 	styledHelp := m.st.Help.MaxWidth(helpBudget).Render(helpLine())
 	return header + "\n" + filterBar + "\n" + body + "\n" + styledLabel + styledHelp

@@ -229,3 +229,26 @@ func TestBottomLabelShowsSelectedProject(t *testing.T) {
 		t.Errorf("projectLabelText on a header = %q, want empty", got)
 	}
 }
+
+func TestFocusedBorderAndLabelColorFollowAgent(t *testing.T) {
+	m := newTestModel() // grouped; cursor on first session s1 (claude, project "alpha")
+	if m.focusedBorderColor() != m.st.Accent {
+		t.Error("claude selection should give the coral border color")
+	}
+	if m.projectLabelColor() != m.st.Accent {
+		t.Error("claude-majority project should give the coral label color")
+	}
+	// Flip the selected session and its whole project to codex, refresh, re-select.
+	for i := range m.list.sessions {
+		if m.list.sessions[i].CWD == "/x/alpha" {
+			m.list.sessions[i].Agent = store.AgentCodex
+		}
+	}
+	m.list.SetSessions(m.list.sessions)
+	if m.focusedBorderColor() != m.st.CodexAccent {
+		t.Error("codex selection should give the teal border color")
+	}
+	if m.projectLabelColor() != m.st.CodexAccent {
+		t.Error("codex-majority project should give the teal label color")
+	}
+}

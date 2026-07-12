@@ -239,6 +239,36 @@ func TestListViewEmptyStates(t *testing.T) {
 	}
 }
 
+func TestProjectMajorityAgent(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(80, 40)
+	l.SetSessions([]store.Session{
+		{ID: "a", CWD: "/x/cx", Agent: store.AgentCodex, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+		{ID: "b", CWD: "/x/cx", Agent: store.AgentCodex, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+		{ID: "c", CWD: "/x/cx", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+		{ID: "d", CWD: "/x/cl", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+	})
+	if got := l.projectMajorityAgent("cx"); got != store.AgentCodex {
+		t.Errorf("cx majority = %v, want codex", got)
+	}
+	if got := l.projectMajorityAgent("cl"); got != store.AgentClaude {
+		t.Errorf("cl majority = %v, want claude", got)
+	}
+}
+
+func TestProjectMajorityAgentTieUsesSelected(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(80, 40)
+	l.SetSessions([]store.Session{
+		{ID: "x1", CWD: "/x/tie", Agent: store.AgentCodex, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+		{ID: "c1", CWD: "/x/tie", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(-time.Hour)},
+	})
+	l.selectSession(0) // codex session selected
+	if got := l.projectMajorityAgent("tie"); got != store.AgentCodex {
+		t.Errorf("tie with codex selected = %v, want codex", got)
+	}
+}
+
 func TestHumanTime(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
