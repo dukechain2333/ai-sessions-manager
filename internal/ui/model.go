@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
@@ -71,6 +72,7 @@ type (
 type Model struct {
 	projectsDir string
 	providers   []store.Provider
+	tmuxEnabled bool
 	st          styles
 
 	list        listPane
@@ -126,8 +128,8 @@ type Model struct {
 	curHit    int
 }
 
-func New(projectsDir, codexDir string) Model {
-	st := defaultStyles()
+func New(projectsDir, codexDir string, cfg config.Config) Model {
+	st := stylesWithColors(cfg.Claude, cfg.Codex)
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
 	fi.Prompt = "> "
@@ -148,6 +150,7 @@ func New(projectsDir, codexDir string) Model {
 		cache:         store.NewTranscriptCache(8),
 		pendingDelete: -1,
 		providers:     provs,
+		tmuxEnabled:   cfg.TmuxEnabled,
 		trashFn: func(s store.Session) (string, error) {
 			p := store.ProviderFor(provs, s.Agent)
 			if p == nil {

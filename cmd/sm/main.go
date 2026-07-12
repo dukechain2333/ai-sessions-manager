@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/ui"
 )
 
@@ -21,13 +22,23 @@ func main() {
 	}
 	projectsDir := flag.String("projects-dir", filepath.Join(home, ".claude", "projects"), "Claude Code projects directory")
 	codexDir := flag.String("codex-dir", filepath.Join(home, ".codex", "sessions"), "Codex sessions directory")
+	configPath := flag.String("config", "", "path to config.json (default: ~/.config/sm/config.json)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("sm", version)
 		return
 	}
-	p := tea.NewProgram(ui.New(*projectsDir, *codexDir), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	path, err := config.Path(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sm:", err)
+		os.Exit(1)
+	}
+	cfg, cfgErr := config.Load(path)
+	if cfgErr != nil {
+		fmt.Fprintln(os.Stderr, "sm: config:", cfgErr, "(using defaults)")
+	}
+	p := tea.NewProgram(ui.New(*projectsDir, *codexDir, cfg), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "sm:", err)
 		os.Exit(1)

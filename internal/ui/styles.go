@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
@@ -35,24 +36,30 @@ type styles struct {
 }
 
 func defaultStyles() styles {
-	accent := lipgloss.AdaptiveColor{Light: "#C15F3C", Dark: "#D97757"}
-	codex := lipgloss.AdaptiveColor{Light: "#0A7C66", Dark: "#10A37F"}
+	d := config.Default()
+	return stylesWithColors(d.Claude, d.Codex)
+}
+
+// stylesWithColors builds the style set using the given per-agent accents.
+func stylesWithColors(claude, codex config.AgentColors) styles {
+	accent := lipgloss.AdaptiveColor{Light: claude.Light, Dark: claude.Dark}
+	codexAccent := lipgloss.AdaptiveColor{Light: codex.Light, Dark: codex.Dark}
 	text := lipgloss.AdaptiveColor{Light: "#333333", Dark: "#DEDEDE"}
 	dim := lipgloss.AdaptiveColor{Light: "#8A8A8A", Dark: "#767676"}
 	faint := lipgloss.AdaptiveColor{Light: "#D0D0D0", Dark: "#3A3A3A"}
 	warn := lipgloss.AdaptiveColor{Light: "160", Dark: "203"}
 	return styles{
 		Accent:         accent,
-		CodexAccent:    codex,
+		CodexAccent:    codexAccent,
 		AppTitle:       lipgloss.NewStyle().Bold(true).Foreground(text),
 		Count:          lipgloss.NewStyle().Foreground(dim),
 		ListTitle:      lipgloss.NewStyle().Foreground(text),
 		ListTitleSel:   lipgloss.NewStyle().Bold(true).Foreground(accent),
 		ListMeta:       lipgloss.NewStyle().Foreground(dim),
 		ListMetaSel:    lipgloss.NewStyle().Foreground(accent),
-		CodexTitleSel:  lipgloss.NewStyle().Bold(true).Foreground(codex),
+		CodexTitleSel:  lipgloss.NewStyle().Bold(true).Foreground(codexAccent),
 		ClaudeTag:      lipgloss.NewStyle().Foreground(accent),
-		CodexTag:       lipgloss.NewStyle().Foreground(codex),
+		CodexTag:       lipgloss.NewStyle().Foreground(codexAccent),
 		GroupHeader:    lipgloss.NewStyle().Bold(true).Foreground(text),
 		GroupHeaderSel: lipgloss.NewStyle().Bold(true).Foreground(accent),
 		GroupCount:     lipgloss.NewStyle().Foreground(accent),

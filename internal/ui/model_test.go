@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
@@ -44,14 +45,14 @@ func key(s string) tea.KeyMsg {
 }
 
 func TestNewBuildsProviders(t *testing.T) {
-	m := New("/nope/claude", "/nope/codex")
+	m := New("/nope/claude", "/nope/codex", config.Default())
 	if len(m.providers) == 0 {
 		t.Error("expected at least the claude provider")
 	}
 }
 
 func newTestModel() Model {
-	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir")
+	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", config.Default())
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
 	m2, _ = m.Update(scanDoneMsg{sessions: testSessions()})
