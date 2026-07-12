@@ -1,14 +1,14 @@
 # sm — AI sessions manager
 
-A single-binary terminal UI that finds every **Claude Code** session on your
-machine, groups them by project, previews the transcript, and drops you back
-into any conversation with one keypress — in the right directory, wherever the
-session originally lived.
+A single-binary terminal UI that finds your local AI coding-agent sessions —
+**Claude Code**, and **OpenAI Codex** when present — groups them by project,
+previews the transcript, and drops you back into any conversation with one
+keypress, in the directory the session originally lived in.
 
-Claude Code stores each session as a `.jsonl` file under
-`~/.claude/projects/<dir>/`. Once you work across many directories they become
-impossible to track. `sm` gathers them into one browsable, foldable list and
-runs `claude --resume` for you.
+Each agent stores its sessions as `.jsonl` files (Claude Code under
+`~/.claude/projects/`, Codex under `~/.codex/sessions/`). Once you work across
+many directories they become impossible to track. `sm` gathers them into one
+browsable, foldable list and resumes any of them for you.
 
 ```
 ✻ sm · AI Sessions   52 sessions
@@ -23,7 +23,7 @@ runs `claude --resume` for you.
 │ ▸ william (12)                     ││ ⎿ Skill: superpowers:brainstorming  │
 │ ▸ prs-net (2)                      ││                                     │
 ╰────────────────────────────────────╯╰─────────────────────────────────────╯
- ↵ resume  n new  d delete  / filter  s search  g group  space fold  q quit
+ ↵ resume  tab focus  n new  d delete  / filter  a agent  g group  q quit
 ```
 
 ## Features
@@ -43,6 +43,11 @@ runs `claude --resume` for you.
   scanned alongside Claude Code's and shown in the same list, tagged `codex`
   in teal-green (Claude sessions keep a coral `claude` tag) so you can tell
   them apart at a glance.
+- **Full-text search** across every message in every session, on top of the
+  quick fuzzy filter.
+- **Optional [tmux integration](#tmux-integration)** — resume into a
+  detachable tmux session, with live markers and a kill key — and a
+  [`config.json`](#configuration) for the toggle and per-agent colors.
 - Cross-platform single static binary (macOS & Linux, Intel & Apple Silicon),
   no runtime dependencies.
 
@@ -61,18 +66,18 @@ Installs the latest release to `~/.local/bin/sm`. Options:
 
 ```sh
 # specific version, or a custom install directory
-curl -fsSL .../install.sh | sh -s -- --version v0.1.0 --bin /usr/local/bin
+curl -fsSL .../install.sh | sh -s -- --version v0.3.0 --bin /usr/local/bin
 ```
 
 If `~/.local/bin` isn't on your `PATH`, the script prints the line to add.
 
 ### Homebrew (macOS & Linux)
 
-Once the tap is published (see [Releasing](#releasing)):
-
 ```sh
 brew install dukechain2333/tap/sm
 ```
+
+Upgrades come through `brew upgrade`.
 
 ### Debian / Ubuntu (`apt`)
 
@@ -147,6 +152,7 @@ sm --version
 | `s` | focus the search bar on the full-text layer |
 | `n` | start a new session in a picked directory (asks whether to launch Claude or Codex when a project has both) |
 | `d` | delete the selected session (moved to `.trash/`) |
+| `x` | *(tmux integration on)* kill the selected session's tmux; on a **project header**, kill all of that project's (with a confirm) |
 | `e` | show / hide "empty" sessions (hook-only, no real prompts) |
 | `r` | rescan |
 | `q` | quit |
@@ -198,6 +204,10 @@ project you trust?"** prompt — that's Claude Code's security gate, not `sm`.
 Choose *"Yes, I trust this folder"* (the default) and Claude remembers it.
 Declining it, or pressing `Ctrl-C`/`/exit`, simply returns you to the list.
 
+With tmux integration enabled (see [Configuration](#configuration)), resume
+instead attaches you to a tmux session, so the work keeps running in the
+background if you detach (`Ctrl-b d`).
+
 ### Recovering a deleted session
 
 Deletes are just moves. To restore one:
@@ -209,10 +219,12 @@ mv ~/.claude/projects/.trash/<project-slug>/<id>.jsonl \
 
 ## Configuration
 
-`sm` reads `$XDG_CONFIG_HOME/sm/config.json`, falling back to
-`~/.config/sm/config.json`; override with `--config <path>`. A missing file
-uses built-in defaults; a malformed file falls back to defaults with a
-one-time notice.
+On first run `sm` writes a default `config.json` at
+`$XDG_CONFIG_HOME/sm/config.json` (or `~/.config/sm/config.json`) and reads it
+on every launch; point elsewhere with `--config <path>`. Editing is optional —
+the defaults below match `sm`'s built-in behavior — and `sm` never overwrites a
+file you've changed. A malformed file falls back to defaults with a one-time
+notice.
 
 ```json
 {
@@ -256,25 +268,20 @@ brew uninstall sm                # homebrew
 
 ## Releasing
 
-Releases are automated with [GoReleaser](https://goreleaser.com) via GitHub
-Actions. Pushing a tag builds binaries, `.deb`/`.rpm` packages, archives, and
-checksums, and publishes a GitHub Release:
+Releases are automated with [GoReleaser](https://goreleaser.com) and GitHub
+Actions. Pushing a version tag builds the binaries, `.deb`/`.rpm` packages,
+archives, and checksums, publishes a GitHub Release, updates the Homebrew cask
+(tap `dukechain2333/homebrew-tap`), and refreshes the APT repo — all from the
+one tag:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-**To also publish the Homebrew cask**, do the one-time setup:
-
-1. Create a public repo `dukechain2333/homebrew-tap`.
-2. Create a token with `contents:write` on that tap repo (a classic PAT with
-   `repo` scope, or a fine-grained token scoped to `homebrew-tap`).
-3. Add it to this repo's secrets as `HOMEBREW_TAP_GITHUB_TOKEN`
-   (Settings → Secrets and variables → Actions).
-
-The next tagged release pushes the cask; without the secret the release still
-succeeds and just skips Homebrew.
+The Homebrew tap and its `HOMEBREW_TAP_GITHUB_TOKEN` secret are already
+configured; without the secret a release still succeeds and just skips the
+cask.
 
 ## Development
 
