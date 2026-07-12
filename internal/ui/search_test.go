@@ -337,7 +337,7 @@ func TestRescanRefreshesActiveSearch(t *testing.T) {
 
 func TestDeleteInvalidatesInFlightSearch(t *testing.T) {
 	m := searchModel(t)
-	m.trashFn = func(string, store.Session) (string, error) { return "/trash/x", nil }
+	m.trashFn = func(store.Session) (string, error) { return "/trash/x", nil }
 	m2, _ := m.Update(key("/"))
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -480,7 +480,7 @@ func TestClaudeExitRevalidatesIndex(t *testing.T) {
 	// dir) — drive the rescan's completion directly with the same sessions,
 	// the way the real scanCmd's result would look after a resumed
 	// session's mtime/size changed.
-	m2, _ = m.Update(claudeExitMsg{})
+	m2, _ = m.Update(agentExitMsg{})
 	m = m2.(Model)
 	m2, cmd = m.Update(scanDoneMsg{sessions: m.list.Sessions()})
 	m = m2.(Model)

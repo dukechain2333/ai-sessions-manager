@@ -19,7 +19,7 @@ func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {
 	if exitErr == nil {
 		t.Fatal("setup: expected a non-nil exit error")
 	}
-	m2, cmd := m.Update(claudeExitMsg{err: exitErr})
+	m2, cmd := m.Update(agentExitMsg{err: exitErr})
 	m = m2.(Model)
 	if m.dialog != dialogNone {
 		t.Errorf("non-zero claude exit should return to the list, got dialog=%v err=%q", m.dialog, m.errText)
@@ -32,7 +32,7 @@ func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {
 func TestClaudeLaunchFailureShownAsError(t *testing.T) {
 	m := newTestModel()
 	// Not an *exec.ExitError: claude could not be launched at all.
-	m2, _ := m.Update(claudeExitMsg{err: errors.New(`exec: "claude": executable file not found in $PATH`)})
+	m2, _ := m.Update(agentExitMsg{err: errors.New(`exec: "claude": executable file not found in $PATH`)})
 	m = m2.(Model)
 	if m.dialog != dialogError {
 		t.Error("a genuine launch failure should show the error dialog")
