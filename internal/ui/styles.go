@@ -28,7 +28,6 @@ type styles struct {
 	UserMsg        lipgloss.Style
 	AssistantMsg   lipgloss.Style
 	ToolMsg        lipgloss.Style
-	PaneFocused    lipgloss.Style
 	PaneBlurred    lipgloss.Style
 	Help           lipgloss.Style
 	ErrorText      lipgloss.Style
@@ -60,7 +59,6 @@ func defaultStyles() styles {
 		UserMsg:        lipgloss.NewStyle().Bold(true).Foreground(text),
 		AssistantMsg:   lipgloss.NewStyle().Foreground(text),
 		ToolMsg:        lipgloss.NewStyle().Foreground(dim),
-		PaneFocused:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent),
 		PaneBlurred:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(faint),
 		Help:           lipgloss.NewStyle().Foreground(dim),
 		ErrorText:      lipgloss.NewStyle().Bold(true).Foreground(warn),
