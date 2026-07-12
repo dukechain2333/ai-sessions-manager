@@ -34,6 +34,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sm:", err)
 		os.Exit(1)
 	}
+	// On first run, scaffold a default config at the default location so the
+	// user has a file to find and edit. Only at the default path — an explicit
+	// --config path is the user's to manage. Failure is non-fatal.
+	if *configPath == "" {
+		if _, err := config.EnsureDefault(path); err != nil {
+			fmt.Fprintln(os.Stderr, "sm: config:", err, "(using defaults)")
+		}
+	}
 	cfg, cfgErr := config.Load(path)
 	if cfgErr != nil {
 		fmt.Fprintln(os.Stderr, "sm: config:", cfgErr, "(using defaults)")

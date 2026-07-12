@@ -11,6 +11,17 @@ import (
 	"regexp"
 )
 
+// DefaultFileJSON is the pretty-printed default config written on first run.
+// TestDefaultFileJSONParsesToDefault pins it to Default() so it cannot drift.
+const DefaultFileJSON = `{
+  "tmux": { "enabled": false },
+  "colors": {
+    "claude": { "light": "#C15F3C", "dark": "#D97757" },
+    "codex":  { "light": "#0A7C66", "dark": "#10A37F" }
+  }
+}
+`
+
 // AgentColors is one agent's light/dark accent hex.
 type AgentColors struct{ Light, Dark string }
 
@@ -44,6 +55,25 @@ func Path(override string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".config", "sm", "config.json"), nil
+}
+
+// EnsureDefault writes DefaultFileJSON to path when no file exists there,
+// creating parent directories. It never overwrites an existing file, so a
+// user's edited config is always preserved. created reports whether a file
+// was written.
+func EnsureDefault(path string) (created bool, err error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil // already exists — never overwrite
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err // e.g. permission error stat-ing the path
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(path, []byte(DefaultFileJSON), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 type fileColors struct {
