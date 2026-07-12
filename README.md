@@ -39,6 +39,10 @@ runs `claude --resume` for you.
   works even for sessions that later `cd`'d elsewhere.
 - **New session** in any known project directory, and **safe delete** (files
   are moved to `~/.claude/projects/.trash/`, never `rm`'d).
+- **OpenAI Codex sessions, too** — when `~/.codex` exists, its sessions are
+  scanned alongside Claude Code's and shown in the same list, tagged `codex`
+  in teal-green (Claude sessions keep a coral `claude` tag) so you can tell
+  them apart at a glance.
 - Cross-platform single static binary (macOS & Linux, Intel & Apple Silicon),
   no runtime dependencies.
 
@@ -125,8 +129,9 @@ make install          # builds ./sm and copies it to ~/.local/bin/sm
 ## Usage
 
 ```sh
-sm                      # browse ~/.claude/projects
-sm --projects-dir DIR   # browse a different location
+sm                      # browse ~/.claude/projects (and ~/.codex/sessions, if present)
+sm --projects-dir DIR   # browse a different Claude Code location
+sm --codex-dir DIR      # browse a different Codex sessions location
 sm --version
 ```
 
@@ -136,10 +141,11 @@ sm --version
 | `enter` | resume the selected session; on a **project header**, fold/unfold it |
 | `space` | fold / unfold the current project group |
 | `g` | toggle grouping by project ⇄ flat recency |
+| `a` | toggle per-project agent subheaders (`─ Claude ─` / `─ Codex ─`) in mixed-agent projects |
 | `tab` | move focus to the preview pane (to scroll a long transcript) and back |
 | `/` | fuzzy filter (enter keeps it, esc clears it) |
 | `s` | focus the search bar on the full-text layer |
-| `n` | start a new session in a picked directory |
+| `n` | start a new session in a picked directory (asks whether to launch Claude or Codex when a project has both) |
 | `d` | delete the selected session (moved to `.trash/`) |
 | `e` | show / hide "empty" sessions (hook-only, no real prompts) |
 | `r` | rescan |
@@ -183,8 +189,9 @@ that, searches are fast and only changed sessions are re-indexed.
 
 ### Resuming
 
-Pressing `enter` on a session suspends `sm`, runs `claude --resume <id>` in the
-session's original directory, and returns you to the list when Claude exits.
+Pressing `enter` on a session suspends `sm`, runs `claude --resume <id>` (or,
+for a Codex session, `codex resume <id>`) in the session's original
+directory, and returns you to the list when the agent exits.
 
 The first time Claude opens a directory it may show its own **"Is this a
 project you trust?"** prompt — that's Claude Code's security gate, not `sm`.

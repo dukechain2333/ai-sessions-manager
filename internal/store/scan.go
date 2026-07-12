@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,19 +53,22 @@ type EnrichResult struct {
 	Err   error
 }
 
-// Enrich parses metadata for every session concurrently, sending one
-// result per session on results and closing it when all are done.
-func Enrich(sessions []Session, workers int, results chan<- EnrichResult) {
+// Enrich parses metadata for every session concurrently, dispatching to the
+// provider that handles each session's Agent, and sends one result per
+// session (closing results when done). Sessions whose agent has no provider
+// yield an error result.
+func Enrich(sessions []Session, providers []Provider, workers int, results chan<- EnrichResult) {
 	if workers < 1 {
 		workers = 1
 	}
-	// Snapshot the fields workers need up front so they never read the
-	// caller's slice concurrently with an in-place mutation (e.g. the UI's
-	// RemoveSession shifting sessions during a delete).
-	type job struct{ path, slug string }
+	type job struct {
+		path  string
+		slug  string
+		agent Agent
+	}
 	snap := make([]job, len(sessions))
 	for i, s := range sessions {
-		snap[i] = job{s.Path, s.Slug}
+		snap[i] = job{s.Path, s.Slug, s.Agent}
 	}
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -73,8 +77,13 @@ func Enrich(sessions []Session, workers int, results chan<- EnrichResult) {
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				m, err := ParseMetadata(snap[i].path)
-				if err == nil && m.CWD == "" {
+				p := ProviderFor(providers, snap[i].agent)
+				if p == nil {
+					results <- EnrichResult{Index: i, Err: fmt.Errorf("no provider for agent %q", snap[i].agent)}
+					continue
+				}
+				m, err := p.ParseMetadata(snap[i].path)
+				if err == nil && m.CWD == "" && snap[i].agent == AgentClaude {
 					m.CWD = ResolveSlug("/", snap[i].slug)
 				}
 				results <- EnrichResult{Index: i, Meta: m, Err: err}

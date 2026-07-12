@@ -11,6 +11,7 @@ type Session struct {
 	ID            string // session uuid (filename without .jsonl)
 	Path          string // absolute path to the .jsonl file
 	Slug          string // directory name under the projects dir
+	Agent         Agent  // which agent produced the session
 	CWD           string // working directory recorded in the session
 	Title         string
 	FirstPrompt   string

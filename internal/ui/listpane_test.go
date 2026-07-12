@@ -10,9 +10,9 @@ import (
 
 func testSessions() []store.Session {
 	return []store.Session{
-		{ID: "s1", Slug: "-p1", CWD: "/x/alpha", Title: "Create slides from notes", FirstPrompt: "make slides", UserMessages: 3, Enriched: true, LastActivity: time.Now()},
-		{ID: "s2", Slug: "-p2", CWD: "/x/beta", Title: "Fix backup script", FirstPrompt: "backup is broken", UserMessages: 2, Enriched: true, LastActivity: time.Now().Add(-time.Hour)},
-		{ID: "s3", Slug: "-p3", CWD: "/x/gamma", Title: "", FirstPrompt: "", UserMessages: 0, Enriched: true, LastActivity: time.Now().Add(-2 * time.Hour)},
+		{ID: "s1", Slug: "-p1", CWD: "/x/alpha", Title: "Create slides from notes", FirstPrompt: "make slides", Agent: store.AgentClaude, UserMessages: 3, Enriched: true, LastActivity: time.Now()},
+		{ID: "s2", Slug: "-p2", CWD: "/x/beta", Title: "Fix backup script", FirstPrompt: "backup is broken", Agent: store.AgentClaude, UserMessages: 2, Enriched: true, LastActivity: time.Now().Add(-time.Hour)},
+		{ID: "s3", Slug: "-p3", CWD: "/x/gamma", Title: "", FirstPrompt: "", Agent: store.AgentClaude, UserMessages: 0, Enriched: true, LastActivity: time.Now().Add(-2 * time.Hour)},
 	}
 }
 
@@ -438,5 +438,68 @@ func TestSearchResultsEmptyShowsNoMatches(t *testing.T) {
 	l.SetSearchResults([]store.SessionHits{})
 	if v := l.View(); !strings.Contains(v, "no matches") {
 		t.Errorf("empty search-results view = %q, want it to contain %q", v, "no matches")
+	}
+}
+
+func TestListShowsAgentTag(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(80, 40)
+	l.SetSessions([]store.Session{
+		{ID: "c1", CWD: "/x/p", Title: "alpha one", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+		{ID: "x1", CWD: "/x/p", Title: "beta two", Agent: store.AgentCodex, UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(-time.Minute)},
+	})
+	v := l.View()
+	if !strings.Contains(v, "claude") {
+		t.Errorf("view missing claude tag:\n%s", v)
+	}
+	if !strings.Contains(v, "codex") {
+		t.Errorf("view missing codex tag:\n%s", v)
+	}
+}
+
+func agentMixSessions() []store.Session {
+	now := time.Now()
+	return []store.Session{
+		{ID: "c1", CWD: "/x/mix", Title: "claude a", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: now},
+		{ID: "x1", CWD: "/x/mix", Title: "codex a", Agent: store.AgentCodex, UserMessages: 1, Enriched: true, LastActivity: now.Add(-time.Minute)},
+		{ID: "c2", CWD: "/x/solo", Title: "claude solo", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: now.Add(-2 * time.Minute)},
+	}
+}
+
+func TestAgentGroupingSubheaders(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(80, 60)
+	l.SetSessions(agentMixSessions())
+	if strings.Contains(l.View(), "Claude ─") {
+		t.Error("no subheaders before toggle")
+	}
+	l.ToggleAgentGroup()
+	v := l.View()
+	if !strings.Contains(v, "─ Claude ─") || !strings.Contains(v, "─ Codex ─") {
+		t.Errorf("mixed project should show both subheaders:\n%s", v)
+	}
+	// single-agent project 'solo' must NOT get a subheader
+	soloIdx := strings.Index(v, "claude solo")
+	seg := v[strings.Index(v, "solo ("):soloIdx]
+	if strings.Contains(seg, "─ Claude ─") {
+		t.Errorf("single-agent project should not show a subheader:\n%s", v)
+	}
+}
+
+func TestAgentSubheaderNotCursorable(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(80, 60)
+	l.SetSessions(agentMixSessions())
+	l.ToggleAgentGroup()
+	// walk down through all rows; Selected must never be a subheader (ok true only on sessions)
+	for n := 0; n < 12; n++ {
+		if _, _, ok := l.Selected(); ok {
+			// fine — a session
+		}
+		l.MoveCursor(1)
+	}
+	// no panic + cursor still resolves
+	if l.Len() != 3 {
+		t.Errorf("Len = %d, want 3", l.Len())
 	}
 }

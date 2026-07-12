@@ -16,6 +16,9 @@ type styles struct {
 	ListTitleSel   lipgloss.Style
 	ListMeta       lipgloss.Style
 	ListMetaSel    lipgloss.Style
+	CodexTitleSel  lipgloss.Style
+	ClaudeTag      lipgloss.Style
+	CodexTag       lipgloss.Style
 	GroupHeader    lipgloss.Style
 	GroupHeaderSel lipgloss.Style
 	GroupCount     lipgloss.Style
@@ -31,6 +34,7 @@ type styles struct {
 
 func defaultStyles() styles {
 	accent := lipgloss.AdaptiveColor{Light: "#C15F3C", Dark: "#D97757"}
+	codex := lipgloss.AdaptiveColor{Light: "#0A7C66", Dark: "#10A37F"}
 	text := lipgloss.AdaptiveColor{Light: "#333333", Dark: "#DEDEDE"}
 	dim := lipgloss.AdaptiveColor{Light: "#8A8A8A", Dark: "#767676"}
 	faint := lipgloss.AdaptiveColor{Light: "#D0D0D0", Dark: "#3A3A3A"}
@@ -43,6 +47,9 @@ func defaultStyles() styles {
 		ListTitleSel:   lipgloss.NewStyle().Bold(true).Foreground(accent),
 		ListMeta:       lipgloss.NewStyle().Foreground(dim),
 		ListMetaSel:    lipgloss.NewStyle().Foreground(accent),
+		CodexTitleSel:  lipgloss.NewStyle().Bold(true).Foreground(codex),
+		ClaudeTag:      lipgloss.NewStyle().Foreground(accent),
+		CodexTag:       lipgloss.NewStyle().Foreground(codex),
 		GroupHeader:    lipgloss.NewStyle().Bold(true).Foreground(text),
 		GroupHeaderSel: lipgloss.NewStyle().Bold(true).Foreground(accent),
 		GroupCount:     lipgloss.NewStyle().Foreground(accent),

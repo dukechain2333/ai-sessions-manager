@@ -94,7 +94,7 @@ func NewTranscriptCache(capacity int) *TranscriptCache {
 	return &TranscriptCache{capacity: capacity, entries: map[string]Transcript{}}
 }
 
-func (c *TranscriptCache) Get(path string) (Transcript, error) {
+func (c *TranscriptCache) Get(path string, parse func() (Transcript, error)) (Transcript, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	st, err := os.Stat(path)
@@ -106,7 +106,7 @@ func (c *TranscriptCache) Get(path string) (Transcript, error) {
 		c.touch(key)
 		return t, nil
 	}
-	t, err := ParseTranscript(path)
+	t, err := parse()
 	if err != nil {
 		return Transcript{}, err
 	}

@@ -43,6 +43,7 @@ var helpBar = []helpItem{
 	{"/ filter", runeKey("/")},
 	{"s search", runeKey("s")},
 	{"g group", runeKey("g")},
+	{"a agent", runeKey("a")},
 	{"space fold", runeKey(" ")},
 	{"e empty", runeKey("e")},
 	{"r rescan", runeKey("r")},
@@ -163,6 +164,9 @@ func (m Model) clickList(line int) (tea.Model, tea.Cmd) {
 	row, ok := m.list.RowAtLine(line)
 	if !ok {
 		return m, nil
+	}
+	if m.list.IsSubheader(row) {
+		return m, nil // agent dividers are inert: no cursor move, no fold
 	}
 	m.list.SetCursor(row)
 	if m.list.OnHeader() {

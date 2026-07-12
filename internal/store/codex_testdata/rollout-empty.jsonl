@@ -1,0 +1,2 @@
+{"timestamp":"2026-06-26T03:52:47.516Z","type":"session_meta","payload":{"session_id":"aaaa","cwd":"/home/w/proj","timestamp":"2026-06-26T03:52:34.743Z"}}
+{"timestamp":"2026-06-26T03:52:49.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>only context</environment_context>"}]}}

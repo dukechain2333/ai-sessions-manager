@@ -101,6 +101,52 @@ func TestClickHeaderFolds(t *testing.T) {
 	}
 }
 
+func TestClickSubheaderIsInert(t *testing.T) {
+	m := newTestModel()
+	// A project with both a Claude and a Codex session so a subheader renders.
+	m.list.SetSessions(agentMixSessions())
+	m.list.ToggleAgentGroup()
+
+	// Locate the "─ Claude ─" subheader's screen line: list content starts at
+	// terminal row 3, adjusted for any scroll offset.
+	start, _ := m.list.layout()
+	subRow := -1
+	for i, r := range m.list.rows {
+		if r.subheader {
+			subRow = i
+			break
+		}
+	}
+	if subRow < 0 {
+		t.Fatal("expected a subheader row with groupByAgent on a mixed project")
+	}
+	y := 3 + start[subRow] - m.list.lineOffset
+
+	before, _, okBefore := m.list.Selected()
+	if !okBefore {
+		t.Fatal("precondition: a session should be selected before the click")
+	}
+
+	m2, _ := m.Update(click(5, y)) // click squarely on the "─ Claude ─" divider
+	m = m2.(Model)
+
+	// (a) the project must NOT have folded — its sessions stay visible.
+	if m.list.folded["/x/mix"] {
+		t.Error("clicking a subheader must not fold the project")
+	}
+	if !strings.Contains(m.list.View(), "claude a") {
+		t.Errorf("session under the subheader should still be visible:\n%s", m.list.View())
+	}
+	// (b) the selection must not move onto a non-session; it stays put.
+	after, _, okAfter := m.list.Selected()
+	if !okAfter {
+		t.Error("selection must still resolve to a session after a subheader click")
+	}
+	if after.ID != before.ID {
+		t.Errorf("subheader click moved selection %s -> %s; should be inert", before.ID, after.ID)
+	}
+}
+
 func TestClickBlankBelowListIsNoop(t *testing.T) {
 	m := newTestModel()
 	before, _, _ := m.list.Selected()
@@ -159,7 +205,7 @@ func TestClickListReturnsFocus(t *testing.T) {
 func TestDoubleClickResumes(t *testing.T) {
 	m, dir := modelWithRealCWD(t)
 	rec := &resumeRecorder{}
-	m.runClaude = rec.cmd
+	m.runCmd = rec.cmd
 	t0 := time.Now()
 	m.now = func() time.Time { return t0 }
 	m2, _ := m.Update(click(5, 4)) // s1 title line
@@ -178,7 +224,7 @@ func TestDoubleClickResumes(t *testing.T) {
 func TestSlowSecondClickDoesNotResume(t *testing.T) {
 	m, _ := modelWithRealCWD(t)
 	rec := &resumeRecorder{}
-	m.runClaude = rec.cmd
+	m.runCmd = rec.cmd
 	t0 := time.Now()
 	m.now = func() time.Time { return t0 }
 	m2, _ := m.Update(click(5, 4))
@@ -194,7 +240,7 @@ func TestSlowSecondClickDoesNotResume(t *testing.T) {
 func TestDoubleClickDifferentRowsDoesNotResume(t *testing.T) {
 	m, _ := modelWithRealCWD(t)
 	rec := &resumeRecorder{}
-	m.runClaude = rec.cmd
+	m.runCmd = rec.cmd
 	t0 := time.Now()
 	m.now = func() time.Time { return t0 }
 	m2, _ := m.Update(click(5, 4)) // s1
@@ -213,7 +259,7 @@ func TestDoubleClickDifferentRowsDoesNotResume(t *testing.T) {
 func TestHeaderClickResetsDoubleClick(t *testing.T) {
 	m, _ := modelWithRealCWD(t)
 	rec := &resumeRecorder{}
-	m.runClaude = rec.cmd
+	m.runCmd = rec.cmd
 	t0 := time.Now()
 	m.now = func() time.Time { return t0 }
 	m2, _ := m.Update(click(5, 4)) // s1
@@ -292,7 +338,7 @@ func TestNonLeftPressesIgnored(t *testing.T) {
 }
 
 func TestHelpBarTextUnchanged(t *testing.T) {
-	want := " ↵ resume  tab focus  n new  d delete  / filter  s search  g group  space fold  e empty  r rescan  q quit"
+	want := " ↵ resume  tab focus  n new  d delete  / filter  s search  g group  a agent  space fold  e empty  r rescan  q quit"
 	if helpLine() != want {
 		t.Fatalf("help bar text changed — it must stay byte-identical\n got: %q\nwant: %q", helpLine(), want)
 	}
@@ -308,12 +354,12 @@ func TestClickHelpBarTriggersAction(t *testing.T) {
 	if m.list.groupByProject {
 		t.Error("clicking 'g group' must toggle grouping")
 	}
-	m2, _ = m.Update(click(70, 29)) // inside "space fold" [68,77]
+	m2, _ = m.Update(click(80, 29)) // inside "space fold" [77,86]
 	m = m2.(Model)
 	// flat mode: fold is a no-op; regroup and fold via clicks
 	m2, _ = m.Update(click(60, 29))
 	m = m2.(Model)
-	m2, _ = m.Update(click(70, 29))
+	m2, _ = m.Update(click(80, 29))
 	m = m2.(Model)
 	if len(m.list.folded) == 0 {
 		t.Error("clicking 'space fold' must fold the current project")
@@ -331,7 +377,7 @@ func TestClickHelpBarGapIsNoop(t *testing.T) {
 
 func TestClickHelpQuitReturnsQuit(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(click(100, 29)) // inside "q quit" [99,104]
+	_, cmd := m.Update(click(110, 29)) // inside "q quit" [108,113]
 	if cmd == nil {
 		t.Fatal("clicking 'q quit' must return a command")
 	}
@@ -394,7 +440,7 @@ func TestDialogOriginMatchesRender(t *testing.T) {
 func TestDeleteDialogButtons(t *testing.T) {
 	m := newTestModel()
 	trashed := ""
-	m.trashFn = func(_ string, s store.Session) (string, error) {
+	m.trashFn = func(s store.Session) (string, error) {
 		trashed = s.ID
 		return "/trash/" + s.ID, nil
 	}
@@ -421,7 +467,7 @@ func TestDeleteDialogButtons(t *testing.T) {
 
 func TestDeleteDialogClickOutsideCancels(t *testing.T) {
 	m := newTestModel()
-	m.trashFn = func(string, store.Session) (string, error) {
+	m.trashFn = func(store.Session) (string, error) {
 		t.Error("trashFn must not run on an outside click")
 		return "", nil
 	}
@@ -449,12 +495,9 @@ func TestDeleteDialogDeadZoneClickKeepsDialog(t *testing.T) {
 
 func TestErrorDialogClickDismisses(t *testing.T) {
 	m := newTestModel()
-	m2, _ := m.Update(claudeMissingMsg{})
-	m = m2.(Model)
-	if m.dialog != dialogError {
-		t.Fatal("setup: expected the error dialog")
-	}
-	m2, _ = m.Update(click(3, 3)) // anywhere
+	m.dialog = dialogError
+	m.errText = "boom"
+	m2, _ := m.Update(click(3, 3)) // anywhere
 	m = m2.(Model)
 	if m.dialog != dialogNone {
 		t.Error("any click must dismiss the error dialog")
@@ -480,10 +523,17 @@ func pickerModel(t *testing.T) (Model, string, string, *resumeRecorder) {
 	t.Helper()
 	dirA, dirB := shortTempDir(t), shortTempDir(t)
 	m := newTestModel()
-	m.list.sessions[0].CWD = dirA // s1, most recent → dirs[0]
-	m.list.sessions[1].CWD = dirB // s2 → dirs[1]
+	// A second provider is registered so confirming a dir opens the
+	// agent-pick dialog these tests exercise (the single-provider fast path
+	// is covered by TestNewSessionSingleProviderLaunchesDirectly).
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
+	// s1 (the initially selected session) keeps its non-existent CWD, so "n"
+	// falls back to the dir picker instead of jumping straight to the agent
+	// picker; s2/s3 supply the known, existing directories.
+	m.list.sessions[1].CWD = dirA // s2 → dirs[0]
+	m.list.sessions[2].CWD = dirB // s3 → dirs[1]
 	rec := &resumeRecorder{}
-	m.runClaude = rec.cmd
+	m.runCmd = rec.cmd
 	m2, _ := m.Update(key("n"))
 	m = m2.(Model)
 	if m.dialog != dialogPickDir || len(m.dirs) != 2 || m.dirs[1] != dirB {
@@ -515,11 +565,16 @@ func TestPickDirDoubleClickConfirms(t *testing.T) {
 	m.now = func() time.Time { return t0.Add(150 * time.Millisecond) }
 	m2, _ = m.Update(click(cx+1, cy+3))
 	m = m2.(Model)
-	if rec.dir != dirB || len(rec.args) != 0 {
-		t.Errorf("double-click confirm: dir=%q args=%v, want %q []", rec.dir, rec.args, dirB)
+	if m.dialog != dialogPickAgent || m.pendingNewDir != dirB {
+		t.Fatalf("double-click confirm: dialog=%v pendingNewDir=%q, want dialogPickAgent %q", m.dialog, m.pendingNewDir, dirB)
+	}
+	m2, _ = m.Update(key("1"))
+	m = m2.(Model)
+	if rec.name != "claude" || rec.dir != dirB || len(rec.args) != 0 {
+		t.Errorf("agent pick: name=%q dir=%q args=%v, want claude %q []", rec.name, rec.dir, rec.args, dirB)
 	}
 	if m.dialog != dialogNone {
-		t.Error("confirming must close the dialog")
+		t.Error("confirming the agent must close the dialog")
 	}
 }
 
@@ -571,6 +626,11 @@ func TestPickDirDoubleClickOverridesTypedPath(t *testing.T) {
 	m.now = func() time.Time { return t0.Add(150 * time.Millisecond) }
 	m2, _ = m.Update(click(cx+1, cy+3))
 	m = m2.(Model)
+	if m.dialog != dialogPickAgent || m.pendingNewDir != dirB {
+		t.Fatalf("double-click set pendingNewDir=%q dialog=%v, want the clicked row %q and dialogPickAgent", m.pendingNewDir, m.dialog, dirB)
+	}
+	m2, _ = m.Update(key("1"))
+	m = m2.(Model)
 	if rec.dir != dirB {
 		t.Errorf("double-click launched %q, want the clicked row %q", rec.dir, dirB)
 	}
@@ -584,7 +644,7 @@ func TestOversizeDialogIgnoresMouse(t *testing.T) {
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 11}) // delete box (9 rows) > body area (8)
 	m = m2.(Model)
 	trashed := ""
-	m.trashFn = func(_ string, s store.Session) (string, error) {
+	m.trashFn = func(s store.Session) (string, error) {
 		trashed = s.ID
 		return "/trash/" + s.ID, nil
 	}

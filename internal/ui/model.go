@@ -31,6 +31,7 @@ const (
 	dialogNone dialogKind = iota
 	dialogDelete
 	dialogPickDir
+	dialogPickAgent
 	dialogError
 )
 
@@ -49,8 +50,7 @@ type (
 		t   store.Transcript
 		err error
 	}
-	claudeExitMsg    struct{ err error }
-	claudeMissingMsg struct{}
+	agentExitMsg struct{ err error }
 )
 
 const searchDebounce = 150 * time.Millisecond
@@ -70,6 +70,7 @@ type (
 
 type Model struct {
 	projectsDir string
+	providers   []store.Provider
 	st          styles
 
 	list        listPane
@@ -81,6 +82,7 @@ type Model struct {
 	errText       string
 	pendingDelete int
 	pendingResume *store.Session
+	pendingNewDir string
 	dirs          []string
 	dirCursor     int
 	dirInput      textinput.Model
@@ -94,8 +96,8 @@ type Model struct {
 	ready         bool
 
 	// injected for tests
-	trashFn   func(string, store.Session) (string, error)
-	runClaude func(dir string, args ...string) tea.Cmd
+	trashFn func(store.Session) (string, error)
+	runCmd  func(name, dir string, args ...string) tea.Cmd
 
 	// mouse double-click tracking; now is injected for tests
 	lastClickZone zone
@@ -124,7 +126,7 @@ type Model struct {
 	curHit    int
 }
 
-func New(projectsDir string) Model {
+func New(projectsDir, codexDir string) Model {
 	st := defaultStyles()
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
@@ -133,6 +135,10 @@ func New(projectsDir string) Model {
 	di := textinput.New()
 	di.Placeholder = "…or type a path"
 	di.Prompt = "> "
+	provs := []store.Provider{store.NewClaudeProvider(projectsDir)}
+	if cp := store.NewCodexProvider(codexDir); cp.Available() {
+		provs = append(provs, cp)
+	}
 	ret := Model{
 		projectsDir:   projectsDir,
 		st:            st,
@@ -141,36 +147,36 @@ func New(projectsDir string) Model {
 		dirInput:      di,
 		cache:         store.NewTranscriptCache(8),
 		pendingDelete: -1,
-		trashFn:       store.TrashSession,
-		runClaude:     execClaude,
-		lastClickRow:  -1,
-		now:           time.Now,
+		providers:     provs,
+		trashFn: func(s store.Session) (string, error) {
+			p := store.ProviderFor(provs, s.Agent)
+			if p == nil {
+				return "", fmt.Errorf("no provider for %s", s.Agent.Label())
+			}
+			return p.Trash(s)
+		},
+		runCmd:       execCmd,
+		lastClickRow: -1,
+		now:          time.Now,
 	}
 	ret.index, ret.indexErr = store.NewSearchIndex()
 	return ret
 }
 
-func execClaude(dir string, args ...string) tea.Cmd {
-	c := exec.Command("claude", args...)
+func execCmd(name, dir string, args ...string) tea.Cmd {
+	c := exec.Command(name, args...)
 	c.Dir = dir
-	return tea.ExecProcess(c, func(err error) tea.Msg { return claudeExitMsg{err} })
+	return tea.ExecProcess(c, func(err error) tea.Msg { return agentExitMsg{err} })
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.scanCmd(), checkClaudeCmd)
-}
-
-func checkClaudeCmd() tea.Msg {
-	if _, err := exec.LookPath("claude"); err != nil {
-		return claudeMissingMsg{}
-	}
-	return nil
+	return m.scanCmd()
 }
 
 func (m Model) scanCmd() tea.Cmd {
-	dir := m.projectsDir
+	provs := m.providers
 	return func() tea.Msg {
-		sessions, err := store.Scan(dir)
+		sessions, err := store.ScanAll(provs)
 		return scanDoneMsg{sessions: sessions, err: err}
 	}
 }
@@ -265,9 +271,16 @@ func (m *Model) loadTranscriptCmd() tea.Cmd {
 		return nil
 	}
 	m.previewFor = s.ID
-	cache, path, id := m.cache, s.Path, s.ID
+	cache, path, id, agent := m.cache, s.Path, s.ID, s.Agent
+	provs := m.providers
 	return func() tea.Msg {
-		t, err := cache.Get(path)
+		t, err := cache.Get(path, func() (store.Transcript, error) {
+			p := store.ProviderFor(provs, agent)
+			if p == nil {
+				return store.Transcript{}, fmt.Errorf("no provider for %s", agent.Label())
+			}
+			return p.ParseTranscript(path)
+		})
 		t.SessionID = id
 		return transcriptMsg{id: id, t: t, err: err}
 	}
@@ -329,11 +342,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scanDoneMsg:
 		if msg.err != nil {
 			m.dialog = dialogError
-			m.errText = fmt.Sprintf("cannot read %s: %v", m.projectsDir, msg.err)
+			m.errText = "cannot read sessions: " + msg.err.Error()
 			return m, nil
 		}
 		// Every successful (re)scan revalidates the full-text index —
-		// covers startup, `r`, and the rescan claudeExitMsg triggers after
+		// covers startup, `r`, and the rescan agentExitMsg triggers after
 		// a resumed session's mtime/size may have changed. An EnsureAll
 		// build already in flight when this lands cannot be trusted as
 		// "ready" once it completes (it was dispatched against the
@@ -354,7 +367,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ch := make(chan store.EnrichResult, len(msg.sessions))
 		m.enrichCh = ch
 		m.loading = true
-		store.Enrich(msg.sessions, 8, ch)
+		store.Enrich(msg.sessions, m.providers, 8, ch)
 		if m.searchAll && m.activeQuery != "" {
 			m.list.SetSearchResults(nil) // never render old indices over the new ordering
 			return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd(), m.dispatchSearch())
@@ -430,19 +443,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case claudeMissingMsg:
-		m.dialog = dialogError
-		m.errText = "claude not found on PATH — install Claude Code first"
-		return m, nil
-
-	case claudeExitMsg:
-		// claude exiting non-zero is normal — the user declined the trust
-		// prompt, pressed Ctrl-C, or /exit'd. Only surface an error when claude
+	case agentExitMsg:
+		// the agent exiting non-zero is normal — the user declined the trust
+		// prompt, pressed Ctrl-C, or /exit'd. Only surface an error when it
 		// failed to launch at all (anything that is not an *exec.ExitError).
 		var exitErr *exec.ExitError
 		if msg.err != nil && !errors.As(msg.err, &exitErr) {
 			m.dialog = dialogError
-			m.errText = "could not launch claude: " + msg.err.Error()
+			m.errText = "could not launch: " + msg.err.Error()
 		}
 		return m, m.scanCmd()
 
@@ -458,7 +466,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.indexing = true
 			m.indexDone, m.indexTotal = 0, len(m.list.Sessions())
 			m.indexFailed = 0
-			m.index.EnsureAll(m.list.Sessions(), 4, ch)
+			provs := m.providers
+			m.index.EnsureAll(m.list.Sessions(), func(s store.Session) (store.Transcript, error) {
+				p := store.ProviderFor(provs, s.Agent)
+				if p == nil {
+					return store.Transcript{}, fmt.Errorf("no provider for %s", s.Agent.Label())
+				}
+				return p.ParseTranscript(s.Path)
+			}, 4, ch)
 			cmds = append(cmds, waitIndex(ch))
 		}
 		cmds = append(cmds, m.runSearch(msg.seq))
@@ -629,6 +644,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "g":
 			m.list.ToggleGroup()
 			return m, m.loadTranscriptCmd()
+		case "a":
+			m.list.ToggleAgentGroup()
+			return m, m.loadTranscriptCmd()
 		case " ":
 			m.list.ToggleFold()
 			return m, m.loadTranscriptCmd()
@@ -662,12 +680,51 @@ func (m Model) startResume() (tea.Model, tea.Cmd) {
 		m.openDirPicker()
 		return m, nil
 	}
-	return m, m.runClaude(s.CWD, "--resume", s.ID)
+	p := store.ProviderFor(m.providers, s.Agent)
+	if p == nil {
+		m.dialog = dialogError
+		m.errText = "no handler for agent " + s.Agent.Label()
+		return m, nil
+	}
+	if _, err := exec.LookPath(p.Binary()); err != nil {
+		m.dialog = dialogError
+		m.errText = p.Binary() + " not found on PATH"
+		return m, nil
+	}
+	name, args := p.ResumeCommand(s)
+	return m, m.runCmd(name, s.CWD, args...)
 }
 
 func (m Model) openNewSession() (tea.Model, tea.Cmd) {
+	if s, _, ok := m.list.Selected(); ok && s.CWD != "" {
+		if st, err := os.Stat(s.CWD); err == nil && st.IsDir() {
+			return m.launchNewSession(s.CWD)
+		}
+	}
 	m.pendingResume = nil
-	m.openDirPicker()
+	m.openDirPicker() // no selection: fall back to dir picker, then agent pick
+	return m, nil
+}
+
+// launchNewSession starts a new session in dir. Codex support must activate
+// only when a second provider is actually registered (~/.codex exists): a
+// Claude-only user has exactly one provider, so this launches it directly
+// with no extra keypress and no agent-pick dialog. With two or more
+// providers it falls back to the dialogPickAgent flow.
+func (m Model) launchNewSession(dir string) (Model, tea.Cmd) {
+	m.dialog = dialogNone
+	if len(m.providers) == 1 {
+		p := m.providers[0]
+		if _, err := exec.LookPath(p.Binary()); err != nil {
+			m.dialog = dialogError
+			m.errText = p.Binary() + " not found on PATH"
+			return m, nil
+		}
+		name, args := p.NewCommand()
+		return m, m.runCmd(name, dir, args...)
+	}
+	m.pendingNewDir = dir
+	m.dialog = dialogPickAgent
 	return m, nil
 }
 
@@ -702,7 +759,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.dialog = dialogNone
 			if idx >= 0 && idx < len(m.list.sessions) {
 				s := m.list.sessions[idx]
-				if _, err := m.trashFn(m.projectsDir, s); err != nil {
+				if _, err := m.trashFn(s); err != nil {
 					m.dialog = dialogError
 					m.errText = "delete failed: " + err.Error()
 					return m, nil
@@ -765,16 +822,59 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			pending := m.pendingResume
 			m.pendingResume = nil
-			m.dialog = dialogNone
 			m.dirInput.Blur()
 			if pending != nil {
-				return m, m.runClaude(dir, "--resume", pending.ID)
+				m.dialog = dialogNone
+				p := store.ProviderFor(m.providers, pending.Agent)
+				if p == nil {
+					m.dialog = dialogError
+					m.errText = "no handler for agent " + pending.Agent.Label()
+					return m, nil
+				}
+				if _, err := exec.LookPath(p.Binary()); err != nil {
+					m.dialog = dialogError
+					m.errText = p.Binary() + " not found on PATH"
+					return m, nil
+				}
+				name, args := p.ResumeCommand(*pending)
+				return m, m.runCmd(name, dir, args...)
 			}
-			return m, m.runClaude(dir)
+			return m.launchNewSession(dir)
 		}
 		var cmd tea.Cmd
 		m.dirInput, cmd = m.dirInput.Update(msg)
 		return m, cmd
+
+	case dialogPickAgent:
+		var agent store.Agent
+		switch msg.String() {
+		case "1", "c":
+			agent = store.AgentClaude
+		case "2", "x":
+			agent = store.AgentCodex
+		case "esc", "n":
+			m.dialog = dialogNone
+			m.pendingNewDir = ""
+			return m, nil
+		default:
+			return m, nil
+		}
+		p := store.ProviderFor(m.providers, agent)
+		dir := m.pendingNewDir
+		m.dialog = dialogNone
+		m.pendingNewDir = ""
+		if p == nil {
+			m.dialog = dialogError
+			m.errText = agent.Label() + " is not available"
+			return m, nil
+		}
+		if _, err := exec.LookPath(p.Binary()); err != nil {
+			m.dialog = dialogError
+			m.errText = p.Binary() + " not found on PATH"
+			return m, nil
+		}
+		name, args := p.NewCommand()
+		return m, m.runCmd(name, dir, args...)
 	}
 	m.dialog = dialogNone
 	return m, nil
@@ -821,6 +921,12 @@ func (m Model) dialogView() string {
 		b.WriteString("\n" + m.dirInput.View() + "\n\n")
 		b.WriteString(m.st.Help.Render("↑/↓ pick · type a path · ↵ go · esc cancel"))
 		return m.st.DialogBox.Render(b.String())
+
+	case dialogPickAgent:
+		return m.st.DialogBox.Render(
+			"New session in " + m.pendingNewDir + "\n\n" +
+				"  [1] Claude    [2] Codex\n\n" +
+				m.st.Help.Render("1/2 choose · esc cancel"))
 	}
 	return ""
 }

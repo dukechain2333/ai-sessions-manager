@@ -19,7 +19,7 @@ func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {
 	if exitErr == nil {
 		t.Fatal("setup: expected a non-nil exit error")
 	}
-	m2, cmd := m.Update(claudeExitMsg{err: exitErr})
+	m2, cmd := m.Update(agentExitMsg{err: exitErr})
 	m = m2.(Model)
 	if m.dialog != dialogNone {
 		t.Errorf("non-zero claude exit should return to the list, got dialog=%v err=%q", m.dialog, m.errText)
@@ -32,7 +32,7 @@ func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {
 func TestClaudeLaunchFailureShownAsError(t *testing.T) {
 	m := newTestModel()
 	// Not an *exec.ExitError: claude could not be launched at all.
-	m2, _ := m.Update(claudeExitMsg{err: errors.New(`exec: "claude": executable file not found in $PATH`)})
+	m2, _ := m.Update(agentExitMsg{err: errors.New(`exec: "claude": executable file not found in $PATH`)})
 	m = m2.(Model)
 	if m.dialog != dialogError {
 		t.Error("a genuine launch failure should show the error dialog")
@@ -43,8 +43,15 @@ func key(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
+func TestNewBuildsProviders(t *testing.T) {
+	m := New("/nope/claude", "/nope/codex")
+	if len(m.providers) == 0 {
+		t.Error("expected at least the claude provider")
+	}
+}
+
 func newTestModel() Model {
-	m := New("/nonexistent-projects-dir")
+	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir")
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
 	m2, _ = m.Update(scanDoneMsg{sessions: testSessions()})

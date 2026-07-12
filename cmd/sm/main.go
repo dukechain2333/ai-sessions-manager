@@ -20,13 +20,14 @@ func main() {
 		os.Exit(1)
 	}
 	projectsDir := flag.String("projects-dir", filepath.Join(home, ".claude", "projects"), "Claude Code projects directory")
+	codexDir := flag.String("codex-dir", filepath.Join(home, ".codex", "sessions"), "Codex sessions directory")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("sm", version)
 		return
 	}
-	p := tea.NewProgram(ui.New(*projectsDir), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(ui.New(*projectsDir, *codexDir), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "sm:", err)
 		os.Exit(1)

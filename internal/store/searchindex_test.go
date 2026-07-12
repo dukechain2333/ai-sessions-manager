@@ -32,7 +32,7 @@ func testIndex(t *testing.T) SearchIndex {
 func TestEnsureSessionBuildsAndReads(t *testing.T) {
 	ix := testIndex(t)
 	path := writeSessionFixture(t, t.TempDir())
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	msgs, fresh := ix.Messages(path)
@@ -54,13 +54,13 @@ func TestEnsureSessionBuildsAndReads(t *testing.T) {
 func TestEnsureSessionSkipsFresh(t *testing.T) {
 	ix := testIndex(t)
 	path := writeSessionFixture(t, t.TempDir())
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	cache := ix.cacheFile(path)
 	st1, _ := os.Stat(cache)
 	time.Sleep(10 * time.Millisecond)
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	st2, _ := os.Stat(cache)
@@ -73,7 +73,7 @@ func TestEnsureSessionRebuildsOnSourceChange(t *testing.T) {
 	ix := testIndex(t)
 	dir := t.TempDir()
 	path := writeSessionFixture(t, dir)
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	// append a new prompt; size and mtime both change
@@ -83,7 +83,7 @@ func TestEnsureSessionRebuildsOnSourceChange(t *testing.T) {
 	if _, fresh := ix.Messages(path); fresh {
 		t.Fatal("changed source must invalidate the cache")
 	}
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	msgs, fresh := ix.Messages(path)
@@ -95,14 +95,14 @@ func TestEnsureSessionRebuildsOnSourceChange(t *testing.T) {
 func TestMessagesCorruptCacheIsStale(t *testing.T) {
 	ix := testIndex(t)
 	path := writeSessionFixture(t, t.TempDir())
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(ix.cacheFile(path), []byte("garbage no tabs\nbody"), 0o644)
 	if _, fresh := ix.Messages(path); fresh {
 		t.Error("corrupt cache must read as stale")
 	}
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	if _, fresh := ix.Messages(path); !fresh {
@@ -115,7 +115,8 @@ func TestMessagesMissingSource(t *testing.T) {
 	if _, fresh := ix.Messages(filepath.Join(t.TempDir(), "nope.jsonl")); fresh {
 		t.Error("missing source must not read fresh")
 	}
-	if err := ix.EnsureSession(filepath.Join(t.TempDir(), "nope.jsonl")); err == nil {
+	missing := filepath.Join(t.TempDir(), "nope.jsonl")
+	if err := ix.EnsureSession(missing, func() (Transcript, error) { return ParseTranscript(missing) }); err == nil {
 		t.Error("EnsureSession on a missing source must error")
 	}
 }
@@ -128,13 +129,13 @@ func TestEnsureSessionFreshnessWithTabInPath(t *testing.T) {
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Skip("filesystem rejects tab in filename")
 	}
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	cache := ix.cacheFile(path)
 	st1, _ := os.Stat(cache)
 	time.Sleep(10 * time.Millisecond)
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	st2, _ := os.Stat(cache)
@@ -154,7 +155,7 @@ func TestZeroMessageSessionRoundTrip(t *testing.T) {
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	msgs, fresh := ix.Messages(path)
@@ -189,7 +190,7 @@ func TestEnsureAllIndexesEverything(t *testing.T) {
 		{Path: writeCustomSession(t, dir, "b", "beta message")},
 	}
 	ch := make(chan IndexProgress, len(sessions))
-	ix.EnsureAll(sessions, 2, ch)
+	ix.EnsureAll(sessions, func(s Session) (Transcript, error) { return ParseTranscript(s.Path) }, 2, ch)
 	var last IndexProgress
 	n := 0
 	for p := range ch {
@@ -216,7 +217,7 @@ func TestSearchAndSemanticsAndCounts(t *testing.T) {
 		{Path: writeCustomSession(t, dir, "c", "payload only"), LastActivity: now.Add(-2 * time.Hour)},
 	}
 	for _, s := range sessions {
-		if err := ix.EnsureSession(s.Path); err != nil {
+		if err := ix.EnsureSession(s.Path, func() (Transcript, error) { return ParseTranscript(s.Path) }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -244,7 +245,7 @@ func TestSearchOrderAndUnindexed(t *testing.T) {
 	}
 	os.WriteFile(sessions[3].Path, []byte(`{"type":"user","message":{"role":"user","content":"hit"}}`+"\n"), 0o644)
 	for _, s := range sessions[:3] {
-		if err := ix.EnsureSession(s.Path); err != nil {
+		if err := ix.EnsureSession(s.Path, func() (Transcript, error) { return ParseTranscript(s.Path) }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -277,7 +278,7 @@ func TestSplitTerms(t *testing.T) {
 func TestSearchZeroHitsReturnsNonNil(t *testing.T) {
 	ix := testIndex(t)
 	path := writeSessionFixture(t, t.TempDir())
-	if err := ix.EnsureSession(path); err != nil {
+	if err := ix.EnsureSession(path, func() (Transcript, error) { return ParseTranscript(path) }); err != nil {
 		t.Fatal(err)
 	}
 	// A non-empty query that matches nothing must return a non-nil empty
