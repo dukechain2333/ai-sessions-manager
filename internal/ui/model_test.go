@@ -5,10 +5,13 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
 
 func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {
@@ -44,14 +47,14 @@ func key(s string) tea.KeyMsg {
 }
 
 func TestNewBuildsProviders(t *testing.T) {
-	m := New("/nope/claude", "/nope/codex")
+	m := New("/nope/claude", "/nope/codex", config.Default())
 	if len(m.providers) == 0 {
 		t.Error("expected at least the claude provider")
 	}
 }
 
 func newTestModel() Model {
-	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir")
+	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", config.Default())
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
 	m2, _ = m.Update(scanDoneMsg{sessions: testSessions()})
@@ -64,6 +67,80 @@ func newTestModel() Model {
 		m = m2.(Model)
 	}
 	return m
+}
+
+func newTmuxModel(t *testing.T) (Model, *[]string) {
+	t.Helper()
+	m := newTestModel()
+	m.tmuxEnabled = true
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	m.now = func() time.Time { return time.Unix(0, 1234) }
+	return m, captured
+}
+
+func TestResumeWrapsInTmuxWhenEnabled(t *testing.T) {
+	m, cap := newTmuxModel(t)
+	dir := t.TempDir() // startResume stats CWD; it must exist or it opens the picker
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0) // s1, claude
+	m.startResume()
+	got := *cap
+	if len(got) < 3 || got[0] != "tmux" {
+		t.Fatalf("resume should run tmux, got %v", got)
+	}
+	// tmux new-session -A -s sm-claude-s1 -c <dir> claude --resume s1
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "new-session -A -s sm-claude-s1 -c "+dir+" claude --resume s1") {
+		t.Errorf("resume argv = %v", got)
+	}
+}
+
+func TestNewWrapsInTmuxWhenEnabled(t *testing.T) {
+	m, cap := newTmuxModel(t)
+	m.launchNewSession("/x/alpha") // single provider (claude-only test model)
+	got := *cap
+	if len(got) < 3 || got[0] != "tmux" {
+		t.Fatalf("new should run tmux, got %v", got)
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "new-session -s sm-claude-pending-1234 -c /x/alpha claude") {
+		t.Errorf("new argv = %v", got)
+	}
+}
+
+func TestResumeStaysInlineWhenDisabled(t *testing.T) {
+	m := newTestModel() // tmux disabled
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir // else startResume opens the dir picker
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*captured) == 0 || (*captured)[0] != "claude" {
+		t.Errorf("disabled resume should run claude directly, got %v", *captured)
+	}
+}
+
+func TestTmuxMissingAtStartupDisablesAndWarns(t *testing.T) {
+	orig := tmuxLookPath
+	tmuxLookPath = func() bool { return false }
+	defer func() { tmuxLookPath = orig }()
+	cfg := config.Default()
+	cfg.TmuxEnabled = true
+	m := New("/nope", "/nope", cfg)
+	if m.tmuxEnabled {
+		t.Error("missing tmux should disable integration")
+	}
+	if m.dialog != dialogError {
+		t.Error("missing tmux should raise a startup error dialog")
+	}
 }
 
 func TestSlashEntersFilterMode(t *testing.T) {
@@ -230,6 +307,19 @@ func TestBottomLabelShowsSelectedProject(t *testing.T) {
 	}
 }
 
+func TestTmuxListMsgUpdatesMarkers(t *testing.T) {
+	m := newTestModel()
+	name := tmuxNameFor(m.list.sessions[0])
+	m2, _ := m.Update(tmuxListMsg{set: map[string]bool{name: true}})
+	m = m2.(Model)
+	if !m.tmuxLive[name] {
+		t.Error("model should store the live set")
+	}
+	if !m.list.projectHasLiveTmux(m.list.sessions[0].Project()) {
+		t.Error("list pane should see the live tmux after tmuxListMsg")
+	}
+}
+
 func TestFocusedBorderAndLabelColorFollowAgent(t *testing.T) {
 	m := newTestModel() // grouped; cursor on first session s1 (claude, project "alpha")
 	if m.focusedBorderColor() != m.st.Accent {
@@ -250,5 +340,190 @@ func TestFocusedBorderAndLabelColorFollowAgent(t *testing.T) {
 	}
 	if m.projectLabelColor() != m.st.CodexAccent {
 		t.Error("codex-majority project should give the teal label color")
+	}
+}
+
+type fakeTmux struct {
+	live    map[string]bool
+	paths   map[string]string
+	killed  []string
+	renamed [][2]string
+}
+
+func (f *fakeTmux) List() (map[string]bool, error) {
+	cp := map[string]bool{}
+	for k, v := range f.live {
+		cp[k] = v
+	}
+	return cp, nil
+}
+func (f *fakeTmux) Path(name string) (string, error) { return f.paths[name], nil }
+func (f *fakeTmux) Kill(name string) error {
+	delete(f.live, name)
+	f.killed = append(f.killed, name)
+	return nil
+}
+func (f *fakeTmux) Rename(from, to string) error {
+	delete(f.live, from)
+	f.live[to] = true
+	f.renamed = append(f.renamed, [2]string{from, to})
+	return nil
+}
+
+func TestAdoptRenamesNewestMatch(t *testing.T) {
+	sessions := []store.Session{
+		{ID: "old11111", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: time.Unix(100, 0)},
+		{ID: "new22222", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: time.Unix(200, 0)},
+	}
+	pend := tmux.PendingName("claude", 5)
+	f := &fakeTmux{
+		live:  map[string]bool{pend: true},
+		paths: map[string]string{pend: "/x/alpha"},
+	}
+	set := map[string]bool{pend: true}
+	adoptPending(f, sessions, set)
+	want := tmux.Name("claude", tmux.Short("new22222"))
+	if len(f.renamed) != 1 || f.renamed[0][1] != want {
+		t.Errorf("expected rename to %s, got %v", want, f.renamed)
+	}
+	if !set[want] || set[pend] {
+		t.Errorf("set should swap pending for adopted: %v", set)
+	}
+}
+
+func TestAdoptSkipsBacked(t *testing.T) {
+	backed := tmux.Name("claude", tmux.Short("new22222"))
+	sessions := []store.Session{
+		{ID: "new22222", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: time.Unix(200, 0)},
+	}
+	pend := tmux.PendingName("claude", 5)
+	f := &fakeTmux{
+		live:  map[string]bool{pend: true, backed: true},
+		paths: map[string]string{pend: "/x/alpha"},
+	}
+	set := map[string]bool{pend: true, backed: true}
+	adoptPending(f, sessions, set)
+	if len(f.renamed) != 0 {
+		t.Errorf("should not adopt an already-backed session, got %v", f.renamed)
+	}
+}
+
+func TestAdoptNoMatchIsNoop(t *testing.T) {
+	sessions := []store.Session{
+		{ID: "z", CWD: "/x/beta", Agent: store.AgentClaude, LastActivity: time.Unix(200, 0)},
+	}
+	pend := tmux.PendingName("claude", 5)
+	f := &fakeTmux{live: map[string]bool{pend: true}, paths: map[string]string{pend: "/x/other"}}
+	set := map[string]bool{pend: true}
+	adoptPending(f, sessions, set)
+	if len(f.renamed) != 0 {
+		t.Errorf("no cwd match should be a no-op, got %v", f.renamed)
+	}
+}
+
+func TestKillOneSession(t *testing.T) {
+	m := newTestModel()
+	m.tmuxEnabled = true
+	name := tmuxNameFor(m.list.sessions[0])
+	f := &fakeTmux{live: map[string]bool{name: true}}
+	m.tmux = f
+	m.tmuxLive = map[string]bool{name: true}
+	m.list.SetTmuxLive(m.tmuxLive)
+	m.list.selectSession(0)
+	m2, cmd := m.Update(key("x"))
+	m = m2.(Model)
+	if cmd == nil {
+		t.Fatal("x on a live session should return a refresh cmd")
+	}
+	cmd() // runs killOneCmd's goroutine body
+	if len(f.killed) != 1 || f.killed[0] != name {
+		t.Errorf("expected kill of %s, got %v", name, f.killed)
+	}
+}
+
+func TestKillProjectHeaderConfirms(t *testing.T) {
+	m := newTestModel()
+	m.tmuxEnabled = true
+	n0 := tmuxNameFor(m.list.sessions[0]) // alpha
+	f := &fakeTmux{live: map[string]bool{n0: true}}
+	m.tmux = f
+	m.tmuxLive = map[string]bool{n0: true}
+	m.list.SetTmuxLive(m.tmuxLive)
+	// Put the cursor on the alpha header.
+	m.list.selectSession(0)
+	for !m.list.OnHeader() {
+		m.list.MoveCursor(-1)
+	}
+	m2, _ := m.Update(key("x"))
+	m = m2.(Model)
+	if m.dialog != dialogKillProject {
+		t.Fatalf("x on a header should open the kill-project confirm, got %v", m.dialog)
+	}
+	m2, cmd := m.Update(key("y"))
+	m = m2.(Model)
+	if cmd == nil {
+		t.Fatal("confirming should return a kill cmd")
+	}
+	cmd()
+	if len(f.killed) != 1 || f.killed[0] != n0 {
+		t.Errorf("kill-all should have killed %s, got %v", n0, f.killed)
+	}
+}
+
+func TestKillHelpItemGatedByTmux(t *testing.T) {
+	m := newTestModel() // disabled
+	for _, it := range m.helpItems() {
+		if it.label == "x kill" {
+			t.Fatal("x kill must not show when tmux is disabled")
+		}
+	}
+	m.tmuxEnabled = true
+	found := false
+	for _, it := range m.helpItems() {
+		if it.label == "x kill" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("x kill should show when tmux is enabled")
+	}
+}
+
+// drainCmd runs a command and recursively flattens tea.Batch results into the
+// list of concrete messages produced.
+func drainCmd(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, drainCmd(c)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+func TestAdoptionRunsAgainstEnrichedSessionsOnEnrichDone(t *testing.T) {
+	m := newTestModel() // s1 claude, CWD /x/alpha, already enriched
+	m.tmuxEnabled = true
+	pend := tmux.PendingName("claude", 7)
+	f := &fakeTmux{live: map[string]bool{pend: true}, paths: map[string]string{pend: "/x/alpha"}}
+	m.tmux = f
+	// enrichDone must dispatch adoption against the ENRICHED list (CWD known),
+	// renaming the pending tmux to s1's real name.
+	m2, cmd := m.Update(enrichDoneMsg{ch: m.enrichCh})
+	_ = m2
+	if cmd == nil {
+		t.Fatal("enrichDone should return a cmd when tmux is enabled")
+	}
+	for _, msg := range drainCmd(cmd) {
+		_ = msg // running the batch executes adoptCmd's closure (side effects on f)
+	}
+	want := tmux.Name("claude", tmux.Short("s1"))
+	if len(f.renamed) == 0 || f.renamed[len(f.renamed)-1][1] != want {
+		t.Fatalf("adoption should rename %s -> %s against enriched sessions; renamed=%v", pend, want, f.renamed)
 	}
 }

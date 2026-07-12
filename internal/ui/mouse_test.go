@@ -339,8 +339,8 @@ func TestNonLeftPressesIgnored(t *testing.T) {
 
 func TestHelpBarTextUnchanged(t *testing.T) {
 	want := " ↵ resume  tab focus  n new  d delete  / filter  s search  g group  a agent  space fold  e empty  r rescan  q quit"
-	if helpLine() != want {
-		t.Fatalf("help bar text changed — it must stay byte-identical\n got: %q\nwant: %q", helpLine(), want)
+	if helpLineFor(helpBar) != want {
+		t.Fatalf("help bar text changed — it must stay byte-identical\n got: %q\nwant: %q", helpLineFor(helpBar), want)
 	}
 }
 
@@ -706,7 +706,7 @@ func TestClickHelpWithProjectLabelStillWorks(t *testing.T) {
 	base := lipgloss.Width(m.projectLabelText()) + 1 // +1 = helpLine leading space
 	pos := base
 	var qx int = -1
-	for _, it := range helpBar {
+	for _, it := range m.helpItems() {
 		w := lipgloss.Width(it.label)
 		if it.label == "q quit" {
 			qx = pos + 1 // a cell inside the button

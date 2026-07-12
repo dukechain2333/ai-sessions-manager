@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
@@ -47,6 +48,7 @@ type listPane struct {
 	focused        bool
 	styles         styles
 	search         []store.SessionHits // non-nil: flat search-results mode
+	tmuxLive       map[string]bool     // live sm-<agent>-<id8> names; nil = none
 }
 
 func (l *listPane) SetSize(w, h int) {
@@ -493,7 +495,11 @@ func (l *listPane) View() string {
 			}
 			name := fmt.Sprintf("%s %s", indicator, r.project)
 			count := fmt.Sprintf("(%d)", l.counts[r.project])
-			label := store.Truncate(name+" "+count, l.width)
+			headerWidth := l.width
+			if l.projectHasLiveTmux(r.project) {
+				headerWidth -= 2 // reserve space for the trailing " ●"
+			}
+			label := store.Truncate(name+" "+count, headerWidth)
 			style := l.styles.GroupHeader
 			if i == l.cursor {
 				style = l.styles.GroupHeaderSel
@@ -507,6 +513,9 @@ func (l *listPane) View() string {
 			rendered := style.Render(label)
 			if suffix := " " + count; strings.HasSuffix(label, suffix) {
 				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + l.styles.GroupCount.Render(count)
+			}
+			if l.projectHasLiveTmux(r.project) {
+				rendered += " " + lipgloss.NewStyle().Foreground(l.styles.AgentAccent(l.projectMajorityAgent(r.project))).Render("●")
 			}
 			lines = append(lines, rendered)
 			continue
@@ -548,9 +557,15 @@ func (l *listPane) View() string {
 				titleStyle = l.styles.CodexTitleSel
 			}
 		}
+		titleWidth := l.width
+		marker := ""
+		if l.tmuxLive[tmuxNameFor(s)] {
+			titleWidth -= 2 // reserve space for " ●"
+			marker = " " + lipgloss.NewStyle().Foreground(l.styles.AgentAccent(s.Agent)).Render("●")
+		}
 		metaText := store.Truncate("  "+meta, l.width-len(tag)-3)
 		lines = append(lines,
-			titleStyle.Render(store.Truncate(prefix+title, l.width)),
+			titleStyle.Render(store.Truncate(prefix+title, titleWidth))+marker,
 			metaStyle.Render(metaText)+" "+tagStyle.Render(tag),
 			"")
 	}
@@ -579,6 +594,28 @@ func (l *listPane) padHeight(s string) string {
 		return s
 	}
 	return s + strings.Repeat("\n", l.height-lines)
+}
+
+// SetTmuxLive records the current live-tmux set for marker rendering.
+func (l *listPane) SetTmuxLive(set map[string]bool) { l.tmuxLive = set }
+
+// projectHasLiveTmux reports whether any session in project has a live tmux.
+func (l *listPane) projectHasLiveTmux(project string) bool {
+	for _, s := range l.sessions {
+		if s.Project() == project && l.tmuxLive[tmuxNameFor(s)] {
+			return true
+		}
+	}
+	return false
+}
+
+// CursorProject returns the project label of the row under the cursor
+// (header or session). ok is false when the list is empty or on a subheader.
+func (l *listPane) CursorProject() (string, bool) {
+	if l.cursor < 0 || l.cursor >= len(l.rows) || l.rows[l.cursor].subheader {
+		return "", false
+	}
+	return l.rows[l.cursor].project, true
 }
 
 // projectMajorityAgent returns the agent with the most sessions in project.

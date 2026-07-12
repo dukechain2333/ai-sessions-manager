@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
@@ -532,6 +534,53 @@ func TestAgentSubheaderNotCursorable(t *testing.T) {
 	if l.Len() != 3 {
 		t.Errorf("Len = %d, want 3", l.Len())
 	}
+}
+
+func TestSessionMarkerRendersWhenLive(t *testing.T) {
+	l := newTestPane() // s1 claude /x/alpha, s2 claude /x/beta
+	l.SetTmuxLive(map[string]bool{tmuxNameFor(l.sessions[0]): true})
+	v := l.View()
+	if !strings.Contains(v, "●") {
+		t.Errorf("expected a ● marker for the live session:\n%s", v)
+	}
+}
+
+func TestNoMarkerWhenNoneLive(t *testing.T) {
+	l := newTestPane()
+	l.SetTmuxLive(map[string]bool{})
+	if strings.Contains(l.View(), "●") {
+		t.Error("no marker should render when nothing is live")
+	}
+}
+
+func TestProjectHasLiveTmux(t *testing.T) {
+	l := newTestPane()
+	l.SetTmuxLive(map[string]bool{tmuxNameFor(l.sessions[1]): true}) // s2 -> beta
+	if !l.projectHasLiveTmux("beta") {
+		t.Error("beta should report a live tmux")
+	}
+	if l.projectHasLiveTmux("alpha") {
+		t.Error("alpha should not report a live tmux")
+	}
+}
+
+func TestLiveHeaderDoesNotOverflowWidth(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(24, 30)
+	l.SetSessions([]store.Session{
+		{ID: "long1", CWD: "/x/a-very-long-project-name-here", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+	})
+	l.SetTmuxLive(map[string]bool{tmuxNameFor(l.sessions[0]): true})
+	// The header row is the first rendered line and carries the fold indicator.
+	for _, line := range strings.Split(l.View(), "\n") {
+		if strings.Contains(line, "▾") || strings.Contains(line, "▸") {
+			if w := lipgloss.Width(line); w > 24 {
+				t.Fatalf("live header line width = %d, want <= 24 (pane width): %q", w, line)
+			}
+			return
+		}
+	}
+	t.Fatal("no header row found in View output")
 }
 
 func TestListViewFillsHeight(t *testing.T) {

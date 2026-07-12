@@ -14,7 +14,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
 
 type focusArea int
@@ -32,6 +34,7 @@ const (
 	dialogDelete
 	dialogPickDir
 	dialogPickAgent
+	dialogKillProject
 	dialogError
 )
 
@@ -51,6 +54,9 @@ type (
 		err error
 	}
 	agentExitMsg struct{ err error }
+
+	tmuxTickMsg struct{}
+	tmuxListMsg struct{ set map[string]bool }
 )
 
 const searchDebounce = 150 * time.Millisecond
@@ -71,6 +77,9 @@ type (
 type Model struct {
 	projectsDir string
 	providers   []store.Provider
+	tmuxEnabled bool
+	tmux        tmux.Runner
+	tmuxLive    map[string]bool
 	st          styles
 
 	list        listPane
@@ -78,14 +87,15 @@ type Model struct {
 	filterInput textinput.Model
 	focus       focusArea
 
-	dialog        dialogKind
-	errText       string
-	pendingDelete int
-	pendingResume *store.Session
-	pendingNewDir string
-	dirs          []string
-	dirCursor     int
-	dirInput      textinput.Model
+	dialog             dialogKind
+	errText            string
+	pendingDelete      int
+	pendingResume      *store.Session
+	pendingNewDir      string
+	pendingKillProject string
+	dirs               []string
+	dirCursor          int
+	dirInput           textinput.Model
 
 	cache      *store.TranscriptCache
 	enrichCh   chan store.EnrichResult
@@ -126,8 +136,8 @@ type Model struct {
 	curHit    int
 }
 
-func New(projectsDir, codexDir string) Model {
-	st := defaultStyles()
+func New(projectsDir, codexDir string, cfg config.Config) Model {
+	st := stylesWithColors(cfg.Claude, cfg.Codex)
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
 	fi.Prompt = "> "
@@ -148,6 +158,8 @@ func New(projectsDir, codexDir string) Model {
 		cache:         store.NewTranscriptCache(8),
 		pendingDelete: -1,
 		providers:     provs,
+		tmuxEnabled:   cfg.TmuxEnabled,
+		tmux:          tmux.Exec{},
 		trashFn: func(s store.Session) (string, error) {
 			p := store.ProviderFor(provs, s.Agent)
 			if p == nil {
@@ -160,6 +172,11 @@ func New(projectsDir, codexDir string) Model {
 		now:          time.Now,
 	}
 	ret.index, ret.indexErr = store.NewSearchIndex()
+	if ret.tmuxEnabled && !tmuxLookPath() {
+		ret.tmuxEnabled = false
+		ret.dialog = dialogError
+		ret.errText = "tmux integration is enabled but tmux was not found on PATH"
+	}
 	return ret
 }
 
@@ -169,7 +186,16 @@ func execCmd(name, dir string, args ...string) tea.Cmd {
 	return tea.ExecProcess(c, func(err error) tea.Msg { return agentExitMsg{err} })
 }
 
+// tmuxLookPath reports whether tmux is on PATH; overridable in tests.
+var tmuxLookPath = func() bool {
+	_, err := exec.LookPath("tmux")
+	return err == nil
+}
+
 func (m Model) Init() tea.Cmd {
+	if m.tmuxEnabled {
+		return tea.Batch(m.scanCmd(), m.refreshTmuxCmd(), m.tmuxTickCmd())
+	}
 	return m.scanCmd()
 }
 
@@ -178,6 +204,69 @@ func (m Model) scanCmd() tea.Cmd {
 	return func() tea.Msg {
 		sessions, err := store.ScanAll(provs)
 		return scanDoneMsg{sessions: sessions, err: err}
+	}
+}
+
+// tmuxTickCmd schedules the next discovery poll.
+func (m Model) tmuxTickCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return tmuxTickMsg{} })
+}
+
+// refreshTmuxCmd lists live sm tmux sessions once.
+func (m Model) refreshTmuxCmd() tea.Cmd {
+	r := m.tmux
+	return func() tea.Msg {
+		set, _ := r.List()
+		if set == nil {
+			set = map[string]bool{}
+		}
+		return tmuxListMsg{set: set}
+	}
+}
+
+// killOneCmd kills one tmux session and re-lists.
+func (m Model) killOneCmd(name string) tea.Cmd {
+	r := m.tmux
+	return func() tea.Msg {
+		_ = r.Kill(name)
+		set, _ := r.List()
+		if set == nil {
+			set = map[string]bool{}
+		}
+		return tmuxListMsg{set: set}
+	}
+}
+
+// killProjectCmd kills every live tmux belonging to project's sessions
+// (named children), plus any provisional tmux whose path base is project.
+func (m Model) killProjectCmd(project string) tea.Cmd {
+	r := m.tmux
+	sessions := append([]store.Session(nil), m.list.Sessions()...)
+	return func() tea.Msg {
+		set, _ := r.List()
+		if set == nil {
+			set = map[string]bool{}
+		}
+		for _, s := range sessions {
+			if s.Project() != project {
+				continue
+			}
+			name := tmuxNameFor(s)
+			if set[name] {
+				_ = r.Kill(name)
+				delete(set, name)
+			}
+		}
+		for name := range set {
+			if !tmux.IsPending(name) {
+				continue
+			}
+			if p, err := r.Path(name); err == nil && filepath.Base(p) == project {
+				_ = r.Kill(name)
+				delete(set, name)
+			}
+		}
+		return tmuxListMsg{set: set}
 	}
 }
 
@@ -312,6 +401,11 @@ func (m Model) projectLabelText() string {
 	return " ▸ " + store.Truncate(s.Project(), 40) + "  "
 }
 
+// tmuxNameFor is the tmux session name sm uses for a session.
+func tmuxNameFor(s store.Session) string {
+	return tmux.Name(string(s.Agent), tmux.Short(s.ID))
+}
+
 // focusedBorderColor is the border color of the focused pane: the selected
 // session's agent accent, or the default accent when nothing is selected.
 func (m Model) focusedBorderColor() lipgloss.AdaptiveColor {
@@ -328,6 +422,11 @@ func (m Model) projectLabelColor() lipgloss.AdaptiveColor {
 		return m.st.AgentAccent(m.list.projectMajorityAgent(s.Project()))
 	}
 	return m.st.Accent
+}
+
+// projectHasLiveTmux reports whether the selected project has any live tmux.
+func (m Model) projectHasLiveTmux(project string) bool {
+	return m.list.projectHasLiveTmux(project)
 }
 
 // paneWidths returns the outer widths of the list and preview panes.
@@ -359,6 +458,66 @@ func (m *Model) layout() {
 	} else {
 		m.preview.Width = previewW
 		m.preview.Height = bodyH
+	}
+}
+
+// adoptPending links each live provisional new-session tmux to the newest
+// matching (same cwd + agent) session that isn't already backed by a real
+// sm-<agent>-<id8> tmux, renaming the provisional session to that name. It
+// mutates set to reflect the renames.
+func adoptPending(r tmux.Runner, sessions []store.Session, set map[string]bool) {
+	backed := map[string]bool{}
+	for name := range set {
+		if !tmux.IsPending(name) {
+			backed[name] = true
+		}
+	}
+	for name := range set {
+		if !tmux.IsPending(name) {
+			continue
+		}
+		cwd, err := r.Path(name)
+		if err != nil || cwd == "" {
+			continue
+		}
+		agent := tmux.PendingAgent(name)
+		best := -1
+		for i, s := range sessions {
+			if string(s.Agent) != agent || s.CWD != cwd {
+				continue
+			}
+			target := tmux.Name(agent, tmux.Short(s.ID))
+			if backed[target] || set[target] {
+				continue
+			}
+			if best < 0 || s.LastActivity.After(sessions[best].LastActivity) {
+				best = i
+			}
+		}
+		if best < 0 {
+			continue
+		}
+		target := tmux.Name(agent, tmux.Short(sessions[best].ID))
+		if r.Rename(name, target) == nil {
+			delete(set, name)
+			set[target] = true
+			backed[target] = true
+		}
+	}
+}
+
+// adoptCmd re-lists tmux, adopts provisional sessions against the given
+// scanned sessions, and returns the resulting live set.
+func (m Model) adoptCmd(sessions []store.Session) tea.Cmd {
+	r := m.tmux
+	snap := append([]store.Session(nil), sessions...)
+	return func() tea.Msg {
+		set, _ := r.List()
+		if set == nil {
+			set = map[string]bool{}
+		}
+		adoptPending(r, snap, set)
+		return tmuxListMsg{set: set}
 	}
 }
 
@@ -398,11 +557,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.enrichCh = ch
 		m.loading = true
 		store.Enrich(msg.sessions, m.providers, 8, ch)
+		cmds := []tea.Cmd{waitEnrich(ch), m.loadTranscriptCmd()}
+		if m.tmuxEnabled {
+			cmds = append(cmds, m.refreshTmuxCmd())
+		}
 		if m.searchAll && m.activeQuery != "" {
 			m.list.SetSearchResults(nil) // never render old indices over the new ordering
-			return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd(), m.dispatchSearch())
+			cmds = append(cmds, m.dispatchSearch())
 		}
-		return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd())
+		return m, tea.Batch(cmds...)
 
 	case enrichMsg:
 		if msg.ch != m.enrichCh {
@@ -429,6 +592,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
+		if m.tmuxEnabled {
+			return m, tea.Batch(m.loadTranscriptCmd(), m.adoptCmd(m.list.Sessions()))
+		}
 		return m, m.loadTranscriptCmd()
 
 	case transcriptMsg:
@@ -482,7 +648,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dialog = dialogError
 			m.errText = "could not launch: " + msg.err.Error()
 		}
+		if m.tmuxEnabled {
+			return m, tea.Batch(m.scanCmd(), m.refreshTmuxCmd())
+		}
 		return m, m.scanCmd()
+
+	case tmuxTickMsg:
+		if !m.tmuxEnabled {
+			return m, nil
+		}
+		return m, tea.Batch(m.adoptCmd(m.list.Sessions()), m.tmuxTickCmd())
+
+	case tmuxListMsg:
+		m.tmuxLive = msg.set
+		m.list.SetTmuxLive(msg.set)
+		return m, nil
 
 	case searchTickMsg:
 		if !m.searchAll || msg.seq != m.searchSeq {
@@ -694,9 +874,47 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openNewSession()
 		case "d":
 			return m.askDelete()
+		case "x":
+			if !m.tmuxEnabled {
+				return m, nil
+			}
+			if m.list.OnHeader() {
+				if proj, ok := m.list.CursorProject(); ok && m.projectHasLiveTmux(proj) {
+					m.pendingKillProject = proj
+					m.dialog = dialogKillProject
+				}
+				return m, nil
+			}
+			if s, _, ok := m.list.Selected(); ok {
+				name := tmuxNameFor(s)
+				if m.tmuxLive[name] {
+					return m, m.killOneCmd(name)
+				}
+			}
+			return m, nil
 		}
 	}
 	return m, nil
+}
+
+// runAgentCmd launches an agent, wrapping it in tmux when integration is on.
+// resume != nil resumes that session; resume == nil starts a new session with
+// p in cwd.
+func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) tea.Cmd {
+	if resume != nil {
+		name, args := p.ResumeCommand(*resume)
+		if m.tmuxEnabled {
+			sess := tmux.Name(string(resume.Agent), tmux.Short(resume.ID))
+			return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, name, args)...)
+		}
+		return m.runCmd(name, cwd, args...)
+	}
+	name, args := p.NewCommand()
+	if m.tmuxEnabled {
+		pend := tmux.PendingName(string(p.Agent()), m.now().UnixNano())
+		return m.runCmd("tmux", cwd, tmux.NewArgs(pend, cwd, name, args)...)
+	}
+	return m.runCmd(name, cwd, args...)
 }
 
 func (m Model) startResume() (tea.Model, tea.Cmd) {
@@ -721,8 +939,7 @@ func (m Model) startResume() (tea.Model, tea.Cmd) {
 		m.errText = p.Binary() + " not found on PATH"
 		return m, nil
 	}
-	name, args := p.ResumeCommand(s)
-	return m, m.runCmd(name, s.CWD, args...)
+	return m, m.runAgentCmd(p, s.CWD, &s)
 }
 
 func (m Model) openNewSession() (tea.Model, tea.Cmd) {
@@ -750,8 +967,7 @@ func (m Model) launchNewSession(dir string) (Model, tea.Cmd) {
 			m.errText = p.Binary() + " not found on PATH"
 			return m, nil
 		}
-		name, args := p.NewCommand()
-		return m, m.runCmd(name, dir, args...)
+		return m, m.runAgentCmd(p, dir, nil)
 	}
 	m.pendingNewDir = dir
 	m.dialog = dialogPickAgent
@@ -866,8 +1082,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errText = p.Binary() + " not found on PATH"
 					return m, nil
 				}
-				name, args := p.ResumeCommand(*pending)
-				return m, m.runCmd(name, dir, args...)
+				return m, m.runAgentCmd(p, dir, pending)
 			}
 			return m.launchNewSession(dir)
 		}
@@ -903,8 +1118,17 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.errText = p.Binary() + " not found on PATH"
 			return m, nil
 		}
-		name, args := p.NewCommand()
-		return m, m.runCmd(name, dir, args...)
+		return m, m.runAgentCmd(p, dir, nil)
+
+	case dialogKillProject:
+		proj := m.pendingKillProject
+		m.pendingKillProject = ""
+		m.dialog = dialogNone
+		switch msg.String() {
+		case "y", "enter":
+			return m, m.killProjectCmd(proj)
+		}
+		return m, nil
 	}
 	m.dialog = dialogNone
 	return m, nil
@@ -957,6 +1181,17 @@ func (m Model) dialogView() string {
 			"New session in " + m.pendingNewDir + "\n\n" +
 				"  [1] Claude    [2] Codex\n\n" +
 				m.st.Help.Render("1/2 choose · esc cancel"))
+
+	case dialogKillProject:
+		n := 0
+		for _, s := range m.list.Sessions() {
+			if s.Project() == m.pendingKillProject && m.tmuxLive[tmuxNameFor(s)] {
+				n++
+			}
+		}
+		return m.st.DialogBox.Render(fmt.Sprintf(
+			"Kill %d tmux in %s?\n\n%s", n, m.pendingKillProject,
+			m.st.Help.Render("y confirm · n cancel")))
 	}
 	return ""
 }
@@ -1025,6 +1260,6 @@ func (m Model) View() string {
 	}
 	styledLabel := lipgloss.NewStyle().Bold(true).Foreground(m.projectLabelColor()).
 		MaxWidth(m.width).Render(label)
-	styledHelp := m.st.Help.MaxWidth(helpBudget).Render(helpLine())
+	styledHelp := m.st.Help.MaxWidth(helpBudget).Render(helpLineFor(m.helpItems()))
 	return header + "\n" + filterBar + "\n" + body + "\n" + styledLabel + styledHelp
 }

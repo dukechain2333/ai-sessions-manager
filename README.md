@@ -207,6 +207,43 @@ mv ~/.claude/projects/.trash/<project-slug>/<id>.jsonl \
    ~/.claude/projects/<project-slug>/
 ```
 
+## Configuration
+
+`sm` reads `$XDG_CONFIG_HOME/sm/config.json`, falling back to
+`~/.config/sm/config.json`; override with `--config <path>`. A missing file
+uses built-in defaults; a malformed file falls back to defaults with a
+one-time notice.
+
+```json
+{
+  "tmux": { "enabled": false },
+  "colors": {
+    "claude": { "light": "#C15F3C", "dark": "#D97757" },
+    "codex":  { "light": "#0A7C66", "dark": "#10A37F" }
+  }
+}
+```
+
+- `tmux.enabled` (default `false`) — when `true`, resume and new sessions run
+  inside a tmux session named `sm-<agent>-<id8>`, so work survives detaching
+  (Ctrl-b d). Requires `tmux` on `PATH`; if it is missing, `sm` shows a
+  startup notice and runs without it.
+- `colors.claude` / `colors.codex` — each takes optional `light` and `dark`
+  `#RRGGBB` accents; omitted or invalid values keep the defaults.
+
+### tmux integration
+
+- A session with a live tmux shows a `●` marker; a project header shows `●`
+  when any of its sessions has one.
+- `x` kills the selected session's tmux; on a project header it kills all of
+  that project's tmux (after a confirm).
+- Killing a tmux outside `sm` (e.g. `tmux kill-session`) is detected
+  automatically — the marker clears on the next refresh.
+- Known edge: a **new** session's tmux is linked to its list row on the next
+  rescan by matching the newest session in that directory; starting two new
+  sessions in the same directory before returning can label them in either
+  order (both stay killable from the project header).
+
 ## Uninstall
 
 ```sh
