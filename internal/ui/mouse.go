@@ -164,6 +164,9 @@ func (m Model) clickList(line int) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	if m.list.IsSubheader(row) {
+		return m, nil // agent dividers are inert: no cursor move, no fold
+	}
 	m.list.SetCursor(row)
 	if m.list.OnHeader() {
 		m.lastClickRow = -1 // folding renumbers rows; stale indexes must not pair

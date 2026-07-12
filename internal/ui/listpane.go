@@ -178,7 +178,12 @@ func (l *listPane) ToggleFold() {
 
 // OnHeader reports whether the cursor is on a project header row.
 func (l *listPane) OnHeader() bool {
-	return l.cursor >= 0 && l.cursor < len(l.rows) && (l.rows[l.cursor].header || l.rows[l.cursor].subheader)
+	return l.cursor >= 0 && l.cursor < len(l.rows) && l.rows[l.cursor].header
+}
+
+// IsSubheader reports whether row i is an inert agent-divider subheader.
+func (l *listPane) IsSubheader(i int) bool {
+	return i >= 0 && i < len(l.rows) && l.rows[i].subheader
 }
 
 func (l *listPane) MoveCursor(delta int) {
@@ -446,7 +451,7 @@ func (l *listPane) ensureVisible() {
 	start, total := l.layout()
 	top := start[l.cursor]
 	bottom := top
-	if !l.rows[l.cursor].header {
+	if !l.rows[l.cursor].header && !l.rows[l.cursor].subheader {
 		bottom = top + 1 // through the meta line
 	}
 	if top < l.lineOffset {

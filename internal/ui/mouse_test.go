@@ -101,6 +101,52 @@ func TestClickHeaderFolds(t *testing.T) {
 	}
 }
 
+func TestClickSubheaderIsInert(t *testing.T) {
+	m := newTestModel()
+	// A project with both a Claude and a Codex session so a subheader renders.
+	m.list.SetSessions(agentMixSessions())
+	m.list.ToggleAgentGroup()
+
+	// Locate the "─ Claude ─" subheader's screen line: list content starts at
+	// terminal row 3, adjusted for any scroll offset.
+	start, _ := m.list.layout()
+	subRow := -1
+	for i, r := range m.list.rows {
+		if r.subheader {
+			subRow = i
+			break
+		}
+	}
+	if subRow < 0 {
+		t.Fatal("expected a subheader row with groupByAgent on a mixed project")
+	}
+	y := 3 + start[subRow] - m.list.lineOffset
+
+	before, _, okBefore := m.list.Selected()
+	if !okBefore {
+		t.Fatal("precondition: a session should be selected before the click")
+	}
+
+	m2, _ := m.Update(click(5, y)) // click squarely on the "─ Claude ─" divider
+	m = m2.(Model)
+
+	// (a) the project must NOT have folded — its sessions stay visible.
+	if m.list.folded["/x/mix"] {
+		t.Error("clicking a subheader must not fold the project")
+	}
+	if !strings.Contains(m.list.View(), "claude a") {
+		t.Errorf("session under the subheader should still be visible:\n%s", m.list.View())
+	}
+	// (b) the selection must not move onto a non-session; it stays put.
+	after, _, okAfter := m.list.Selected()
+	if !okAfter {
+		t.Error("selection must still resolve to a session after a subheader click")
+	}
+	if after.ID != before.ID {
+		t.Errorf("subheader click moved selection %s -> %s; should be inert", before.ID, after.ID)
+	}
+}
+
 func TestClickBlankBelowListIsNoop(t *testing.T) {
 	m := newTestModel()
 	before, _, _ := m.list.Selected()
