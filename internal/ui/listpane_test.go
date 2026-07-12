@@ -534,6 +534,34 @@ func TestAgentSubheaderNotCursorable(t *testing.T) {
 	}
 }
 
+func TestSessionMarkerRendersWhenLive(t *testing.T) {
+	l := newTestPane() // s1 claude /x/alpha, s2 claude /x/beta
+	l.SetTmuxLive(map[string]bool{tmuxNameFor(l.sessions[0]): true})
+	v := l.View()
+	if !strings.Contains(v, "●") {
+		t.Errorf("expected a ● marker for the live session:\n%s", v)
+	}
+}
+
+func TestNoMarkerWhenNoneLive(t *testing.T) {
+	l := newTestPane()
+	l.SetTmuxLive(map[string]bool{})
+	if strings.Contains(l.View(), "●") {
+		t.Error("no marker should render when nothing is live")
+	}
+}
+
+func TestProjectHasLiveTmux(t *testing.T) {
+	l := newTestPane()
+	l.SetTmuxLive(map[string]bool{tmuxNameFor(l.sessions[1]): true}) // s2 -> beta
+	if !l.projectHasLiveTmux("beta") {
+		t.Error("beta should report a live tmux")
+	}
+	if l.projectHasLiveTmux("alpha") {
+		t.Error("alpha should not report a live tmux")
+	}
+}
+
 func TestListViewFillsHeight(t *testing.T) {
 	// The preview pane (a viewport) always renders exactly its height in
 	// lines; the list pane must too, or the two bordered boxes end at

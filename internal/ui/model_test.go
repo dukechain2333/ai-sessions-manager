@@ -231,6 +231,19 @@ func TestBottomLabelShowsSelectedProject(t *testing.T) {
 	}
 }
 
+func TestTmuxListMsgUpdatesMarkers(t *testing.T) {
+	m := newTestModel()
+	name := tmuxNameFor(m.list.sessions[0])
+	m2, _ := m.Update(tmuxListMsg{set: map[string]bool{name: true}})
+	m = m2.(Model)
+	if !m.tmuxLive[name] {
+		t.Error("model should store the live set")
+	}
+	if !m.list.projectHasLiveTmux(m.list.sessions[0].Project()) {
+		t.Error("list pane should see the live tmux after tmuxListMsg")
+	}
+}
+
 func TestFocusedBorderAndLabelColorFollowAgent(t *testing.T) {
 	m := newTestModel() // grouped; cursor on first session s1 (claude, project "alpha")
 	if m.focusedBorderColor() != m.st.Accent {

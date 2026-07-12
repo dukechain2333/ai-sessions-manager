@@ -16,6 +16,7 @@ import (
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
 
 type focusArea int
@@ -52,6 +53,9 @@ type (
 		err error
 	}
 	agentExitMsg struct{ err error }
+
+	tmuxTickMsg struct{}
+	tmuxListMsg struct{ set map[string]bool }
 )
 
 const searchDebounce = 150 * time.Millisecond
@@ -73,6 +77,8 @@ type Model struct {
 	projectsDir string
 	providers   []store.Provider
 	tmuxEnabled bool
+	tmux        tmux.Runner
+	tmuxLive    map[string]bool
 	st          styles
 
 	list        listPane
@@ -151,6 +157,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		pendingDelete: -1,
 		providers:     provs,
 		tmuxEnabled:   cfg.TmuxEnabled,
+		tmux:          tmux.Exec{},
 		trashFn: func(s store.Session) (string, error) {
 			p := store.ProviderFor(provs, s.Agent)
 			if p == nil {
@@ -173,6 +180,9 @@ func execCmd(name, dir string, args ...string) tea.Cmd {
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.tmuxEnabled {
+		return tea.Batch(m.scanCmd(), m.refreshTmuxCmd(), m.tmuxTickCmd())
+	}
 	return m.scanCmd()
 }
 
@@ -181,6 +191,23 @@ func (m Model) scanCmd() tea.Cmd {
 	return func() tea.Msg {
 		sessions, err := store.ScanAll(provs)
 		return scanDoneMsg{sessions: sessions, err: err}
+	}
+}
+
+// tmuxTickCmd schedules the next discovery poll.
+func (m Model) tmuxTickCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return tmuxTickMsg{} })
+}
+
+// refreshTmuxCmd lists live sm tmux sessions once.
+func (m Model) refreshTmuxCmd() tea.Cmd {
+	r := m.tmux
+	return func() tea.Msg {
+		set, _ := r.List()
+		if set == nil {
+			set = map[string]bool{}
+		}
+		return tmuxListMsg{set: set}
 	}
 }
 
@@ -313,6 +340,11 @@ func (m Model) projectLabelText() string {
 		return ""
 	}
 	return " ▸ " + store.Truncate(s.Project(), 40) + "  "
+}
+
+// tmuxNameFor is the tmux session name sm uses for a session.
+func tmuxNameFor(s store.Session) string {
+	return tmux.Name(string(s.Agent), tmux.Short(s.ID))
 }
 
 // focusedBorderColor is the border color of the focused pane: the selected
@@ -486,6 +518,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errText = "could not launch: " + msg.err.Error()
 		}
 		return m, m.scanCmd()
+
+	case tmuxTickMsg:
+		if !m.tmuxEnabled {
+			return m, nil
+		}
+		return m, tea.Batch(m.refreshTmuxCmd(), m.tmuxTickCmd())
+
+	case tmuxListMsg:
+		m.tmuxLive = msg.set
+		m.list.SetTmuxLive(msg.set)
+		return m, nil
 
 	case searchTickMsg:
 		if !m.searchAll || msg.seq != m.searchSeq {
