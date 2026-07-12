@@ -475,9 +475,9 @@ func (l *listPane) ensureVisible() {
 func (l *listPane) View() string {
 	if l.total == 0 {
 		if l.search != nil || l.filter != "" {
-			return l.styles.ListMeta.Render("no matches")
+			return l.padHeight(l.styles.ListMeta.Render("no matches"))
 		}
-		return l.styles.ListMeta.Render("no sessions")
+		return l.padHeight(l.styles.ListMeta.Render("no sessions"))
 	}
 
 	var lines []string
@@ -564,7 +564,21 @@ func (l *listPane) View() string {
 	if l.height <= 0 || end > len(lines) {
 		end = len(lines)
 	}
-	return strings.TrimRight(strings.Join(lines[start:end], "\n"), "\n")
+	return l.padHeight(strings.Join(lines[start:end], "\n"))
+}
+
+// padHeight pads s with blank lines to exactly l.height lines. The preview
+// pane (a viewport) always renders its full height, so the list must too;
+// otherwise the shorter box's bottom border ends a row above its neighbor's.
+func (l *listPane) padHeight(s string) string {
+	if l.height <= 0 {
+		return s
+	}
+	lines := strings.Count(s, "\n") + 1
+	if lines >= l.height {
+		return s
+	}
+	return s + strings.Repeat("\n", l.height-lines)
 }
 
 func projectHasBothAgents(sessions []store.Session, idx []int) bool {

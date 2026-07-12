@@ -503,3 +503,14 @@ func TestAgentSubheaderNotCursorable(t *testing.T) {
 		t.Errorf("Len = %d, want 3", l.Len())
 	}
 }
+
+func TestListViewFillsHeight(t *testing.T) {
+	// The preview pane (a viewport) always renders exactly its height in
+	// lines; the list pane must too, or the two bordered boxes end at
+	// different rows. newTestPane is height 30 with only 2 visible sessions
+	// (6 content lines), so a trimming View would return far fewer.
+	l := newTestPane()
+	if got := strings.Count(l.View(), "\n") + 1; got != 30 {
+		t.Errorf("View() = %d lines, want 30 (pane height) so it matches the preview box", got)
+	}
+}
