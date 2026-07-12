@@ -495,7 +495,11 @@ func (l *listPane) View() string {
 			}
 			name := fmt.Sprintf("%s %s", indicator, r.project)
 			count := fmt.Sprintf("(%d)", l.counts[r.project])
-			label := store.Truncate(name+" "+count, l.width)
+			headerWidth := l.width
+			if l.projectHasLiveTmux(r.project) {
+				headerWidth -= 2 // reserve space for the trailing " ●"
+			}
+			label := store.Truncate(name+" "+count, headerWidth)
 			style := l.styles.GroupHeader
 			if i == l.cursor {
 				style = l.styles.GroupHeaderSel

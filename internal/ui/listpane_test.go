@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
@@ -560,6 +562,25 @@ func TestProjectHasLiveTmux(t *testing.T) {
 	if l.projectHasLiveTmux("alpha") {
 		t.Error("alpha should not report a live tmux")
 	}
+}
+
+func TestLiveHeaderDoesNotOverflowWidth(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(24, 30)
+	l.SetSessions([]store.Session{
+		{ID: "long1", CWD: "/x/a-very-long-project-name-here", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now()},
+	})
+	l.SetTmuxLive(map[string]bool{tmuxNameFor(l.sessions[0]): true})
+	// The header row is the first rendered line and carries the fold indicator.
+	for _, line := range strings.Split(l.View(), "\n") {
+		if strings.Contains(line, "▾") || strings.Contains(line, "▸") {
+			if w := lipgloss.Width(line); w > 24 {
+				t.Fatalf("live header line width = %d, want <= 24 (pane width): %q", w, line)
+			}
+			return
+		}
+	}
+	t.Fatal("no header row found in View output")
 }
 
 func TestListViewFillsHeight(t *testing.T) {
