@@ -34,6 +34,7 @@ const (
 	dialogDelete
 	dialogPickDir
 	dialogPickAgent
+	dialogKillProject
 	dialogError
 )
 
@@ -86,14 +87,15 @@ type Model struct {
 	filterInput textinput.Model
 	focus       focusArea
 
-	dialog        dialogKind
-	errText       string
-	pendingDelete int
-	pendingResume *store.Session
-	pendingNewDir string
-	dirs          []string
-	dirCursor     int
-	dirInput      textinput.Model
+	dialog             dialogKind
+	errText            string
+	pendingDelete      int
+	pendingResume      *store.Session
+	pendingNewDir      string
+	pendingKillProject string
+	dirs               []string
+	dirCursor          int
+	dirInput           textinput.Model
 
 	cache      *store.TranscriptCache
 	enrichCh   chan store.EnrichResult
@@ -217,6 +219,52 @@ func (m Model) refreshTmuxCmd() tea.Cmd {
 		set, _ := r.List()
 		if set == nil {
 			set = map[string]bool{}
+		}
+		return tmuxListMsg{set: set}
+	}
+}
+
+// killOneCmd kills one tmux session and re-lists.
+func (m Model) killOneCmd(name string) tea.Cmd {
+	r := m.tmux
+	return func() tea.Msg {
+		_ = r.Kill(name)
+		set, _ := r.List()
+		if set == nil {
+			set = map[string]bool{}
+		}
+		return tmuxListMsg{set: set}
+	}
+}
+
+// killProjectCmd kills every live tmux belonging to project's sessions
+// (named children), plus any provisional tmux whose path base is project.
+func (m Model) killProjectCmd(project string) tea.Cmd {
+	r := m.tmux
+	sessions := append([]store.Session(nil), m.list.Sessions()...)
+	return func() tea.Msg {
+		set, _ := r.List()
+		if set == nil {
+			set = map[string]bool{}
+		}
+		for _, s := range sessions {
+			if s.Project() != project {
+				continue
+			}
+			name := tmuxNameFor(s)
+			if set[name] {
+				_ = r.Kill(name)
+				delete(set, name)
+			}
+		}
+		for name := range set {
+			if !tmux.IsPending(name) {
+				continue
+			}
+			if p, err := r.Path(name); err == nil && filepath.Base(p) == project {
+				_ = r.Kill(name)
+				delete(set, name)
+			}
 		}
 		return tmuxListMsg{set: set}
 	}
@@ -374,6 +422,11 @@ func (m Model) projectLabelColor() lipgloss.AdaptiveColor {
 		return m.st.AgentAccent(m.list.projectMajorityAgent(s.Project()))
 	}
 	return m.st.Accent
+}
+
+// projectHasLiveTmux reports whether the selected project has any live tmux.
+func (m Model) projectHasLiveTmux(project string) bool {
+	return m.list.projectHasLiveTmux(project)
 }
 
 // paneWidths returns the outer widths of the list and preview panes.
@@ -751,6 +804,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openNewSession()
 		case "d":
 			return m.askDelete()
+		case "x":
+			if !m.tmuxEnabled {
+				return m, nil
+			}
+			if m.list.OnHeader() {
+				if proj, ok := m.list.CursorProject(); ok && m.projectHasLiveTmux(proj) {
+					m.pendingKillProject = proj
+					m.dialog = dialogKillProject
+				}
+				return m, nil
+			}
+			if s, _, ok := m.list.Selected(); ok {
+				name := tmuxNameFor(s)
+				if m.tmuxLive[name] {
+					return m, m.killOneCmd(name)
+				}
+			}
+			return m, nil
 		}
 	}
 	return m, nil
@@ -978,6 +1049,16 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.runAgentCmd(p, dir, nil)
+
+	case dialogKillProject:
+		proj := m.pendingKillProject
+		m.pendingKillProject = ""
+		m.dialog = dialogNone
+		switch msg.String() {
+		case "y", "enter":
+			return m, m.killProjectCmd(proj)
+		}
+		return m, nil
 	}
 	m.dialog = dialogNone
 	return m, nil
@@ -1030,6 +1111,17 @@ func (m Model) dialogView() string {
 			"New session in " + m.pendingNewDir + "\n\n" +
 				"  [1] Claude    [2] Codex\n\n" +
 				m.st.Help.Render("1/2 choose · esc cancel"))
+
+	case dialogKillProject:
+		n := 0
+		for _, s := range m.list.Sessions() {
+			if s.Project() == m.pendingKillProject && m.tmuxLive[tmuxNameFor(s)] {
+				n++
+			}
+		}
+		return m.st.DialogBox.Render(fmt.Sprintf(
+			"Kill %d tmux in %s?\n\n%s", n, m.pendingKillProject,
+			m.st.Help.Render("y confirm · n cancel")))
 	}
 	return ""
 }
@@ -1098,6 +1190,6 @@ func (m Model) View() string {
 	}
 	styledLabel := lipgloss.NewStyle().Bold(true).Foreground(m.projectLabelColor()).
 		MaxWidth(m.width).Render(label)
-	styledHelp := m.st.Help.MaxWidth(helpBudget).Render(helpLine())
+	styledHelp := m.st.Help.MaxWidth(helpBudget).Render(helpLineFor(m.helpItems()))
 	return header + "\n" + filterBar + "\n" + body + "\n" + styledLabel + styledHelp
 }

@@ -341,3 +341,98 @@ func TestFocusedBorderAndLabelColorFollowAgent(t *testing.T) {
 		t.Error("codex-majority project should give the teal label color")
 	}
 }
+
+type fakeTmux struct {
+	live    map[string]bool
+	paths   map[string]string
+	killed  []string
+	renamed [][2]string
+}
+
+func (f *fakeTmux) List() (map[string]bool, error) {
+	cp := map[string]bool{}
+	for k, v := range f.live {
+		cp[k] = v
+	}
+	return cp, nil
+}
+func (f *fakeTmux) Path(name string) (string, error) { return f.paths[name], nil }
+func (f *fakeTmux) Kill(name string) error {
+	delete(f.live, name)
+	f.killed = append(f.killed, name)
+	return nil
+}
+func (f *fakeTmux) Rename(from, to string) error {
+	delete(f.live, from)
+	f.live[to] = true
+	f.renamed = append(f.renamed, [2]string{from, to})
+	return nil
+}
+
+func TestKillOneSession(t *testing.T) {
+	m := newTestModel()
+	m.tmuxEnabled = true
+	name := tmuxNameFor(m.list.sessions[0])
+	f := &fakeTmux{live: map[string]bool{name: true}}
+	m.tmux = f
+	m.tmuxLive = map[string]bool{name: true}
+	m.list.SetTmuxLive(m.tmuxLive)
+	m.list.selectSession(0)
+	m2, cmd := m.Update(key("x"))
+	m = m2.(Model)
+	if cmd == nil {
+		t.Fatal("x on a live session should return a refresh cmd")
+	}
+	cmd() // runs killOneCmd's goroutine body
+	if len(f.killed) != 1 || f.killed[0] != name {
+		t.Errorf("expected kill of %s, got %v", name, f.killed)
+	}
+}
+
+func TestKillProjectHeaderConfirms(t *testing.T) {
+	m := newTestModel()
+	m.tmuxEnabled = true
+	n0 := tmuxNameFor(m.list.sessions[0]) // alpha
+	f := &fakeTmux{live: map[string]bool{n0: true}}
+	m.tmux = f
+	m.tmuxLive = map[string]bool{n0: true}
+	m.list.SetTmuxLive(m.tmuxLive)
+	// Put the cursor on the alpha header.
+	m.list.selectSession(0)
+	for !m.list.OnHeader() {
+		m.list.MoveCursor(-1)
+	}
+	m2, _ := m.Update(key("x"))
+	m = m2.(Model)
+	if m.dialog != dialogKillProject {
+		t.Fatalf("x on a header should open the kill-project confirm, got %v", m.dialog)
+	}
+	m2, cmd := m.Update(key("y"))
+	m = m2.(Model)
+	if cmd == nil {
+		t.Fatal("confirming should return a kill cmd")
+	}
+	cmd()
+	if len(f.killed) != 1 || f.killed[0] != n0 {
+		t.Errorf("kill-all should have killed %s, got %v", n0, f.killed)
+	}
+}
+
+func TestKillHelpItemGatedByTmux(t *testing.T) {
+	m := newTestModel() // disabled
+	for _, it := range m.helpItems() {
+		if it.label == "x kill" {
+			t.Fatal("x kill must not show when tmux is disabled")
+		}
+	}
+	m.tmuxEnabled = true
+	found := false
+	for _, it := range m.helpItems() {
+		if it.label == "x kill" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("x kill should show when tmux is enabled")
+	}
+}

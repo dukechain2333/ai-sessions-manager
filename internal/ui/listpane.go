@@ -609,6 +609,15 @@ func (l *listPane) projectHasLiveTmux(project string) bool {
 	return false
 }
 
+// CursorProject returns the project label of the row under the cursor
+// (header or session). ok is false when the list is empty or on a subheader.
+func (l *listPane) CursorProject() (string, bool) {
+	if l.cursor < 0 || l.cursor >= len(l.rows) || l.rows[l.cursor].subheader {
+		return "", false
+	}
+	return l.rows[l.cursor].project, true
+}
+
 // projectMajorityAgent returns the agent with the most sessions in project.
 // Ties (and a project with no sessions) break to the selected session's agent
 // so the label and the focused border agree; Claude if nothing is selected.

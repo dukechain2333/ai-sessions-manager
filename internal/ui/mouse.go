@@ -50,10 +50,26 @@ var helpBar = []helpItem{
 	{"q quit", runeKey("q")},
 }
 
-// helpLine renders the help bar's text (unstyled).
-func helpLine() string {
-	parts := make([]string, len(helpBar))
-	for i, it := range helpBar {
+// helpItems is the help bar for the current model: the base bar plus the
+// tmux "x kill" item when integration is on.
+func (m Model) helpItems() []helpItem {
+	if !m.tmuxEnabled {
+		return helpBar
+	}
+	items := make([]helpItem, 0, len(helpBar)+1)
+	for _, it := range helpBar {
+		items = append(items, it)
+		if it.label == "d delete" {
+			items = append(items, helpItem{"x kill", runeKey("x")})
+		}
+	}
+	return items
+}
+
+// helpLineFor renders a help bar's text (unstyled).
+func helpLineFor(items []helpItem) string {
+	parts := make([]string, len(items))
+	for i, it := range items {
 		parts[i] = it.label
 	}
 	return " " + strings.Join(parts, "  ")
@@ -186,7 +202,7 @@ func (m Model) clickList(line int) (tea.Model, tea.Cmd) {
 // that segment's key through the normal key path.
 func (m Model) clickHelp(x int) (tea.Model, tea.Cmd) {
 	pos := lipgloss.Width(m.projectLabelText()) + 1 // label prefix + helpLine's leading space
-	for _, it := range helpBar {
+	for _, it := range m.helpItems() {
 		w := lipgloss.Width(it.label)
 		if x >= pos && x < pos+w {
 			// Buttons act from list focus: without this, a synthesized key
