@@ -581,6 +581,33 @@ func (l *listPane) padHeight(s string) string {
 	return s + strings.Repeat("\n", l.height-lines)
 }
 
+// projectMajorityAgent returns the agent with the most sessions in project.
+// Ties (and a project with no sessions) break to the selected session's agent
+// so the label and the focused border agree; Claude if nothing is selected.
+func (l *listPane) projectMajorityAgent(project string) store.Agent {
+	claude, codex := 0, 0
+	for _, s := range l.sessions {
+		if s.Project() != project {
+			continue
+		}
+		if s.Agent == store.AgentCodex {
+			codex++
+		} else {
+			claude++
+		}
+	}
+	switch {
+	case codex > claude:
+		return store.AgentCodex
+	case claude > codex:
+		return store.AgentClaude
+	}
+	if s, _, ok := l.Selected(); ok {
+		return s.Agent
+	}
+	return store.AgentClaude
+}
+
 func projectHasBothAgents(sessions []store.Session, idx []int) bool {
 	seen := map[store.Agent]bool{}
 	for _, si := range idx {

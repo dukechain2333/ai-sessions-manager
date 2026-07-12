@@ -6,10 +6,13 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
 type styles struct {
 	Accent         lipgloss.AdaptiveColor
+	CodexAccent    lipgloss.AdaptiveColor
 	AppTitle       lipgloss.Style
 	Count          lipgloss.Style
 	ListTitle      lipgloss.Style
@@ -41,6 +44,7 @@ func defaultStyles() styles {
 	warn := lipgloss.AdaptiveColor{Light: "160", Dark: "203"}
 	return styles{
 		Accent:         accent,
+		CodexAccent:    codex,
 		AppTitle:       lipgloss.NewStyle().Bold(true).Foreground(text),
 		Count:          lipgloss.NewStyle().Foreground(dim),
 		ListTitle:      lipgloss.NewStyle().Foreground(text),
@@ -67,6 +71,14 @@ func defaultStyles() styles {
 // TitleMark is the Claude-style ✻ rendered in the accent color.
 func (s styles) TitleMark() string {
 	return lipgloss.NewStyle().Foreground(s.Accent).Render("✻")
+}
+
+// AgentAccent is the accent color for an agent: coral for Claude, teal for Codex.
+func (s styles) AgentAccent(a store.Agent) lipgloss.AdaptiveColor {
+	if a == store.AgentCodex {
+		return s.CodexAccent
+	}
+	return s.Accent
 }
 
 func humanTime(t, now time.Time) string {
