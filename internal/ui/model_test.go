@@ -11,6 +11,7 @@ import (
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
+	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
 
 func TestClaudeNonZeroExitNotShownAsError(t *testing.T) {
@@ -367,6 +368,57 @@ func (f *fakeTmux) Rename(from, to string) error {
 	f.live[to] = true
 	f.renamed = append(f.renamed, [2]string{from, to})
 	return nil
+}
+
+func TestAdoptRenamesNewestMatch(t *testing.T) {
+	sessions := []store.Session{
+		{ID: "old11111", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: time.Unix(100, 0)},
+		{ID: "new22222", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: time.Unix(200, 0)},
+	}
+	pend := tmux.PendingName("claude", 5)
+	f := &fakeTmux{
+		live:  map[string]bool{pend: true},
+		paths: map[string]string{pend: "/x/alpha"},
+	}
+	set := map[string]bool{pend: true}
+	adoptPending(f, sessions, set)
+	want := tmux.Name("claude", tmux.Short("new22222"))
+	if len(f.renamed) != 1 || f.renamed[0][1] != want {
+		t.Errorf("expected rename to %s, got %v", want, f.renamed)
+	}
+	if !set[want] || set[pend] {
+		t.Errorf("set should swap pending for adopted: %v", set)
+	}
+}
+
+func TestAdoptSkipsBacked(t *testing.T) {
+	backed := tmux.Name("claude", tmux.Short("new22222"))
+	sessions := []store.Session{
+		{ID: "new22222", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: time.Unix(200, 0)},
+	}
+	pend := tmux.PendingName("claude", 5)
+	f := &fakeTmux{
+		live:  map[string]bool{pend: true, backed: true},
+		paths: map[string]string{pend: "/x/alpha"},
+	}
+	set := map[string]bool{pend: true, backed: true}
+	adoptPending(f, sessions, set)
+	if len(f.renamed) != 0 {
+		t.Errorf("should not adopt an already-backed session, got %v", f.renamed)
+	}
+}
+
+func TestAdoptNoMatchIsNoop(t *testing.T) {
+	sessions := []store.Session{
+		{ID: "z", CWD: "/x/beta", Agent: store.AgentClaude, LastActivity: time.Unix(200, 0)},
+	}
+	pend := tmux.PendingName("claude", 5)
+	f := &fakeTmux{live: map[string]bool{pend: true}, paths: map[string]string{pend: "/x/other"}}
+	set := map[string]bool{pend: true}
+	adoptPending(f, sessions, set)
+	if len(f.renamed) != 0 {
+		t.Errorf("no cwd match should be a no-op, got %v", f.renamed)
+	}
 }
 
 func TestKillOneSession(t *testing.T) {

@@ -461,6 +461,66 @@ func (m *Model) layout() {
 	}
 }
 
+// adoptPending links each live provisional new-session tmux to the newest
+// matching (same cwd + agent) session that isn't already backed by a real
+// sm-<agent>-<id8> tmux, renaming the provisional session to that name. It
+// mutates set to reflect the renames.
+func adoptPending(r tmux.Runner, sessions []store.Session, set map[string]bool) {
+	backed := map[string]bool{}
+	for name := range set {
+		if !tmux.IsPending(name) {
+			backed[name] = true
+		}
+	}
+	for name := range set {
+		if !tmux.IsPending(name) {
+			continue
+		}
+		cwd, err := r.Path(name)
+		if err != nil || cwd == "" {
+			continue
+		}
+		agent := tmux.PendingAgent(name)
+		best := -1
+		for i, s := range sessions {
+			if string(s.Agent) != agent || s.CWD != cwd {
+				continue
+			}
+			target := tmux.Name(agent, tmux.Short(s.ID))
+			if backed[target] || set[target] {
+				continue
+			}
+			if best < 0 || s.LastActivity.After(sessions[best].LastActivity) {
+				best = i
+			}
+		}
+		if best < 0 {
+			continue
+		}
+		target := tmux.Name(agent, tmux.Short(sessions[best].ID))
+		if r.Rename(name, target) == nil {
+			delete(set, name)
+			set[target] = true
+			backed[target] = true
+		}
+	}
+}
+
+// adoptCmd re-lists tmux, adopts provisional sessions against the given
+// scanned sessions, and returns the resulting live set.
+func (m Model) adoptCmd(sessions []store.Session) tea.Cmd {
+	r := m.tmux
+	snap := append([]store.Session(nil), sessions...)
+	return func() tea.Msg {
+		set, _ := r.List()
+		if set == nil {
+			set = map[string]bool{}
+		}
+		adoptPending(r, snap, set)
+		return tmuxListMsg{set: set}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -497,11 +557,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.enrichCh = ch
 		m.loading = true
 		store.Enrich(msg.sessions, m.providers, 8, ch)
+		cmds := []tea.Cmd{waitEnrich(ch), m.loadTranscriptCmd()}
+		if m.tmuxEnabled {
+			cmds = append(cmds, m.adoptCmd(msg.sessions))
+		}
 		if m.searchAll && m.activeQuery != "" {
 			m.list.SetSearchResults(nil) // never render old indices over the new ordering
-			return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd(), m.dispatchSearch())
+			cmds = append(cmds, m.dispatchSearch())
 		}
-		return m, tea.Batch(waitEnrich(ch), m.loadTranscriptCmd())
+		return m, tea.Batch(cmds...)
 
 	case enrichMsg:
 		if msg.ch != m.enrichCh {
@@ -580,6 +644,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil && !errors.As(msg.err, &exitErr) {
 			m.dialog = dialogError
 			m.errText = "could not launch: " + msg.err.Error()
+		}
+		if m.tmuxEnabled {
+			return m, tea.Batch(m.scanCmd(), m.refreshTmuxCmd())
 		}
 		return m, m.scanCmd()
 
