@@ -142,8 +142,12 @@ func (l *listPane) ToggleGroup() {
 	}
 }
 
-// ToggleAgentGroup turns per-project agent subgrouping on/off.
+// ToggleAgentGroup turns per-project agent subgrouping on/off. No-op while
+// browsing search results (same reasoning as ToggleEmpty/ToggleGroup).
 func (l *listPane) ToggleAgentGroup() {
+	if l.search != nil {
+		return
+	}
 	sel, ok := l.selectedSession()
 	l.groupByAgent = !l.groupByAgent
 	l.refresh()
@@ -479,7 +483,7 @@ func (l *listPane) View() string {
 	var lines []string
 	for i, r := range l.rows {
 		if r.subheader {
-			lines = append(lines, l.styles.GroupCount.Render(store.Truncate("  "+r.label, l.width)))
+			lines = append(lines, l.styles.ListMeta.Render(store.Truncate("  "+r.label, l.width)))
 			continue
 		}
 		if r.header {

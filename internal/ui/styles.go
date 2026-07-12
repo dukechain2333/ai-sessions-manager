@@ -16,9 +16,6 @@ type styles struct {
 	ListTitleSel   lipgloss.Style
 	ListMeta       lipgloss.Style
 	ListMetaSel    lipgloss.Style
-	ClaudeTitle    lipgloss.Style
-	ClaudeTitleSel lipgloss.Style
-	CodexTitle     lipgloss.Style
 	CodexTitleSel  lipgloss.Style
 	ClaudeTag      lipgloss.Style
 	CodexTag       lipgloss.Style
@@ -50,9 +47,6 @@ func defaultStyles() styles {
 		ListTitleSel:   lipgloss.NewStyle().Bold(true).Foreground(accent),
 		ListMeta:       lipgloss.NewStyle().Foreground(dim),
 		ListMetaSel:    lipgloss.NewStyle().Foreground(accent),
-		ClaudeTitle:    lipgloss.NewStyle().Foreground(text),
-		ClaudeTitleSel: lipgloss.NewStyle().Bold(true).Foreground(accent),
-		CodexTitle:     lipgloss.NewStyle().Foreground(text),
 		CodexTitleSel:  lipgloss.NewStyle().Bold(true).Foreground(codex),
 		ClaudeTag:      lipgloss.NewStyle().Foreground(accent),
 		CodexTag:       lipgloss.NewStyle().Foreground(codex),

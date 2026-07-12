@@ -342,7 +342,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scanDoneMsg:
 		if msg.err != nil {
 			m.dialog = dialogError
-			m.errText = fmt.Sprintf("cannot read %s: %v", m.projectsDir, msg.err)
+			m.errText = "cannot read sessions: " + msg.err.Error()
 			return m, nil
 		}
 		// Every successful (re)scan revalidates the full-text index —
@@ -698,13 +698,33 @@ func (m Model) startResume() (tea.Model, tea.Cmd) {
 func (m Model) openNewSession() (tea.Model, tea.Cmd) {
 	if s, _, ok := m.list.Selected(); ok && s.CWD != "" {
 		if st, err := os.Stat(s.CWD); err == nil && st.IsDir() {
-			m.pendingNewDir = s.CWD
-			m.dialog = dialogPickAgent
-			return m, nil
+			return m.launchNewSession(s.CWD)
 		}
 	}
 	m.pendingResume = nil
 	m.openDirPicker() // no selection: fall back to dir picker, then agent pick
+	return m, nil
+}
+
+// launchNewSession starts a new session in dir. Codex support must activate
+// only when a second provider is actually registered (~/.codex exists): a
+// Claude-only user has exactly one provider, so this launches it directly
+// with no extra keypress and no agent-pick dialog. With two or more
+// providers it falls back to the dialogPickAgent flow.
+func (m Model) launchNewSession(dir string) (Model, tea.Cmd) {
+	m.dialog = dialogNone
+	if len(m.providers) == 1 {
+		p := m.providers[0]
+		if _, err := exec.LookPath(p.Binary()); err != nil {
+			m.dialog = dialogError
+			m.errText = p.Binary() + " not found on PATH"
+			return m, nil
+		}
+		name, args := p.NewCommand()
+		return m, m.runCmd(name, dir, args...)
+	}
+	m.pendingNewDir = dir
+	m.dialog = dialogPickAgent
 	return m, nil
 }
 
@@ -819,9 +839,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				name, args := p.ResumeCommand(*pending)
 				return m, m.runCmd(name, dir, args...)
 			}
-			m.pendingNewDir = dir
-			m.dialog = dialogPickAgent
-			return m, nil
+			return m.launchNewSession(dir)
 		}
 		var cmd tea.Cmd
 		m.dirInput, cmd = m.dirInput.Update(msg)

@@ -523,6 +523,10 @@ func pickerModel(t *testing.T) (Model, string, string, *resumeRecorder) {
 	t.Helper()
 	dirA, dirB := shortTempDir(t), shortTempDir(t)
 	m := newTestModel()
+	// A second provider is registered so confirming a dir opens the
+	// agent-pick dialog these tests exercise (the single-provider fast path
+	// is covered by TestNewSessionSingleProviderLaunchesDirectly).
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
 	// s1 (the initially selected session) keeps its non-existent CWD, so "n"
 	// falls back to the dir picker instead of jumping straight to the agent
 	// picker; s2/s3 supply the known, existing directories.

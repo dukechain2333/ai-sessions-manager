@@ -125,6 +125,10 @@ func TestDeleteCancel(t *testing.T) {
 func TestNewSessionPicker(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestModel()
+	// A second provider is registered so the dir-picker confirm path opens
+	// the agent-pick dialog (the single-provider fast path is covered by
+	// TestNewSessionSingleProviderLaunchesDirectly).
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
 	// s1 (the initially selected session) keeps its non-existent CWD, so "n"
 	// falls back to the dir picker; s2 supplies a known, existing directory.
 	m.list.sessions[1].CWD = dir
@@ -160,6 +164,9 @@ func TestNewSessionTypedPath(t *testing.T) {
 		t.Skip("~/.cache missing")
 	}
 	m := newTestModel()
+	// A second provider is registered so the dir-picker confirm path opens
+	// the agent-pick dialog (see TestNewSessionPicker).
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
 	rec := &resumeRecorder{}
 	m.runCmd = rec.cmd
 	m2, _ := m.Update(key("n"))
@@ -182,6 +189,10 @@ func TestNewSessionTypedPath(t *testing.T) {
 
 func TestNewSessionOpensAgentPicker(t *testing.T) {
 	m := newTestModel()
+	// Two providers registered (Claude + Codex): "n" must open the
+	// agent-pick dialog. With a single provider it launches directly — see
+	// TestNewSessionSingleProviderLaunchesDirectly.
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
 	dir := t.TempDir()
 	m.list.sessions[0].CWD = dir
 	m2, _ := m.Update(key("n"))
@@ -196,6 +207,38 @@ func TestNewSessionOpensAgentPicker(t *testing.T) {
 	m = m2.(Model)
 	if rec.name != "claude" || rec.dir != dir || len(rec.args) != 0 {
 		t.Errorf("new claude = %s %q %v", rec.name, rec.dir, rec.args)
+	}
+}
+
+// TestNewSessionSingleProviderLaunchesDirectly is the core Fix-1 guarantee:
+// Codex support activates only when ~/.codex exists — zero change for
+// Claude-only users. newTestModel() points the Codex provider at a
+// nonexistent directory, so it never registers and m.providers has exactly
+// one entry (Claude). "n" on a session with a real CWD must skip the
+// agent-pick dialog entirely and launch claude directly, with no extra
+// keypress and no broken "[2] Codex" option.
+func TestNewSessionSingleProviderLaunchesDirectly(t *testing.T) {
+	m := newTestModel()
+	if len(m.providers) != 1 {
+		t.Fatalf("setup: providers = %d, want 1 (claude only)", len(m.providers))
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	rec := &resumeRecorder{}
+	m.runCmd = rec.cmd
+	m2, cmd := m.Update(key("n"))
+	m = m2.(Model)
+	if m.dialog == dialogPickAgent {
+		t.Fatal("single-provider (Claude-only) user must not see the agent-pick dialog")
+	}
+	if m.dialog != dialogNone {
+		t.Fatalf("dialog = %v, want dialogNone", m.dialog)
+	}
+	if cmd == nil {
+		t.Fatal("expected a launch cmd")
+	}
+	if rec.name != "claude" || rec.dir != dir || len(rec.args) != 0 {
+		t.Errorf("new session: name=%q dir=%q args=%v, want claude %q []", rec.name, rec.dir, rec.args, dir)
 	}
 }
 
