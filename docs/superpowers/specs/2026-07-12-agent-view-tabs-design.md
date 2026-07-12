@@ -117,9 +117,10 @@ single-agent experience.
 
 The per-project agent subheader feature is subsumed by the views and is
 deleted: `row.subheader`, `groupByAgent`, `ToggleAgentGroup`,
-`projectHasBothAgents`, `agentTitle`, the subheader branches in
-`refresh`/`View`/cursor movement, and their tests. The help bar keeps the
-`a agent` entry (same key, new meaning).
+`projectHasBothAgents`, the subheader branches in `refresh`/`View`/cursor
+movement, and their tests. (`agentTitle` survives — the tab labels and the
+cross-view search hint reuse it.) The help bar keeps the `a agent` entry
+(same key, new meaning).
 
 ## Implementation shape
 
