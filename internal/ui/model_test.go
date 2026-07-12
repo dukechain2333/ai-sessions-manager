@@ -488,3 +488,42 @@ func TestKillHelpItemGatedByTmux(t *testing.T) {
 		t.Error("x kill should show when tmux is enabled")
 	}
 }
+
+// drainCmd runs a command and recursively flattens tea.Batch results into the
+// list of concrete messages produced.
+func drainCmd(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, drainCmd(c)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+func TestAdoptionRunsAgainstEnrichedSessionsOnEnrichDone(t *testing.T) {
+	m := newTestModel() // s1 claude, CWD /x/alpha, already enriched
+	m.tmuxEnabled = true
+	pend := tmux.PendingName("claude", 7)
+	f := &fakeTmux{live: map[string]bool{pend: true}, paths: map[string]string{pend: "/x/alpha"}}
+	m.tmux = f
+	// enrichDone must dispatch adoption against the ENRICHED list (CWD known),
+	// renaming the pending tmux to s1's real name.
+	m2, cmd := m.Update(enrichDoneMsg{ch: m.enrichCh})
+	_ = m2
+	if cmd == nil {
+		t.Fatal("enrichDone should return a cmd when tmux is enabled")
+	}
+	for _, msg := range drainCmd(cmd) {
+		_ = msg // running the batch executes adoptCmd's closure (side effects on f)
+	}
+	want := tmux.Name("claude", tmux.Short("s1"))
+	if len(f.renamed) == 0 || f.renamed[len(f.renamed)-1][1] != want {
+		t.Fatalf("adoption should rename %s -> %s against enriched sessions; renamed=%v", pend, want, f.renamed)
+	}
+}

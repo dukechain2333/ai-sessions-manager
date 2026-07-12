@@ -559,7 +559,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		store.Enrich(msg.sessions, m.providers, 8, ch)
 		cmds := []tea.Cmd{waitEnrich(ch), m.loadTranscriptCmd()}
 		if m.tmuxEnabled {
-			cmds = append(cmds, m.adoptCmd(msg.sessions))
+			cmds = append(cmds, m.refreshTmuxCmd())
 		}
 		if m.searchAll && m.activeQuery != "" {
 			m.list.SetSearchResults(nil) // never render old indices over the new ordering
@@ -592,6 +592,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
+		if m.tmuxEnabled {
+			return m, tea.Batch(m.loadTranscriptCmd(), m.adoptCmd(m.list.Sessions()))
+		}
 		return m, m.loadTranscriptCmd()
 
 	case transcriptMsg:
@@ -654,7 +657,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.tmuxEnabled {
 			return m, nil
 		}
-		return m, tea.Batch(m.refreshTmuxCmd(), m.tmuxTickCmd())
+		return m, tea.Batch(m.adoptCmd(m.list.Sessions()), m.tmuxTickCmd())
 
 	case tmuxListMsg:
 		m.tmuxLive = msg.set
