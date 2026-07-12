@@ -18,9 +18,11 @@ const sessionLines = 3
 // session. In group-by-project mode headers precede each project's
 // sessions and can be folded to hide them.
 type row struct {
-	header  bool
-	project string
-	session int // index into listPane.sessions; valid when !header
+	header    bool
+	subheader bool   // agent subsection label (inert)
+	label     string // subheader text, e.g. "─ Claude ─"
+	project   string
+	session   int // index into listPane.sessions; valid when !header && !subheader
 }
 
 // listPane is a hand-rolled scrolling session list. Sessions render as
@@ -41,6 +43,7 @@ type listPane struct {
 	filter         string
 	showEmpty      bool
 	groupByProject bool
+	groupByAgent   bool
 	focused        bool
 	styles         styles
 	search         []store.SessionHits // non-nil: flat search-results mode
@@ -139,6 +142,18 @@ func (l *listPane) ToggleGroup() {
 	}
 }
 
+// ToggleAgentGroup turns per-project agent subgrouping on/off.
+func (l *listPane) ToggleAgentGroup() {
+	sel, ok := l.selectedSession()
+	l.groupByAgent = !l.groupByAgent
+	l.refresh()
+	if ok {
+		l.selectSession(sel)
+	} else {
+		l.cursorToFirstSession()
+	}
+}
+
 // ToggleFold collapses or expands the project the cursor is currently in
 // (whether the cursor sits on the header or one of its sessions), then
 // parks the cursor on that project's header. No-op when not grouped.
@@ -163,19 +178,30 @@ func (l *listPane) ToggleFold() {
 
 // OnHeader reports whether the cursor is on a project header row.
 func (l *listPane) OnHeader() bool {
-	return l.cursor >= 0 && l.cursor < len(l.rows) && l.rows[l.cursor].header
+	return l.cursor >= 0 && l.cursor < len(l.rows) && (l.rows[l.cursor].header || l.rows[l.cursor].subheader)
 }
 
 func (l *listPane) MoveCursor(delta int) {
-	l.cursor += delta
-	if l.cursor < 0 {
-		l.cursor = 0
+	if len(l.rows) == 0 {
+		return
 	}
-	if l.cursor >= len(l.rows) {
-		l.cursor = len(l.rows) - 1
+	step := 1
+	if delta < 0 {
+		step = -1
 	}
-	if l.cursor < 0 {
-		l.cursor = 0
+	n := delta
+	if n < 0 {
+		n = -n
+	}
+	for ; n > 0; n-- {
+		i := l.cursor + step
+		for i >= 0 && i < len(l.rows) && l.rows[i].subheader {
+			i += step // hop over inert subheaders
+		}
+		if i < 0 || i >= len(l.rows) {
+			break
+		}
+		l.cursor = i
 	}
 	l.ensureVisible()
 }
@@ -213,7 +239,7 @@ func (l *listPane) SetCursor(i int) {
 // Selected returns the session under the cursor. ok is false when the
 // cursor is on a header row or the list is empty.
 func (l *listPane) Selected() (store.Session, int, bool) {
-	if l.cursor < 0 || l.cursor >= len(l.rows) || l.rows[l.cursor].header {
+	if l.cursor < 0 || l.cursor >= len(l.rows) || (l.rows[l.cursor].header || l.rows[l.cursor].subheader) {
 		return store.Session{}, -1, false
 	}
 	i := l.rows[l.cursor].session
@@ -221,7 +247,7 @@ func (l *listPane) Selected() (store.Session, int, bool) {
 }
 
 func (l *listPane) selectedSession() (int, bool) {
-	if l.cursor < 0 || l.cursor >= len(l.rows) || l.rows[l.cursor].header {
+	if l.cursor < 0 || l.cursor >= len(l.rows) || (l.rows[l.cursor].header || l.rows[l.cursor].subheader) {
 		return -1, false
 	}
 	return l.rows[l.cursor].session, true
@@ -229,7 +255,7 @@ func (l *listPane) selectedSession() (int, bool) {
 
 func (l *listPane) selectSession(sessionIdx int) {
 	for i, r := range l.rows {
-		if !r.header && r.session == sessionIdx {
+		if !r.header && !r.subheader && r.session == sessionIdx {
 			l.cursor = i
 			l.ensureVisible()
 			return
@@ -240,7 +266,7 @@ func (l *listPane) selectSession(sessionIdx int) {
 
 func (l *listPane) cursorToFirstSession() {
 	for i, r := range l.rows {
-		if !r.header {
+		if !r.header && !r.subheader {
 			l.cursor = i
 			l.ensureVisible()
 			return
@@ -357,8 +383,27 @@ func (l *listPane) refresh() {
 			if l.folded[p] {
 				continue
 			}
-			for _, si := range buckets[p] {
-				l.rows = append(l.rows, row{project: p, session: si})
+			projSessions := buckets[p]
+			if l.groupByAgent && projectHasBothAgents(l.sessions, projSessions) {
+				for _, ag := range []store.Agent{store.AgentClaude, store.AgentCodex} {
+					var seg []int
+					for _, si := range projSessions {
+						if l.sessions[si].Agent == ag {
+							seg = append(seg, si)
+						}
+					}
+					if len(seg) == 0 {
+						continue
+					}
+					l.rows = append(l.rows, row{subheader: true, project: p, label: "─ " + agentTitle(ag) + " ─"})
+					for _, si := range seg {
+						l.rows = append(l.rows, row{project: p, session: si})
+					}
+				}
+			} else {
+				for _, si := range projSessions {
+					l.rows = append(l.rows, row{project: p, session: si})
+				}
 			}
 		}
 	} else {
@@ -382,7 +427,7 @@ func (l *listPane) layout() (start []int, total int) {
 	pos := 0
 	for i, r := range l.rows {
 		start[i] = pos
-		if r.header {
+		if r.header || r.subheader {
 			pos++
 		} else {
 			pos += sessionLines
@@ -428,6 +473,10 @@ func (l *listPane) View() string {
 
 	var lines []string
 	for i, r := range l.rows {
+		if r.subheader {
+			lines = append(lines, l.styles.GroupCount.Render(store.Truncate("  "+r.label, l.width)))
+			continue
+		}
 		if r.header {
 			indicator := "▾"
 			if l.folded[r.project] {
@@ -507,4 +556,19 @@ func (l *listPane) View() string {
 		end = len(lines)
 	}
 	return strings.TrimRight(strings.Join(lines[start:end], "\n"), "\n")
+}
+
+func projectHasBothAgents(sessions []store.Session, idx []int) bool {
+	seen := map[store.Agent]bool{}
+	for _, si := range idx {
+		seen[sessions[si].Agent] = true
+	}
+	return len(seen) > 1
+}
+
+func agentTitle(a store.Agent) string {
+	if a == store.AgentCodex {
+		return "Codex"
+	}
+	return "Claude"
 }
