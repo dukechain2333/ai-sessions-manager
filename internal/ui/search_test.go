@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
@@ -721,7 +722,7 @@ func TestUpAtTopEntersBarDownReturns(t *testing.T) {
 
 func TestClickHelpSearchFocusesFullText(t *testing.T) {
 	m := searchModel(t)
-	m2, _ := m.Update(click(50, 29)) // inside "s search" [49,56]
+	m2, _ := m.Update(click(lipgloss.Width(m.projectLabelText())+50, 29)) // inside "s search" [49,56]
 	m = m2.(Model)
 	if m.focus != focusFilter || !m.filterInput.Focused() {
 		t.Fatal("clicking 's search' must focus the search bar")

@@ -300,6 +300,18 @@ func (m *Model) bodyHeight() int {
 	return h
 }
 
+// projectLabelText is the current-project label shown at the far left of the
+// bottom instruction row: " ▸ <project>  " for the selected session, or "" when
+// no session is selected. It is the single source of truth for both the
+// rendered label and the mouse help-bar x offset, so the two cannot drift.
+func (m Model) projectLabelText() string {
+	s, _, ok := m.list.Selected()
+	if !ok {
+		return ""
+	}
+	return " ▸ " + store.Truncate(s.Project(), 40) + "  "
+}
+
 // paneWidths returns the outer widths of the list and preview panes.
 // layout() and mouse hit-testing must agree on these, so they live here.
 func (m *Model) paneWidths() (listW, previewW int) {
@@ -985,6 +997,14 @@ func (m Model) View() string {
 	// Clamp to the terminal width so a help line wider than the screen
 	// truncates cleanly instead of wrapping onto another row (which would
 	// corrupt the alt-screen frame). The full bar needs ~105 columns.
-	help := m.st.Help.MaxWidth(m.width).Render(helpLine())
-	return header + "\n" + filterBar + "\n" + body + "\n" + help
+	label := m.projectLabelText()
+	labelW := lipgloss.Width(label)
+	helpBudget := m.width - labelW
+	if helpBudget < 0 {
+		helpBudget = 0
+	}
+	styledLabel := lipgloss.NewStyle().Bold(true).Foreground(m.st.Accent).
+		MaxWidth(m.width).Render(label)
+	styledHelp := m.st.Help.MaxWidth(helpBudget).Render(helpLine())
+	return header + "\n" + filterBar + "\n" + body + "\n" + styledLabel + styledHelp
 }

@@ -349,17 +349,18 @@ func TestClickHelpBarTriggersAction(t *testing.T) {
 	if !m.list.groupByProject {
 		t.Fatal("setup: expected grouped mode")
 	}
-	m2, _ := m.Update(click(60, 29)) // inside "g group" [59,65]
+	labelW := lipgloss.Width(m.projectLabelText())
+	m2, _ := m.Update(click(labelW+60, 29)) // inside "g group" [59,65]
 	m = m2.(Model)
 	if m.list.groupByProject {
 		t.Error("clicking 'g group' must toggle grouping")
 	}
-	m2, _ = m.Update(click(80, 29)) // inside "space fold" [77,86]
+	m2, _ = m.Update(click(labelW+80, 29)) // inside "space fold" [77,86]
 	m = m2.(Model)
 	// flat mode: fold is a no-op; regroup and fold via clicks
-	m2, _ = m.Update(click(60, 29))
+	m2, _ = m.Update(click(labelW+60, 29))
 	m = m2.(Model)
-	m2, _ = m.Update(click(80, 29))
+	m2, _ = m.Update(click(labelW+80, 29))
 	m = m2.(Model)
 	if len(m.list.folded) == 0 {
 		t.Error("clicking 'space fold' must fold the current project")
@@ -368,7 +369,7 @@ func TestClickHelpBarTriggersAction(t *testing.T) {
 
 func TestClickHelpBarGapIsNoop(t *testing.T) {
 	m := newTestModel()
-	m2, _ := m.Update(click(47, 29)) // gap between "/ filter" and "s search"
+	m2, _ := m.Update(click(lipgloss.Width(m.projectLabelText())+47, 29)) // gap between "/ filter" and "s search"
 	m = m2.(Model)
 	if !m.list.groupByProject {
 		t.Error("a click on a help-bar gap must do nothing")
@@ -377,7 +378,7 @@ func TestClickHelpBarGapIsNoop(t *testing.T) {
 
 func TestClickHelpQuitReturnsQuit(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(click(110, 29)) // inside "q quit" [108,113]
+	_, cmd := m.Update(click(lipgloss.Width(m.projectLabelText())+110, 29)) // inside "q quit" [108,113]
 	if cmd == nil {
 		t.Fatal("clicking 'q quit' must return a command")
 	}
@@ -393,7 +394,7 @@ func TestClickHelpWhilePreviewFocused(t *testing.T) {
 	if m.focus != focusPreview {
 		t.Fatal("setup: preview should be focused")
 	}
-	m2, _ = m.Update(click(30, 29)) // "d delete" [29,36]
+	m2, _ = m.Update(click(lipgloss.Width(m.projectLabelText())+30, 29)) // "d delete" [29,36]
 	m = m2.(Model)
 	if m.dialog != dialogDelete {
 		t.Errorf("dialog = %v, want dialogDelete (button must act on the list, not scroll the preview)", m.dialog)
@@ -404,7 +405,7 @@ func TestClickHelpGapKeepsFocus(t *testing.T) {
 	m := newTestModel()
 	m2, _ := m.Update(click(50, 10)) // focus the preview
 	m = m2.(Model)
-	m2, _ = m.Update(click(47, 29)) // gap between "/ filter" and "s search"
+	m2, _ = m.Update(click(lipgloss.Width(m.projectLabelText())+47, 29)) // gap between "/ filter" and "s search"
 	m = m2.(Model)
 	if m.focus != focusPreview {
 		t.Errorf("focus = %v, want focusPreview (a gap click must be a pure no-op)", m.focus)
@@ -696,5 +697,32 @@ func TestScanResetsClickTracker(t *testing.T) {
 	m = m2.(Model)
 	if m.lastClickRow != -1 {
 		t.Errorf("scanDoneMsg must reset lastClickRow (rows renumber), got %d", m.lastClickRow)
+	}
+}
+
+func TestClickHelpWithProjectLabelStillWorks(t *testing.T) {
+	m := newTestModel() // a session is selected → non-empty project label
+	// Compute the "q quit" button's screen x AFTER the label offset.
+	base := lipgloss.Width(m.projectLabelText()) + 1 // +1 = helpLine leading space
+	pos := base
+	var qx int = -1
+	for _, it := range helpBar {
+		w := lipgloss.Width(it.label)
+		if it.label == "q quit" {
+			qx = pos + 1 // a cell inside the button
+			break
+		}
+		pos += w + 2
+	}
+	if qx < 0 {
+		t.Fatal("no 'q quit' item in helpBar")
+	}
+	m2, cmd := m.Update(click(qx, m.height-1))
+	_ = m2
+	if cmd == nil {
+		t.Fatalf("click on 'q quit' at x=%d produced no cmd", qx)
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("clicking 'q quit' (label-shifted position) should quit")
 	}
 }

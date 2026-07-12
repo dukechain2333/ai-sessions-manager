@@ -210,3 +210,22 @@ func TestViewRenders(t *testing.T) {
 		t.Fatal("empty view")
 	}
 }
+
+func TestBottomLabelShowsSelectedProject(t *testing.T) {
+	m := newTestModel() // grouped; cursor starts on the first session (s1, project "alpha")
+	if got := m.projectLabelText(); got != " ▸ alpha  " {
+		t.Fatalf("projectLabelText = %q, want %q", got, " ▸ alpha  ")
+	}
+	if v := m.View(); !strings.Contains(v, "▸ alpha") {
+		t.Errorf("View bottom line missing project label:\n%s", v)
+	}
+	// Move the cursor onto the project header (no session selected) → empty label.
+	m2, _ := m.Update(key("k"))
+	m = m2.(Model)
+	if !m.list.OnHeader() {
+		t.Fatal("setup: k from first session should land on the header")
+	}
+	if got := m.projectLabelText(); got != "" {
+		t.Errorf("projectLabelText on a header = %q, want empty", got)
+	}
+}

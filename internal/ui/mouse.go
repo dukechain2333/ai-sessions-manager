@@ -185,7 +185,7 @@ func (m Model) clickList(line int) (tea.Model, tea.Cmd) {
 // clickHelp maps an x coordinate on the help bar to its segment and feeds
 // that segment's key through the normal key path.
 func (m Model) clickHelp(x int) (tea.Model, tea.Cmd) {
-	pos := 1 // leading space
+	pos := lipgloss.Width(m.projectLabelText()) + 1 // label prefix + helpLine's leading space
 	for _, it := range helpBar {
 		w := lipgloss.Width(it.label)
 		if x >= pos && x < pos+w {
