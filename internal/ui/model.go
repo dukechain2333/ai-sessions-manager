@@ -170,6 +170,11 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		now:          time.Now,
 	}
 	ret.index, ret.indexErr = store.NewSearchIndex()
+	if ret.tmuxEnabled && !tmuxLookPath() {
+		ret.tmuxEnabled = false
+		ret.dialog = dialogError
+		ret.errText = "tmux integration is enabled but tmux was not found on PATH"
+	}
 	return ret
 }
 
@@ -177,6 +182,12 @@ func execCmd(name, dir string, args ...string) tea.Cmd {
 	c := exec.Command(name, args...)
 	c.Dir = dir
 	return tea.ExecProcess(c, func(err error) tea.Msg { return agentExitMsg{err} })
+}
+
+// tmuxLookPath reports whether tmux is on PATH; overridable in tests.
+var tmuxLookPath = func() bool {
+	_, err := exec.LookPath("tmux")
+	return err == nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -745,6 +756,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// runAgentCmd launches an agent, wrapping it in tmux when integration is on.
+// resume != nil resumes that session; resume == nil starts a new session with
+// p in cwd.
+func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) tea.Cmd {
+	if resume != nil {
+		name, args := p.ResumeCommand(*resume)
+		if m.tmuxEnabled {
+			sess := tmux.Name(string(resume.Agent), tmux.Short(resume.ID))
+			return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, name, args)...)
+		}
+		return m.runCmd(name, cwd, args...)
+	}
+	name, args := p.NewCommand()
+	if m.tmuxEnabled {
+		pend := tmux.PendingName(string(p.Agent()), m.now().UnixNano())
+		return m.runCmd("tmux", cwd, tmux.NewArgs(pend, cwd, name, args)...)
+	}
+	return m.runCmd(name, cwd, args...)
+}
+
 func (m Model) startResume() (tea.Model, tea.Cmd) {
 	s, _, ok := m.list.Selected()
 	if !ok {
@@ -767,8 +798,7 @@ func (m Model) startResume() (tea.Model, tea.Cmd) {
 		m.errText = p.Binary() + " not found on PATH"
 		return m, nil
 	}
-	name, args := p.ResumeCommand(s)
-	return m, m.runCmd(name, s.CWD, args...)
+	return m, m.runAgentCmd(p, s.CWD, &s)
 }
 
 func (m Model) openNewSession() (tea.Model, tea.Cmd) {
@@ -796,8 +826,7 @@ func (m Model) launchNewSession(dir string) (Model, tea.Cmd) {
 			m.errText = p.Binary() + " not found on PATH"
 			return m, nil
 		}
-		name, args := p.NewCommand()
-		return m, m.runCmd(name, dir, args...)
+		return m, m.runAgentCmd(p, dir, nil)
 	}
 	m.pendingNewDir = dir
 	m.dialog = dialogPickAgent
@@ -912,8 +941,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errText = p.Binary() + " not found on PATH"
 					return m, nil
 				}
-				name, args := p.ResumeCommand(*pending)
-				return m, m.runCmd(name, dir, args...)
+				return m, m.runAgentCmd(p, dir, pending)
 			}
 			return m.launchNewSession(dir)
 		}
@@ -949,8 +977,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.errText = p.Binary() + " not found on PATH"
 			return m, nil
 		}
-		name, args := p.NewCommand()
-		return m, m.runCmd(name, dir, args...)
+		return m, m.runAgentCmd(p, dir, nil)
 	}
 	m.dialog = dialogNone
 	return m, nil

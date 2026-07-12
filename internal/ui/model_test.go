@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -65,6 +66,80 @@ func newTestModel() Model {
 		m = m2.(Model)
 	}
 	return m
+}
+
+func newTmuxModel(t *testing.T) (Model, *[]string) {
+	t.Helper()
+	m := newTestModel()
+	m.tmuxEnabled = true
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	m.now = func() time.Time { return time.Unix(0, 1234) }
+	return m, captured
+}
+
+func TestResumeWrapsInTmuxWhenEnabled(t *testing.T) {
+	m, cap := newTmuxModel(t)
+	dir := t.TempDir() // startResume stats CWD; it must exist or it opens the picker
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0) // s1, claude
+	m.startResume()
+	got := *cap
+	if len(got) < 3 || got[0] != "tmux" {
+		t.Fatalf("resume should run tmux, got %v", got)
+	}
+	// tmux new-session -A -s sm-claude-s1 -c <dir> claude --resume s1
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "new-session -A -s sm-claude-s1 -c "+dir+" claude --resume s1") {
+		t.Errorf("resume argv = %v", got)
+	}
+}
+
+func TestNewWrapsInTmuxWhenEnabled(t *testing.T) {
+	m, cap := newTmuxModel(t)
+	m.launchNewSession("/x/alpha") // single provider (claude-only test model)
+	got := *cap
+	if len(got) < 3 || got[0] != "tmux" {
+		t.Fatalf("new should run tmux, got %v", got)
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "new-session -s sm-claude-pending-1234 -c /x/alpha claude") {
+		t.Errorf("new argv = %v", got)
+	}
+}
+
+func TestResumeStaysInlineWhenDisabled(t *testing.T) {
+	m := newTestModel() // tmux disabled
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir // else startResume opens the dir picker
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*captured) == 0 || (*captured)[0] != "claude" {
+		t.Errorf("disabled resume should run claude directly, got %v", *captured)
+	}
+}
+
+func TestTmuxMissingAtStartupDisablesAndWarns(t *testing.T) {
+	orig := tmuxLookPath
+	tmuxLookPath = func() bool { return false }
+	defer func() { tmuxLookPath = orig }()
+	cfg := config.Default()
+	cfg.TmuxEnabled = true
+	m := New("/nope", "/nope", cfg)
+	if m.tmuxEnabled {
+		t.Error("missing tmux should disable integration")
+	}
+	if m.dialog != dialogError {
+		t.Error("missing tmux should raise a startup error dialog")
+	}
 }
 
 func TestSlashEntersFilterMode(t *testing.T) {
