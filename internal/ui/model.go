@@ -87,6 +87,9 @@ type Model struct {
 	filterInput textinput.Model
 	focus       focusArea
 
+	tabsMode bool        // false: mixed list (default); true: per-agent tab views
+	tabView  store.Agent // last active tab view, restored on re-entering tab mode
+
 	dialog             dialogKind
 	errText            string
 	pendingDelete      int
@@ -170,6 +173,11 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		runCmd:       execCmd,
 		lastClickRow: -1,
 		now:          time.Now,
+	}
+	if cfg.View == "tabs" {
+		ret.tabsMode = true
+		ret.tabView = ret.defaultTabView()
+		ret.setAgentView(ret.tabView)
 	}
 	ret.index, ret.indexErr = store.NewSearchIndex()
 	if ret.tmuxEnabled && !tmuxLookPath() {
@@ -319,6 +327,52 @@ func (m *Model) toggleSearchLayer() tea.Cmd {
 	return m.loadTranscriptCmd()
 }
 
+// defaultTabView is the first tab view: Claude, unless its projects dir is
+// missing while a Codex provider registered.
+func (m Model) defaultTabView() store.Agent {
+	if len(m.providers) > 1 && !m.providers[0].Available() {
+		return store.AgentCodex
+	}
+	return store.AgentClaude
+}
+
+// setAgentView switches the list view and re-tints the one piece of chrome
+// not re-derived every render: the filter prompt. AgentAccent("") is the
+// default accent, so the mixed list keeps today's coral prompt.
+func (m *Model) setAgentView(a store.Agent) {
+	m.list.SetAgent(a)
+	m.filterInput.PromptStyle = lipgloss.NewStyle().Foreground(m.st.AgentAccent(a))
+}
+
+// toggleViewMode flips list ⇄ tab mode. Entering tab mode restores the last
+// tab view (Claude on first entry); leaving parks it and returns to the
+// mixed list.
+func (m *Model) toggleViewMode() {
+	if m.tabsMode {
+		m.tabsMode = false
+		m.tabView = m.list.Agent()
+		m.setAgentView("")
+		return
+	}
+	m.tabsMode = true
+	if m.tabView == "" {
+		m.tabView = m.defaultTabView()
+	}
+	m.setAgentView(m.tabView)
+}
+
+// switchAgentView activates tab view a. No-op outside tab mode, with a
+// single provider, or when a is already active. Shared by the `a` key and
+// title-tab clicks.
+func (m Model) switchAgentView(a store.Agent) (tea.Model, tea.Cmd) {
+	if !m.tabsMode || len(m.providers) <= 1 || a == "" || a == m.list.Agent() {
+		return m, nil
+	}
+	m.setAgentView(a)
+	m.lastClickRow = -1 // rows renumbered — a stale click must not pair
+	return m, m.loadTranscriptCmd()
+}
+
 // dispatchSearch starts (or restarts) the debounce clock for the current
 // query. Empty queries clear results immediately.
 func (m *Model) dispatchSearch() tea.Cmd {
@@ -397,6 +451,29 @@ func (m *Model) bodyHeight() int {
 	return h
 }
 
+// agentTab is one title-bar tab: its rendered label and the agent a click
+// on it activates. View() and the mouse hit-test share this table.
+type agentTab struct {
+	label string
+	agent store.Agent
+}
+
+// agentTabs returns the title-bar tabs (Claude first, active bracketed,
+// live per-view counts), or nil in list mode / with a single provider.
+func (m Model) agentTabs() []agentTab {
+	if !m.tabsMode || len(m.providers) <= 1 {
+		return nil
+	}
+	mk := func(a store.Agent) agentTab {
+		label := fmt.Sprintf("%s %d", agentTitle(a), m.list.AgentTotal(a))
+		if m.list.Agent() == a {
+			label = "[" + label + "]"
+		}
+		return agentTab{label: label, agent: a}
+	}
+	return []agentTab{mk(store.AgentClaude), mk(store.AgentCodex)}
+}
+
 // projectLabelText is the current-project label shown at the far left of the
 // bottom instruction row: " ▸ <project>  " for the selected session, or "" when
 // no session is selected. It is the single source of truth for both the
@@ -414,18 +491,26 @@ func tmuxNameFor(s store.Session) string {
 	return tmux.Name(string(s.Agent), tmux.Short(s.ID))
 }
 
-// focusedBorderColor is the border color of the focused pane: the selected
-// session's agent accent, or the default accent when nothing is selected.
+// focusedBorderColor is the border color of the focused pane: the active
+// view's accent in tab mode; in the mixed list, the selected session's
+// agent accent (default accent with no selection), as before.
 func (m Model) focusedBorderColor() lipgloss.AdaptiveColor {
+	if a := m.list.Agent(); a != "" {
+		return m.st.AgentAccent(a)
+	}
 	if s, _, ok := m.list.Selected(); ok {
 		return m.st.AgentAccent(s.Agent)
 	}
 	return m.st.Accent
 }
 
-// projectLabelColor is the bottom-left label color: the accent of the majority
-// agent in the selected session's project.
+// projectLabelColor is the bottom-left label color: the active view's
+// accent in tab mode; the majority agent of the selected session's project
+// in the mixed list, as before.
 func (m Model) projectLabelColor() lipgloss.AdaptiveColor {
+	if a := m.list.Agent(); a != "" {
+		return m.st.AgentAccent(a)
+	}
 	if s, _, ok := m.list.Selected(); ok {
 		return m.st.AgentAccent(m.list.projectMajorityAgent(s.Project()))
 	}
@@ -863,7 +948,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.list.ToggleGroup()
 			return m, m.loadTranscriptCmd()
 		case "a":
+			if m.tabsMode {
+				return m.switchAgentView(otherAgent(m.list.Agent()))
+			}
 			m.list.ToggleAgentGroup()
+			return m, m.loadTranscriptCmd()
+		case "v":
+			m.toggleViewMode()
+			m.lastClickRow = -1 // rows renumbered
+			// Force a reload: the visible session set changed even when the
+			// cursor happens to land back on the same id (same reasoning as
+			// the toggleSearchLayer/Esc paths).
+			m.previewFor = ""
 			return m, m.loadTranscriptCmd()
 		case " ":
 			m.list.ToggleFold()
@@ -1208,27 +1304,43 @@ func (m Model) View() string {
 	if !m.ready {
 		return "loading…"
 	}
-	count := fmt.Sprintf("%d sessions", m.list.Len())
-	if m.searchAll && m.activeQuery != "" {
-		count = fmt.Sprintf("%d sessions · %d matched", len(m.list.Sessions()), m.matched)
-		if !m.indexReady {
-			count += "…"
+	tabs := m.agentTabs()
+	status := ""
+	if tabs == nil {
+		status = fmt.Sprintf("%d sessions", m.list.Len())
+		if m.searchAll && m.activeQuery != "" {
+			status = fmt.Sprintf("%d sessions · %d matched", len(m.list.Sessions()), m.matched)
+			if !m.indexReady {
+				status += "…"
+			}
 		}
 	}
 	if m.indexing {
-		count += fmt.Sprintf(" · indexing %d/%d…", m.indexDone, m.indexTotal)
+		status += fmt.Sprintf(" · indexing %d/%d…", m.indexDone, m.indexTotal)
 	}
 	if m.indexFailed > 0 {
-		count += fmt.Sprintf(" · %d unindexed", m.indexFailed)
+		status += fmt.Sprintf(" · %d unindexed", m.indexFailed)
 	}
 	if m.loading {
-		count += " · scanning…"
+		status += " · scanning…"
 	}
-	header := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.st.TitleMark(), // ✻ in accent
+	segs := []string{
+		m.st.TitleMarkFor(m.list.Agent()), // ✻ in the active view's accent
 		m.st.AppTitle.Render(" sm · AI Sessions  "),
-		m.st.Count.Render(count),
-	)
+	}
+	for i, tb := range tabs {
+		st := m.st.Count
+		if tb.agent == m.list.Agent() {
+			st = lipgloss.NewStyle().Bold(true).Foreground(m.st.AgentAccent(tb.agent))
+		}
+		lbl := tb.label
+		if i < len(tabs)-1 {
+			lbl += "  " // two-space separator; tabAt (Task 6) mirrors this
+		}
+		segs = append(segs, st.Render(lbl))
+	}
+	segs = append(segs, m.st.Count.Render(status))
+	header := lipgloss.JoinHorizontal(lipgloss.Top, segs...)
 	filterBar := m.filterInput.View()
 
 	var body string

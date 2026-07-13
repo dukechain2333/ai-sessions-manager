@@ -565,3 +565,177 @@ func TestAdoptionRunsAgainstEnrichedSessionsOnEnrichDone(t *testing.T) {
 		t.Fatalf("adoption should rename %s -> %s against enriched sessions; renamed=%v", pend, want, f.renamed)
 	}
 }
+
+// newTwoAgentModel is newTestModel with a second (codex) provider and a
+// mixed-agent session set, for mode/view tests. Starts in list mode.
+//
+// The claude dir is a real (empty) tempdir rather than the usual fake
+// "/nonexistent-projects-dir" literal: defaultTabView reads
+// providers[0].Available() to decide the first tab, and this fixture wants
+// the ordinary "both agents present" case (default tab = claude), not the
+// "claude not installed" edge case that TestStartupModeFromConfig covers
+// directly. No session data comes from a real scan here either way — it's
+// injected below via scanDoneMsg.
+func newTwoAgentModel(t *testing.T) Model {
+	t.Helper()
+	m := New(t.TempDir(), "/nonexistent-codex-dir", config.Default())
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = m2.(Model)
+	m2, _ = m.Update(scanDoneMsg{sessions: mixedSessions()})
+	return m2.(Model)
+}
+
+func TestVKeyTogglesViewMode(t *testing.T) {
+	m := newTwoAgentModel(t)
+	if m.tabsMode || m.list.Agent() != "" {
+		t.Fatalf("default = tabsMode=%v agent=%q, want list mode / mixed", m.tabsMode, m.list.Agent())
+	}
+	m2, cmd := m.Update(key("v"))
+	m = m2.(Model)
+	if !m.tabsMode || m.list.Agent() != store.AgentClaude {
+		t.Errorf("v: tabsMode=%v agent=%q, want tab mode / claude", m.tabsMode, m.list.Agent())
+	}
+	if cmd == nil {
+		t.Error("mode switch should reload the preview")
+	}
+	m2, _ = m.Update(key("v"))
+	m = m2.(Model)
+	if m.tabsMode || m.list.Agent() != "" {
+		t.Errorf("v v: tabsMode=%v agent=%q, want list mode / mixed", m.tabsMode, m.list.Agent())
+	}
+}
+
+func TestAKeyPerMode(t *testing.T) {
+	m := newTwoAgentModel(t)
+	before := m.list.groupByAgent
+	m2, _ := m.Update(key("a"))
+	m = m2.(Model)
+	if m.list.groupByAgent == before {
+		t.Error("list mode `a` must toggle agent subgrouping")
+	}
+	flag := m.list.groupByAgent
+	m2, _ = m.Update(key("v"))
+	m = m2.(Model)
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentCodex {
+		t.Error("tab mode `a` must switch to the codex view")
+	}
+	if m.list.groupByAgent != flag {
+		t.Error("tab mode `a` must not touch subgrouping")
+	}
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentClaude {
+		t.Error("tab mode `a` must switch back to claude")
+	}
+}
+
+func TestTabViewRememberedAcrossModes(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v")) // tabs: claude
+	m = m2.(Model)
+	m2, _ = m.Update(key("a")) // codex
+	m = m2.(Model)
+	m2, _ = m.Update(key("v")) // back to list
+	m = m2.(Model)
+	if m.list.Agent() != "" {
+		t.Fatalf("list mode agent = %q, want mixed", m.list.Agent())
+	}
+	m2, _ = m.Update(key("v")) // tabs again
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentCodex {
+		t.Errorf("re-entering tab mode = %q, want the remembered codex view", m.list.Agent())
+	}
+}
+
+func TestTitleTabsOnlyInTabMode(t *testing.T) {
+	m := newTwoAgentModel(t)
+	if v := m.View(); !strings.Contains(v, "4 sessions") || strings.Contains(v, "[Claude") {
+		t.Errorf("list mode title must keep the plain count:\n%s", v)
+	}
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	v := m.View()
+	if !strings.Contains(v, "[Claude 2]") || !strings.Contains(v, "Codex 2") {
+		t.Errorf("tab mode title must show both tabs, active bracketed:\n%s", v)
+	}
+	if strings.Contains(v, "sessions") {
+		t.Errorf("tab mode title must not show the old count string:\n%s", v)
+	}
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if v := m.View(); !strings.Contains(v, "[Codex 2]") || !strings.Contains(v, "Claude 2") {
+		t.Errorf("codex view must bracket the codex tab:\n%s", v)
+	}
+}
+
+func TestTitleTabsNeedTwoProviders(t *testing.T) {
+	m := newTestModel() // single provider
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	if !m.tabsMode {
+		t.Fatal("v should still enter tab mode with one provider")
+	}
+	if v := m.View(); strings.Contains(v, "[Claude") || !strings.Contains(v, "2 sessions") {
+		t.Errorf("single-provider tab mode keeps the plain count:\n%s", v)
+	}
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentClaude {
+		t.Error("single provider: tab-mode `a` must be a no-op")
+	}
+}
+
+func TestStartupModeFromConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.View = "tabs"
+	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", cfg)
+	if !m.tabsMode || m.list.Agent() != store.AgentClaude {
+		t.Errorf("config view=tabs: tabsMode=%v agent=%q, want tabs/claude", m.tabsMode, m.list.Agent())
+	}
+	m = New("/nonexistent-projects-dir", t.TempDir(), cfg) // codex registers, claude dir missing
+	if m.list.Agent() != store.AgentCodex {
+		t.Errorf("claude dir missing: startup tab view = %q, want codex", m.list.Agent())
+	}
+}
+
+func TestChromeColorsFollowActiveView(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	m2, _ = m.Update(key("a")) // codex view
+	m = m2.(Model)
+	// Even with nothing selected the color keys off the view, not the
+	// selection — the branch the old selected-session logic gets wrong.
+	m.list.SetFilter("zzzz-no-match")
+	if _, _, ok := m.list.Selected(); ok {
+		t.Fatal("setup: filter should leave no selection")
+	}
+	if m.focusedBorderColor() != m.st.CodexAccent {
+		t.Error("empty codex view should still give the teal border color")
+	}
+}
+
+func TestSwitchKeepsFilterApplied(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	m2, _ = m.Update(key("/"))
+	m = m2.(Model)
+	for _, r := range "rollout" {
+		m2, _ = m.Update(key(string(r)))
+		m = m2.(Model)
+	}
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // back to list focus
+	m = m2.(Model)
+	if got := m.list.Len(); got != 0 {
+		t.Fatalf("claude view filtered by 'rollout': Len = %d, want 0", got)
+	}
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if got := m.list.Len(); got != 2 {
+		t.Errorf("codex view must re-apply the live filter: Len = %d, want 2", got)
+	}
+}

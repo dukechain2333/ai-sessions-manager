@@ -73,9 +73,10 @@ func stylesWithColors(claude, codex config.AgentColors) styles {
 	}
 }
 
-// TitleMark is the Claude-style ✻ rendered in the accent color.
-func (s styles) TitleMark() string {
-	return lipgloss.NewStyle().Foreground(s.Accent).Render("✻")
+// TitleMarkFor is the ✻ mark tinted with agent a's accent ("" — the mixed
+// list — gets the default accent).
+func (s styles) TitleMarkFor(a store.Agent) string {
+	return lipgloss.NewStyle().Foreground(s.AgentAccent(a)).Render("✻")
 }
 
 // AgentAccent is the accent color for an agent: coral for Claude, teal for Codex.
