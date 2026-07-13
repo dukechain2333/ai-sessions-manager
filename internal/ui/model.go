@@ -474,6 +474,22 @@ func (m Model) agentTabs() []agentTab {
 	return []agentTab{mk(store.AgentClaude), mk(store.AgentCodex)}
 }
 
+// tabAt maps a title-row x to the tab under it, mirroring View()'s header:
+// the "✻ sm · AI Sessions  " prefix, then tab labels joined by two spaces.
+// ok is false between/beyond tabs, in list mode, and with one provider
+// (agentTabs is nil in both of the latter cases).
+func (m Model) tabAt(x int) (store.Agent, bool) {
+	pos := lipgloss.Width("✻ sm · AI Sessions  ")
+	for _, tb := range m.agentTabs() {
+		w := lipgloss.Width(tb.label)
+		if x >= pos && x < pos+w {
+			return tb.agent, true
+		}
+		pos += w + 2
+	}
+	return "", false
+}
+
 // projectLabelText is the current-project label shown at the far left of the
 // bottom instruction row: " ▸ <project>  " for the selected session, or "" when
 // no session is selected. It is the single source of truth for both the
@@ -1383,7 +1399,7 @@ func (m Model) View() string {
 
 	// Clamp to the terminal width so a help line wider than the screen
 	// truncates cleanly instead of wrapping onto another row (which would
-	// corrupt the alt-screen frame). The full bar needs ~105 columns.
+	// corrupt the alt-screen frame). The full bar needs ~113 columns.
 	label := m.projectLabelText()
 	labelW := lipgloss.Width(label)
 	helpBudget := m.width - labelW

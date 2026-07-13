@@ -18,6 +18,7 @@ const (
 	zoneList
 	zonePreview
 	zoneHelp
+	zoneTabs
 	zoneDialog
 )
 
@@ -44,6 +45,7 @@ var helpBar = []helpItem{
 	{"s search", runeKey("s")},
 	{"g group", runeKey("g")},
 	{"a agent", runeKey("a")},
+	{"v view", runeKey("v")},
 	{"space fold", runeKey(" ")},
 	{"e empty", runeKey("e")},
 	{"r rescan", runeKey("r")},
@@ -82,6 +84,8 @@ func helpLineFor(items []helpItem) string {
 // zonePreview only).
 func (m *Model) zoneAt(x, y int) (zone, int) {
 	switch {
+	case y == 0:
+		return zoneTabs, 0
 	case y == 1:
 		return zoneFilter, 0
 	case y == m.height-1:
@@ -142,6 +146,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch z {
+	case zoneTabs:
+		if ag, ok := m.tabAt(msg.X); ok {
+			return m.switchAgentView(ag)
+		}
+		return m, nil
 	case zoneList:
 		m.focus = focusList
 		return m.clickList(line)

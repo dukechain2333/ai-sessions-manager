@@ -34,7 +34,7 @@ func TestZoneAt(t *testing.T) {
 	}{
 		{"filter row", 5, 1, zoneFilter, 0},
 		{"help row", 50, 29, zoneHelp, 0},
-		{"title row", 5, 0, zoneNone, 0},
+		{"title row", 5, 0, zoneTabs, 0},
 		{"body top border", 5, 2, zoneNone, 0},
 		{"body bottom border", 5, 28, zoneNone, 0},
 		{"list first line", 5, 3, zoneList, 0},
@@ -338,7 +338,7 @@ func TestNonLeftPressesIgnored(t *testing.T) {
 }
 
 func TestHelpBarTextUnchanged(t *testing.T) {
-	want := " ↵ resume  tab focus  n new  d delete  / filter  s search  g group  a agent  space fold  e empty  r rescan  q quit"
+	want := " ↵ resume  tab focus  n new  d delete  / filter  s search  g group  a agent  v view  space fold  e empty  r rescan  q quit"
 	if helpLineFor(helpBar) != want {
 		t.Fatalf("help bar text changed — it must stay byte-identical\n got: %q\nwant: %q", helpLineFor(helpBar), want)
 	}
@@ -355,12 +355,12 @@ func TestClickHelpBarTriggersAction(t *testing.T) {
 	if m.list.groupByProject {
 		t.Error("clicking 'g group' must toggle grouping")
 	}
-	m2, _ = m.Update(click(labelW+80, 29)) // inside "space fold" [77,86]
+	m2, _ = m.Update(click(labelW+88, 29)) // inside "space fold" [85,94]
 	m = m2.(Model)
 	// flat mode: fold is a no-op; regroup and fold via clicks
 	m2, _ = m.Update(click(labelW+60, 29))
 	m = m2.(Model)
-	m2, _ = m.Update(click(labelW+80, 29))
+	m2, _ = m.Update(click(labelW+88, 29))
 	m = m2.(Model)
 	if len(m.list.folded) == 0 {
 		t.Error("clicking 'space fold' must fold the current project")
@@ -378,7 +378,7 @@ func TestClickHelpBarGapIsNoop(t *testing.T) {
 
 func TestClickHelpQuitReturnsQuit(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(click(lipgloss.Width(m.projectLabelText())+110, 29)) // inside "q quit" [108,113]
+	_, cmd := m.Update(click(lipgloss.Width(m.projectLabelText())+118, 29)) // inside "q quit" [116,121]
 	if cmd == nil {
 		t.Fatal("clicking 'q quit' must return a command")
 	}
@@ -724,5 +724,64 @@ func TestClickHelpWithProjectLabelStillWorks(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Error("clicking 'q quit' (label-shifted position) should quit")
+	}
+}
+
+// TestTabAtMatchesRenderedHeader pins tabAt's geometry to View()'s header
+// segments (mark + app title + two-space-separated tabs) — the same
+// single-source discipline as helpBar and dialogOrigin.
+func TestTabAtMatchesRenderedHeader(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	pos := lipgloss.Width("✻ sm · AI Sessions  ")
+	for _, tb := range m.agentTabs() {
+		w := lipgloss.Width(tb.label)
+		for _, dx := range []int{0, w - 1} {
+			ag, ok := m.tabAt(pos + dx)
+			if !ok || ag != tb.agent {
+				t.Errorf("tabAt(%d) = (%v,%v), want (%v,true)", pos+dx, ag, ok, tb.agent)
+			}
+		}
+		pos += w + 2
+	}
+	if _, ok := m.tabAt(pos + 5); ok {
+		t.Error("far right of the tabs should miss")
+	}
+	if _, ok := m.tabAt(0); ok {
+		t.Error("the ✻ mark is not a tab")
+	}
+}
+
+func TestClickTabSwitchesView(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	x := lipgloss.Width("✻ sm · AI Sessions  ") + lipgloss.Width(m.agentTabs()[0].label) + 2
+	m2, _ = m.Update(click(x, 0))
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentCodex {
+		t.Error("clicking the codex tab must switch to the codex view")
+	}
+	m2, _ = m.Update(click(x, 0)) // now inside the active (bracketed) codex tab
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentCodex {
+		t.Error("clicking the active tab must be a no-op")
+	}
+}
+
+func TestTitleClickInertInListMode(t *testing.T) {
+	m := newTwoAgentModel(t) // list mode
+	m2, _ := m.Update(click(25, 0))
+	m = m2.(Model)
+	if m.list.Agent() != "" || m.tabsMode {
+		t.Error("list mode: title clicks must not switch modes or views")
+	}
+}
+
+func TestHelpBarHasViewButton(t *testing.T) {
+	m := newTwoAgentModel(t)
+	if !strings.Contains(helpLineFor(m.helpItems()), "v view") {
+		t.Error("help bar should list the v view toggle")
 	}
 }
