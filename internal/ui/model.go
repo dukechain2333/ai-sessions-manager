@@ -253,12 +253,11 @@ func (m Model) killOneCmd(name string) tea.Cmd {
 	}
 }
 
-// killProjectCmd kills every live tmux belonging to project's sessions
-// (named children), plus any provisional tmux whose path base is project.
-// killProjectCmd kills project's live tmux. agent narrows the kill set to
-// one agent's sessions (and pending tmux) — the single-agent views pass
-// their own agent so a tab view never kills tmux it is hiding; "" (the
-// mixed list) kills project-wide.
+// killProjectCmd kills project's live tmux (named children plus provisional
+// tmux whose path base is project). agent narrows the kill set to one
+// agent's sessions — the single-agent views pass their own agent so a tab
+// view never kills tmux it is hiding; "" (the mixed list) kills
+// project-wide.
 func (m Model) killProjectCmd(project string, agent store.Agent) tea.Cmd {
 	r := m.tmux
 	sessions := append([]store.Session(nil), m.list.Sessions()...)
@@ -268,7 +267,7 @@ func (m Model) killProjectCmd(project string, agent store.Agent) tea.Cmd {
 			set = map[string]bool{}
 		}
 		for _, s := range sessions {
-			if s.Project() != project || (agent != "" && s.Agent != agent) {
+			if !tmuxScoped(s, project, agent) {
 				continue
 			}
 			name := tmuxNameFor(s)
@@ -343,12 +342,15 @@ func (m Model) defaultTabView() store.Agent {
 	return store.AgentClaude
 }
 
-// setAgentView switches the list view and re-tints the one piece of chrome
-// not re-derived every render: the filter prompt. AgentAccent("") is the
-// default accent, so the mixed list keeps today's coral prompt.
+// setAgentView switches the list view, re-tints the one piece of chrome not
+// re-derived every render (the filter prompt; AgentAccent("") is the default
+// accent, so the mixed list keeps today's coral), and invalidates the
+// double-click tracker — every view switch renumbers rows, so owning the
+// reset here means no entry point (key, tab click, startup) can forget it.
 func (m *Model) setAgentView(a store.Agent) {
 	m.list.SetAgent(a)
 	m.filterInput.PromptStyle = lipgloss.NewStyle().Foreground(m.st.AgentAccent(a))
+	m.lastClickRow = -1
 }
 
 // toggleViewMode flips list ⇄ tab mode. Entering tab mode restores the last
@@ -374,7 +376,6 @@ func (m Model) switchAgentView(a store.Agent) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setAgentView(a)
-	m.lastClickRow = -1 // rows renumbered — a stale click must not pair
 	return m, m.loadTranscriptCmd()
 }
 
@@ -984,10 +985,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.list.ToggleAgentGroup()
 			return m, m.loadTranscriptCmd()
 		case "v":
-			m.toggleViewMode()
-			m.lastClickRow = -1 // rows renumbered — a stale click must not pair
 			// No previewFor reset: when the restored selection is the same
 			// session, the already-rendered preview is already correct.
+			m.toggleViewMode()
 			return m, m.loadTranscriptCmd()
 		case " ":
 			m.list.ToggleFold()
@@ -1252,12 +1252,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.errText = agent.Label() + " is not available"
 			return m, nil
 		}
-		if err := binLookPath(p.Binary()); err != nil {
-			m.dialog = dialogError
-			m.errText = p.Binary() + " not found on PATH"
-			return m, nil
-		}
-		return m, m.runAgentCmd(p, dir, nil)
+		return m.launchDirectly(p, dir)
 
 	case dialogKillProject:
 		proj := m.pendingKillProject
@@ -1322,16 +1317,8 @@ func (m Model) dialogView() string {
 				m.st.Help.Render("1/2 choose · esc cancel"))
 
 	case dialogKillProject:
-		n := 0
-		for _, s := range m.list.Sessions() {
-			if s.Project() != m.pendingKillProject || !m.tmuxLive[tmuxNameFor(s)] {
-				continue
-			}
-			if a := m.list.Agent(); a != "" && s.Agent != a {
-				continue // a tab view only offers (and kills) its own agent's tmux
-			}
-			n++
-		}
+		// Same scope as the kill itself and the header dot — one source.
+		n := m.list.liveTmuxCount(m.pendingKillProject)
 		return m.st.DialogBox.Render(fmt.Sprintf(
 			"Kill %d tmux in %s?\n\n%s", n, m.pendingKillProject,
 			m.st.Help.Render("y confirm · n cancel")))

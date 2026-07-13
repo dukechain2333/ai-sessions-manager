@@ -133,41 +133,33 @@ func (l *listPane) searchHits(sessionIdx int) int {
 	return 0
 }
 
-// ToggleEmpty flips whether "empty" (hook-only) sessions are shown. No-op
-// while browsing search results: search mode has its own row set that
-// ignores this flag, so toggling it would silently change state that only
-// takes visible effect after the user leaves search mode.
-func (l *listPane) ToggleEmpty() {
+// toggleAndReselect runs flip under the shared toggle discipline: no-op in
+// search mode (search has its own row set that ignores these flags, so a
+// toggle would silently change state that only shows after leaving search),
+// keep the selected session across the refresh, and otherwise land on the
+// first session — never a stranded header.
+func (l *listPane) toggleAndReselect(flip func()) {
 	if l.search != nil {
 		return
 	}
 	sel, ok := l.selectedSession()
-	l.showEmpty = !l.showEmpty
+	flip()
 	l.refresh()
 	if ok {
 		l.selectSession(sel)
 	} else {
-		// Same fallback as ToggleGroup: without it, revealing rows in a view
-		// that showed "no sessions" strands the cursor on a project header.
 		l.cursorToFirstSession()
 	}
 }
 
-// ToggleGroup switches between project-clustered and flat recency order,
-// keeping the current session selected. No-op while browsing search
-// results (same reasoning as ToggleEmpty).
+// ToggleEmpty flips whether "empty" (hook-only) sessions are shown.
+func (l *listPane) ToggleEmpty() {
+	l.toggleAndReselect(func() { l.showEmpty = !l.showEmpty })
+}
+
+// ToggleGroup switches between project-clustered and flat recency order.
 func (l *listPane) ToggleGroup() {
-	if l.search != nil {
-		return
-	}
-	sel, ok := l.selectedSession()
-	l.groupByProject = !l.groupByProject
-	l.refresh()
-	if ok {
-		l.selectSession(sel)
-	} else {
-		l.cursorToFirstSession()
-	}
+	l.toggleAndReselect(func() { l.groupByProject = !l.groupByProject })
 }
 
 // Agent is the active view: "" is the mixed list, otherwise only that
@@ -201,8 +193,8 @@ func (l *listPane) SetAgent(a store.Agent) {
 	park := viewState{lineOffset: l.lineOffset, folded: l.folded}
 	if s, _, ok := l.Selected(); ok {
 		park.selectedID = s.ID
-	} else if l.OnHeader() {
-		park.header = l.rows[l.cursor].project
+	} else if proj, ok := l.CursorProject(); ok {
+		park.header = proj // not a session row, so this is a header
 	}
 	l.savedViews[l.activeAgent] = park
 	st := l.savedViews[a]
@@ -217,38 +209,36 @@ func (l *listPane) SetAgent(a store.Agent) {
 // session.
 func (l *listPane) selectAnchor(st viewState) {
 	if st.selectedID != "" {
-		for i, s := range l.sessions {
-			if s.ID == st.selectedID {
-				l.selectSession(i) // falls back to the first session if hidden
-				return
-			}
-		}
-	}
-	if st.header != "" {
 		for i, r := range l.rows {
-			if r.header && r.project == st.header {
+			if !r.header && !r.subheader && l.sessions[r.session].ID == st.selectedID {
 				l.SetCursor(i)
 				return
 			}
 		}
 	}
+	if i := l.headerRow(st.header); i >= 0 {
+		l.SetCursor(i)
+		return
+	}
 	l.cursorToFirstSession()
 }
 
-// ToggleAgentGroup turns per-project agent subgrouping on/off. No-op while
-// browsing search results (same reasoning as ToggleEmpty/ToggleGroup).
+// headerRow returns the row index of project's header, or -1 (also for "").
+func (l *listPane) headerRow(project string) int {
+	if project == "" {
+		return -1
+	}
+	for i, r := range l.rows {
+		if r.header && r.project == project {
+			return i
+		}
+	}
+	return -1
+}
+
+// ToggleAgentGroup turns per-project agent subgrouping on/off.
 func (l *listPane) ToggleAgentGroup() {
-	if l.search != nil {
-		return
-	}
-	sel, ok := l.selectedSession()
-	l.groupByAgent = !l.groupByAgent
-	l.refresh()
-	if ok {
-		l.selectSession(sel)
-	} else {
-		l.cursorToFirstSession()
-	}
+	l.toggleAndReselect(func() { l.groupByAgent = !l.groupByAgent })
 }
 
 // ToggleFold collapses or expands the project the cursor is currently in
@@ -264,11 +254,8 @@ func (l *listPane) ToggleFold() {
 	}
 	l.folded[p] = !l.folded[p]
 	l.refresh()
-	for i, r := range l.rows {
-		if r.header && r.project == p {
-			l.cursor = i
-			break
-		}
+	if i := l.headerRow(p); i >= 0 {
+		l.cursor = i
 	}
 	l.ensureVisible()
 }
@@ -464,18 +451,18 @@ func (l *listPane) refresh() {
 			base = append(base, m.Index)
 		}
 	}
-	// 2. Count per agent and narrow to the active view ("" keeps all).
+	// 2. Count per agent and narrow to the active view ("" keeps all),
+	//    in one pass — this runs on every filter keystroke.
 	l.agentTotals = map[store.Agent]int{}
-	for _, si := range base {
-		l.agentTotals[l.sessions[si].Agent]++
-	}
 	act := base
 	if l.activeAgent != "" {
 		act = make([]int, 0, len(base))
-		for _, si := range base {
-			if l.sessions[si].Agent == l.activeAgent {
-				act = append(act, si)
-			}
+	}
+	for _, si := range base {
+		ag := l.sessions[si].Agent
+		l.agentTotals[ag]++
+		if l.activeAgent != "" && ag == l.activeAgent {
+			act = append(act, si)
 		}
 	}
 	l.total = len(act)
@@ -731,20 +718,28 @@ func (l *listPane) padHeight(s string) string {
 // SetTmuxLive records the current live-tmux set for marker rendering.
 func (l *listPane) SetTmuxLive(set map[string]bool) { l.tmuxLive = set }
 
-// projectHasLiveTmux reports whether a session of project has a live tmux —
-// scoped to the active agent in a single-agent view, so the header dot and
-// the x header-kill never point at tmux the view is hiding.
-func (l *listPane) projectHasLiveTmux(project string) bool {
+// tmuxScoped reports whether s belongs to project under agent's scope
+// ("" = any agent). It is the single membership rule shared by the header
+// dot, the x gate, the kill-confirm count, and the kill itself.
+func tmuxScoped(s store.Session, project string, agent store.Agent) bool {
+	return s.Project() == project && (agent == "" || s.Agent == agent)
+}
+
+// liveTmuxCount counts project's live tmux under the active view's scope —
+// a single-agent view never sees (or offers to kill) tmux it is hiding.
+func (l *listPane) liveTmuxCount(project string) int {
+	n := 0
 	for _, s := range l.sessions {
-		if s.Project() != project || !l.tmuxLive[tmuxNameFor(s)] {
-			continue
+		if tmuxScoped(s, project, l.activeAgent) && l.tmuxLive[tmuxNameFor(s)] {
+			n++
 		}
-		if l.activeAgent != "" && s.Agent != l.activeAgent {
-			continue
-		}
-		return true
 	}
-	return false
+	return n
+}
+
+// projectHasLiveTmux reports whether project has any live tmux in scope.
+func (l *listPane) projectHasLiveTmux(project string) bool {
+	return l.liveTmuxCount(project) > 0
 }
 
 // CursorProject returns the project label of the row under the cursor
