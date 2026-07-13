@@ -40,9 +40,13 @@ browsable, foldable list and resumes any of them for you.
 - **New session** in any known project directory, and **safe delete** (files
   are moved to `~/.claude/projects/.trash/`, never `rm`'d).
 - **OpenAI Codex sessions, too** — when `~/.codex` exists, its sessions are
-  scanned alongside Claude Code's and shown in the same list, tagged `codex`
-  in teal-green (Claude sessions keep a coral `claude` tag) so you can tell
-  them apart at a glance.
+  scanned alongside Claude Code's. Two view modes, toggled with `v`: the
+  default **list** mode shows one mixed list (rows tagged `claude` /
+  `codex`, with optional per-project agent subheaders on `a`), while **tab**
+  mode shows one agent at a time — the title bar grows `[Claude N]  Codex M`
+  tabs, `a` or a click switches views, and the whole accent theme follows
+  (coral for Claude, teal-green for Codex). Set `"view": "tabs"` in
+  `config.json` to start there.
 - **Full-text search** across every message in every session, on top of the
   quick fuzzy filter.
 - **Optional [tmux integration](#tmux-integration)** — resume into a
@@ -146,11 +150,12 @@ sm --version
 | `enter` | resume the selected session; on a **project header**, fold/unfold it |
 | `space` | fold / unfold the current project group |
 | `g` | toggle grouping by project ⇄ flat recency |
-| `a` | toggle per-project agent subheaders (`─ Claude ─` / `─ Codex ─`) in mixed-agent projects |
+| `a` | list mode: toggle per-project agent subheaders (`─ Claude ─` / `─ Codex ─`); tab mode: switch the Claude ⇄ Codex view |
+| `v` | toggle view mode: mixed list ⇄ per-agent tabs |
 | `tab` | move focus to the preview pane (to scroll a long transcript) and back |
 | `/` | fuzzy filter (enter keeps it, esc clears it) |
 | `s` | focus the search bar on the full-text layer |
-| `n` | start a new session in a picked directory (asks whether to launch Claude or Codex when a project has both) |
+| `n` | start a new session in a picked directory (in tab mode, launches the active view's agent; in list mode it asks when both agents are installed) |
 | `d` | delete the selected session (moved to `.trash/`) |
 | `x` | *(tmux integration on)* kill the selected session's tmux; on a **project header**, kill all of that project's (with a confirm) |
 | `e` | show / hide "empty" sessions (hook-only, no real prompts) |
@@ -242,6 +247,8 @@ notice.
   startup notice and runs without it.
 - `colors.claude` / `colors.codex` — each takes optional `light` and `dark`
   `#RRGGBB` accents; omitted or invalid values keep the defaults.
+- `"view"`: `"list"` (default) or `"tabs"` — the view mode `sm` starts in.
+  `v` toggles it live either way.
 
 ### tmux integration
 
