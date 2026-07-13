@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
@@ -737,5 +738,48 @@ func TestSwitchKeepsFilterApplied(t *testing.T) {
 	m = m2.(Model)
 	if got := m.list.Len(); got != 2 {
 		t.Errorf("codex view must re-apply the live filter: Len = %d, want 2", got)
+	}
+}
+
+// TestFirstListVisitAfterTabsStartupSelectsSession covers a startup-only
+// regression: New() calls setAgentView(tabView) before any sessions exist,
+// which parks a zero viewState under the "" (mixed list) key. The user's
+// first real `v` into the mixed list then finds that key already "seen" and
+// skips cursorToFirstSession(), landing on row 0 — a project header — with
+// no session selected and a cleared preview.
+func TestFirstListVisitAfterTabsStartupSelectsSession(t *testing.T) {
+	cfg := config.Default()
+	cfg.View = "tabs"
+	m := New(t.TempDir(), "/nonexistent-codex-dir", cfg)
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = m2.(Model)
+	m2, _ = m.Update(scanDoneMsg{sessions: mixedSessions()})
+	m = m2.(Model)
+	m2, _ = m.Update(key("v")) // first visit to the mixed list this run
+	m = m2.(Model)
+	if _, _, ok := m.list.Selected(); !ok {
+		t.Error("first mixed-list visit after a tabs startup should select a session, not a header")
+	}
+}
+
+// TestTitleRowTruncatesToWidth guards the header line built in View() by
+// lipgloss.JoinHorizontal: with no width clamp, a long indexing/scanning
+// status suffix can push the row past the terminal width and wrap, which
+// corrupts the alt-screen frame (the help bar was clamped for the same
+// reason).
+func TestTitleRowTruncatesToWidth(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	m.indexing = true
+	m.indexDone, m.indexTotal = 100, 200
+	m.indexFailed = 5
+	m.loading = true
+	m2, _ = m.Update(tea.WindowSizeMsg{Width: 44, Height: 30})
+	m = m2.(Model)
+	first := strings.SplitN(m.View(), "\n", 2)[0]
+	if w := lipgloss.Width(first); w > 44 {
+		t.Errorf("title row width = %d, must be clamped to 44", w)
 	}
 }

@@ -157,7 +157,7 @@ sm --version
 | `s` | focus the search bar on the full-text layer |
 | `n` | start a new session in a picked directory (in tab mode, launches the active view's agent; in list mode it asks when both agents are installed) |
 | `d` | delete the selected session (moved to `.trash/`) |
-| `x` | *(tmux integration on)* kill the selected session's tmux; on a **project header**, kill all of that project's (with a confirm) |
+| `x` | *(tmux integration on)* kill the selected session's tmux; on a **project header**, kill all of that project's (with a confirm — project-wide, including the other agent's tmux even in a tab view) |
 | `e` | show / hide "empty" sessions (hook-only, no real prompts) |
 | `r` | rescan |
 | `q` | quit |

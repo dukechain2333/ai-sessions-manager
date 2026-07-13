@@ -178,6 +178,10 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		ret.tabsMode = true
 		ret.tabView = ret.defaultTabView()
 		ret.setAgentView(ret.tabView)
+		// setAgentView parked a zero viewState for the (empty) mixed list;
+		// drop it so the user's first real visit gets first-session
+		// placement like any never-visited view.
+		delete(ret.list.savedViews, "")
 	}
 	ret.index, ret.indexErr = store.NewSearchIndex()
 	if ret.tmuxEnabled && !tmuxLookPath() {
@@ -1368,7 +1372,8 @@ func (m Model) View() string {
 		segs = append(segs, st.Render(lbl))
 	}
 	segs = append(segs, m.st.Count.Render(status))
-	header := lipgloss.JoinHorizontal(lipgloss.Top, segs...)
+	header := lipgloss.NewStyle().MaxWidth(m.width).Render(
+		lipgloss.JoinHorizontal(lipgloss.Top, segs...))
 	filterBar := m.filterInput.View()
 
 	var body string
