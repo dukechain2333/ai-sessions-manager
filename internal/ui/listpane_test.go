@@ -593,3 +593,243 @@ func TestListViewFillsHeight(t *testing.T) {
 		t.Errorf("View() = %d lines, want 30 (pane height) so it matches the preview box", got)
 	}
 }
+
+// mixedSessions is testSessions plus two codex sessions: one sharing
+// project alpha, one in its own project delta.
+func mixedSessions() []store.Session {
+	s := testSessions()
+	s = append(s,
+		store.Session{ID: "x1", Slug: "-p1", CWD: "/x/alpha", Title: "Rollout in alpha", FirstPrompt: "hello", Agent: store.AgentCodex, UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(-30 * time.Minute)},
+		store.Session{ID: "x2", Slug: "-p4", CWD: "/x/delta", Title: "Rollout in delta", FirstPrompt: "yo", Agent: store.AgentCodex, UserMessages: 2, Enriched: true, LastActivity: time.Now().Add(-3 * time.Hour)},
+	)
+	return s
+}
+
+func newMixedPane() listPane {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(50, 30)
+	l.SetSessions(mixedSessions())
+	return l
+}
+
+func TestAgentViewFiltersRows(t *testing.T) {
+	l := newMixedPane()
+	if l.Agent() != "" {
+		t.Fatalf("default view = %q, want \"\" (mixed)", l.Agent())
+	}
+	if got := l.Len(); got != 4 { // s1, s2, x1, x2 (s3 is empty and hidden)
+		t.Fatalf("mixed Len = %d, want 4", got)
+	}
+	if got := l.AgentTotal(store.AgentClaude); got != 2 {
+		t.Errorf("AgentTotal(claude) = %d, want 2", got)
+	}
+	if got := l.AgentTotal(store.AgentCodex); got != 2 {
+		t.Errorf("AgentTotal(codex) = %d, want 2", got)
+	}
+
+	l.SetAgent(store.AgentClaude)
+	if got := l.Len(); got != 2 {
+		t.Fatalf("claude view Len = %d, want 2", got)
+	}
+	if v := l.View(); strings.Contains(v, "Rollout in alpha") || strings.Contains(v, "delta") {
+		t.Errorf("claude view must not render codex rows:\n%s", v)
+	}
+
+	l.SetAgent(store.AgentCodex)
+	v := l.View()
+	if !strings.Contains(v, "Rollout in delta") {
+		t.Errorf("codex view missing its session:\n%s", v)
+	}
+	if strings.Contains(v, "Fix backup script") {
+		t.Errorf("codex view must not render claude rows:\n%s", v)
+	}
+
+	l.SetAgent("")
+	if got := l.Len(); got != 4 {
+		t.Errorf("back to mixed: Len = %d, want 4", got)
+	}
+}
+
+func TestAgentTotalsHonorFilter(t *testing.T) {
+	l := newMixedPane()
+	l.SetFilter("rollout")
+	if got := l.AgentTotal(store.AgentClaude); got != 0 {
+		t.Errorf("AgentTotal(claude) under filter = %d, want 0", got)
+	}
+	if got := l.AgentTotal(store.AgentCodex); got != 2 {
+		t.Errorf("AgentTotal(codex) under filter = %d, want 2", got)
+	}
+	l.SetAgent(store.AgentClaude)
+	if got := l.Len(); got != 0 {
+		t.Errorf("claude view under filter 'rollout': Len = %d, want 0", got)
+	}
+}
+
+func TestSetAgentKeepsPerViewState(t *testing.T) {
+	l := newMixedPane()
+	l.ToggleFold() // cursor starts in alpha; folds it in the mixed view
+	if !l.folded["alpha"] {
+		t.Fatal("setup: alpha should be folded in the mixed view")
+	}
+	l.MoveCursor(1)
+	cur, off := l.cursor, l.lineOffset
+
+	l.SetAgent(store.AgentCodex)
+	if l.folded["alpha"] {
+		t.Error("codex view must start with its own (empty) fold state")
+	}
+	l.ToggleFold() // fold something in the codex view
+
+	l.SetAgent("")
+	if !l.folded["alpha"] {
+		t.Error("mixed fold state lost across a round-trip")
+	}
+	if l.cursor != cur || l.lineOffset != off {
+		t.Errorf("mixed cursor/offset = %d/%d, want %d/%d", l.cursor, l.lineOffset, cur, off)
+	}
+}
+
+func TestSearchResultsRespectAgentView(t *testing.T) {
+	l := newMixedPane()
+	// Hits on one claude session (index 0) and both codex sessions (3, 4).
+	hits := []store.SessionHits{{Session: 0, MsgHits: 1}, {Session: 3, MsgHits: 5}, {Session: 4, MsgHits: 2}}
+	l.SetSearchResults(append([]store.SessionHits(nil), hits...))
+	if got := l.Len(); got != 3 {
+		t.Fatalf("mixed search Len = %d, want 3", got)
+	}
+	l.SetAgent(store.AgentCodex)
+	l.SetSearchResults(append([]store.SessionHits(nil), hits...))
+	if got := l.Len(); got != 2 {
+		t.Errorf("codex search Len = %d, want 2", got)
+	}
+	if got := l.AgentTotal(store.AgentClaude); got != 1 {
+		t.Errorf("AgentTotal(claude) in search = %d, want 1", got)
+	}
+}
+
+func TestOtherAgent(t *testing.T) {
+	if otherAgent(store.AgentClaude) != store.AgentCodex || otherAgent(store.AgentCodex) != store.AgentClaude {
+		t.Error("otherAgent must flip between the two agents")
+	}
+}
+
+func TestAgentViewHidesTagsAndSubheaders(t *testing.T) {
+	l := newMixedPane()
+	l.ToggleAgentGroup() // groupByAgent: false -> true, refreshing rows
+	if v := l.View(); !strings.Contains(v, "─ Claude ─") {
+		t.Fatalf("setup: mixed view with groupByAgent should render subheaders:\n%s", v)
+	}
+	l.SetAgent(store.AgentClaude)
+	v := l.View()
+	if strings.Contains(v, "claude") || strings.Contains(v, "codex") {
+		t.Errorf("single-agent view must not render per-row agent tags:\n%s", v)
+	}
+	if strings.Contains(v, "─ Claude ─") || strings.Contains(v, "─ Codex ─") {
+		t.Errorf("single-agent view must not render agent subheaders:\n%s", v)
+	}
+	l.SetAgent("")
+	if v := l.View(); !strings.Contains(v, "claude") || !strings.Contains(v, "codex") {
+		t.Errorf("mixed view must keep per-row tags:\n%s", v)
+	}
+}
+
+func TestAccentFollowsActiveView(t *testing.T) {
+	l := newMixedPane()
+	if l.accent() != l.styles.Accent {
+		t.Error("mixed view accent should be the default (claude) accent")
+	}
+	l.SetAgent(store.AgentCodex)
+	if l.accent() != l.styles.CodexAccent {
+		t.Error("codex view accent should be the codex accent")
+	}
+}
+
+func TestSearchEmptyStateHintsOtherView(t *testing.T) {
+	l := newMixedPane()
+	l.SetAgent(store.AgentClaude)
+	// Hits land only on the two codex sessions (slice indices 3 and 4).
+	l.SetSearchResults([]store.SessionHits{{Session: 3, MsgHits: 5}, {Session: 4, MsgHits: 1}})
+	if got := l.Len(); got != 0 {
+		t.Fatalf("claude view Len = %d, want 0", got)
+	}
+	if v := l.View(); !strings.Contains(v, "no matches · 2 hits in Codex — press a") {
+		t.Errorf("empty search view = %q, want the cross-view hint", v)
+	}
+	// One hit: singular wording.
+	l.SetAgent(store.AgentCodex)
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 2}}) // s1, claude
+	if v := l.View(); !strings.Contains(v, "no matches · 1 hit in Claude — press a") {
+		t.Errorf("singular hint missing: %q", v)
+	}
+	// The mixed list keeps the bare string.
+	l.SetAgent("")
+	l.SetSearchResults([]store.SessionHits{})
+	if v := l.View(); !strings.Contains(v, "no matches") || strings.Contains(v, "press a") {
+		t.Errorf("mixed empty search view = %q, want bare \"no matches\"", v)
+	}
+}
+
+func TestSetAgentRestoresSelectionByIdentity(t *testing.T) {
+	l := newMixedPane()
+	l.SetAgent(store.AgentClaude)
+	l.MoveCursor(2) // alpha header → s1 → beta header… lands on s2's title row
+	s, _, ok := l.Selected()
+	if !ok || s.ID != "s2" {
+		t.Fatalf("setup: selected %v (ok=%v), want s2", s.ID, ok)
+	}
+	l.SetAgent(store.AgentCodex)
+	// A rescan lands while claude is parked: a brand-new claude session is
+	// now the most recent, shifting every row the parked cursor pointed at.
+	ns := append([]store.Session{{ID: "s0", Slug: "-p1", CWD: "/x/alpha", Title: "Brand new", FirstPrompt: "hi", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(time.Minute)}}, mixedSessions()...)
+	l.SetSessions(ns)
+	l.SetAgent(store.AgentClaude)
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("after churn, restored selection = %v (ok=%v), want s2 by identity", s.ID, ok)
+	}
+}
+
+func TestSetAgentBeforeSessionsLoadRecovers(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(50, 30)
+	l.SetAgent(store.AgentClaude) // parks the (still empty) mixed view
+	l.SetSessions(mixedSessions())
+	l.SetAgent("") // first REAL visit to the mixed view
+	if _, _, ok := l.Selected(); !ok {
+		t.Error("a view parked before sessions loaded must land on a session, not a header")
+	}
+}
+
+func TestToggleEmptyRecoversFromEmptyView(t *testing.T) {
+	// A view whose sessions are ALL empty shows "no sessions"; e must land
+	// the cursor on a revealed session, not the project header above it.
+	sessions := []store.Session{
+		{ID: "e1", Slug: "-p", CWD: "/x/hooks", Title: "", FirstPrompt: "", Agent: store.AgentClaude, UserMessages: 0, Enriched: true, LastActivity: time.Now()},
+	}
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(50, 30)
+	l.SetSessions(sessions)
+	if l.Len() != 0 {
+		t.Fatalf("setup: Len = %d, want 0 (all empty)", l.Len())
+	}
+	l.ToggleEmpty()
+	if s, _, ok := l.Selected(); !ok || s.ID != "e1" {
+		t.Errorf("after e, selected = %v (ok=%v), want e1", s.ID, ok)
+	}
+}
+
+func TestHeaderDotScopedToActiveView(t *testing.T) {
+	l := newMixedPane()
+	// Only the codex session in alpha has a live tmux.
+	l.SetTmuxLive(map[string]bool{tmuxNameFor(l.sessions[3]): true}) // x1
+	if !l.projectHasLiveTmux("alpha") {
+		t.Fatal("mixed list: alpha should report a live tmux")
+	}
+	l.SetAgent(store.AgentClaude)
+	if l.projectHasLiveTmux("alpha") {
+		t.Error("claude view must not report the hidden codex tmux")
+	}
+	l.SetAgent(store.AgentCodex)
+	if !l.projectHasLiveTmux("alpha") {
+		t.Error("codex view should report its own live tmux")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
@@ -563,5 +564,265 @@ func TestAdoptionRunsAgainstEnrichedSessionsOnEnrichDone(t *testing.T) {
 	want := tmux.Name("claude", tmux.Short("s1"))
 	if len(f.renamed) == 0 || f.renamed[len(f.renamed)-1][1] != want {
 		t.Fatalf("adoption should rename %s -> %s against enriched sessions; renamed=%v", pend, want, f.renamed)
+	}
+}
+
+// newTwoAgentModel is newTestModel with a second (codex) provider and a
+// mixed-agent session set, for mode/view tests. Starts in list mode.
+//
+// The claude dir is a real (empty) tempdir rather than the usual fake
+// "/nonexistent-projects-dir" literal: defaultTabView reads
+// providers[0].Available() to decide the first tab, and this fixture wants
+// the ordinary "both agents present" case (default tab = claude), not the
+// "claude not installed" edge case that TestStartupModeFromConfig covers
+// directly. No session data comes from a real scan here either way — it's
+// injected below via scanDoneMsg.
+func newTwoAgentModel(t *testing.T) Model {
+	t.Helper()
+	m := New(t.TempDir(), "/nonexistent-codex-dir", config.Default())
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = m2.(Model)
+	m2, _ = m.Update(scanDoneMsg{sessions: mixedSessions()})
+	return m2.(Model)
+}
+
+func TestVKeyTogglesViewMode(t *testing.T) {
+	m := newTwoAgentModel(t)
+	if m.list.Agent() != "" {
+		t.Fatalf("default agent=%q, want list mode / mixed", m.list.Agent())
+	}
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentClaude {
+		t.Errorf("v: agent=%q, want tab mode / claude", m.list.Agent())
+	}
+	// The claude view lands on the same newest session the mixed list was
+	// previewing, so no reload is issued — the preview must simply still
+	// track the selection.
+	if s, _, ok := m.list.Selected(); !ok || s.ID != m.previewFor {
+		t.Errorf("preview tracks %q but selection is %v (ok=%v)", m.previewFor, s.ID, ok)
+	}
+	m2, _ = m.Update(key("v"))
+	m = m2.(Model)
+	if m.list.Agent() != "" {
+		t.Errorf("v v: agent=%q, want list mode / mixed", m.list.Agent())
+	}
+}
+
+func TestAKeyPerMode(t *testing.T) {
+	m := newTwoAgentModel(t)
+	before := m.list.groupByAgent
+	m2, _ := m.Update(key("a"))
+	m = m2.(Model)
+	if m.list.groupByAgent == before {
+		t.Error("list mode `a` must toggle agent subgrouping")
+	}
+	flag := m.list.groupByAgent
+	m2, _ = m.Update(key("v"))
+	m = m2.(Model)
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentCodex {
+		t.Error("tab mode `a` must switch to the codex view")
+	}
+	if m.list.groupByAgent != flag {
+		t.Error("tab mode `a` must not touch subgrouping")
+	}
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentClaude {
+		t.Error("tab mode `a` must switch back to claude")
+	}
+}
+
+func TestTabViewRememberedAcrossModes(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v")) // tabs: claude
+	m = m2.(Model)
+	m2, _ = m.Update(key("a")) // codex
+	m = m2.(Model)
+	m2, _ = m.Update(key("v")) // back to list
+	m = m2.(Model)
+	if m.list.Agent() != "" {
+		t.Fatalf("list mode agent = %q, want mixed", m.list.Agent())
+	}
+	m2, _ = m.Update(key("v")) // tabs again
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentCodex {
+		t.Errorf("re-entering tab mode = %q, want the remembered codex view", m.list.Agent())
+	}
+}
+
+func TestTitleTabsOnlyInTabMode(t *testing.T) {
+	m := newTwoAgentModel(t)
+	if v := m.View(); !strings.Contains(v, "4 sessions") || strings.Contains(v, "[Claude") {
+		t.Errorf("list mode title must keep the plain count:\n%s", v)
+	}
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	v := m.View()
+	if !strings.Contains(v, "[Claude 2]") || !strings.Contains(v, "Codex 2") {
+		t.Errorf("tab mode title must show both tabs, active bracketed:\n%s", v)
+	}
+	if strings.Contains(v, "sessions") {
+		t.Errorf("tab mode title must not show the old count string:\n%s", v)
+	}
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if v := m.View(); !strings.Contains(v, "[Codex 2]") || !strings.Contains(v, "Claude 2") {
+		t.Errorf("codex view must bracket the codex tab:\n%s", v)
+	}
+}
+
+func TestTitleTabsNeedTwoProviders(t *testing.T) {
+	m := newTestModel() // single provider
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	if m.list.Agent() == "" {
+		t.Fatal("v should still enter tab mode with one provider")
+	}
+	if v := m.View(); strings.Contains(v, "[Claude") || !strings.Contains(v, "2 sessions") {
+		t.Errorf("single-provider tab mode keeps the plain count:\n%s", v)
+	}
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if m.list.Agent() != store.AgentClaude {
+		t.Error("single provider: tab-mode `a` must be a no-op")
+	}
+}
+
+func TestStartupModeFromConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.View = "tabs"
+	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", cfg)
+	if m.list.Agent() != store.AgentClaude {
+		t.Errorf("config view=tabs: agent=%q, want the claude tab view", m.list.Agent())
+	}
+	m = New("/nonexistent-projects-dir", t.TempDir(), cfg) // codex registers, claude dir missing
+	if m.list.Agent() != store.AgentCodex {
+		t.Errorf("claude dir missing: startup tab view = %q, want codex", m.list.Agent())
+	}
+}
+
+func TestChromeColorsFollowActiveView(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	m2, _ = m.Update(key("a")) // codex view
+	m = m2.(Model)
+	// Even with nothing selected the color keys off the view, not the
+	// selection — the branch the old selected-session logic gets wrong.
+	m.list.SetFilter("zzzz-no-match")
+	if _, _, ok := m.list.Selected(); ok {
+		t.Fatal("setup: filter should leave no selection")
+	}
+	if m.focusedBorderColor() != m.st.CodexAccent {
+		t.Error("empty codex view should still give the teal border color")
+	}
+}
+
+func TestSwitchKeepsFilterApplied(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	m2, _ = m.Update(key("/"))
+	m = m2.(Model)
+	for _, r := range "rollout" {
+		m2, _ = m.Update(key(string(r)))
+		m = m2.(Model)
+	}
+	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // back to list focus
+	m = m2.(Model)
+	if got := m.list.Len(); got != 0 {
+		t.Fatalf("claude view filtered by 'rollout': Len = %d, want 0", got)
+	}
+	m2, _ = m.Update(key("a"))
+	m = m2.(Model)
+	if got := m.list.Len(); got != 2 {
+		t.Errorf("codex view must re-apply the live filter: Len = %d, want 2", got)
+	}
+}
+
+// TestFirstListVisitAfterTabsStartupSelectsSession covers a startup-only
+// regression: New() calls setAgentView(tabView) before any sessions exist,
+// which parks a zero viewState under the "" (mixed list) key. The user's
+// first real `v` into the mixed list then finds that key already "seen" and
+// skips cursorToFirstSession(), landing on row 0 — a project header — with
+// no session selected and a cleared preview.
+func TestFirstListVisitAfterTabsStartupSelectsSession(t *testing.T) {
+	cfg := config.Default()
+	cfg.View = "tabs"
+	m := New(t.TempDir(), "/nonexistent-codex-dir", cfg)
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = m2.(Model)
+	m2, _ = m.Update(scanDoneMsg{sessions: mixedSessions()})
+	m = m2.(Model)
+	m2, _ = m.Update(key("v")) // first visit to the mixed list this run
+	m = m2.(Model)
+	if _, _, ok := m.list.Selected(); !ok {
+		t.Error("first mixed-list visit after a tabs startup should select a session, not a header")
+	}
+}
+
+// TestTitleRowTruncatesToWidth guards the header line built in View() by
+// lipgloss.JoinHorizontal: with no width clamp, a long indexing/scanning
+// status suffix can push the row past the terminal width and wrap, which
+// corrupts the alt-screen frame (the help bar was clamped for the same
+// reason).
+func TestTitleRowTruncatesToWidth(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v"))
+	m = m2.(Model)
+	m.indexing = true
+	m.indexDone, m.indexTotal = 100, 200
+	m.indexFailed = 5
+	m.loading = true
+	m2, _ = m.Update(tea.WindowSizeMsg{Width: 44, Height: 30})
+	m = m2.(Model)
+	first := strings.SplitN(m.View(), "\n", 2)[0]
+	if w := lipgloss.Width(first); w > 44 {
+		t.Errorf("title row width = %d, must be clamped to 44", w)
+	}
+}
+
+func TestVBeforeScanThenBackSelectsSession(t *testing.T) {
+	m := New(t.TempDir(), "/nonexistent-codex-dir", config.Default())
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = m2.(Model)
+	m2, _ = m.Update(key("v")) // the user is faster than the first scan
+	m = m2.(Model)
+	m2, _ = m.Update(scanDoneMsg{sessions: mixedSessions()})
+	m = m2.(Model)
+	m2, _ = m.Update(key("v")) // back to the mixed list
+	m = m2.(Model)
+	if _, _, ok := m.list.Selected(); !ok {
+		t.Error("returning to the pre-scan-parked mixed list must select a session")
+	}
+}
+
+func TestKillProjectScopedToActiveView(t *testing.T) {
+	m := newTwoAgentModel(t)
+	claudeName := tmuxNameFor(m.list.sessions[0]) // s1: alpha, claude
+	codexName := tmuxNameFor(m.list.sessions[3])  // x1: alpha, codex
+	ft := &fakeTmux{live: map[string]bool{claudeName: true, codexName: true}, paths: map[string]string{}}
+	m.tmux = ft
+	m2, _ := m.Update(key("v")) // claude tab view
+	m = m2.(Model)
+	m.killProjectCmd("alpha", m.list.Agent())()
+	if len(ft.killed) != 1 || ft.killed[0] != claudeName {
+		t.Errorf("claude view kill set = %v, want only %s", ft.killed, claudeName)
+	}
+	if !ft.live[codexName] {
+		t.Error("the hidden codex tmux must survive a claude-view project kill")
+	}
+	// The mixed list keeps the project-wide kill.
+	m2, _ = m.Update(key("v"))
+	m = m2.(Model)
+	m.killProjectCmd("alpha", m.list.Agent())()
+	if ft.live[codexName] {
+		t.Error("the mixed list's project kill should cover both agents")
 	}
 }

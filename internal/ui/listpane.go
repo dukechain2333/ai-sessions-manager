@@ -26,6 +26,25 @@ type row struct {
 	session   int // index into listPane.sessions; valid when !header && !subheader
 }
 
+// viewState is the navigation state parked for an inactive view ("" is the
+// mixed list, claude/codex the single-agent views). The cursor is anchored
+// by identity — session ID or header project — not row position, so it
+// survives the session list changing while the view is parked.
+type viewState struct {
+	selectedID string // session under the cursor ("" when none)
+	header     string // project header under the cursor ("" when none)
+	lineOffset int
+	folded     map[string]bool
+}
+
+// otherAgent flips between the two agents.
+func otherAgent(a store.Agent) store.Agent {
+	if a == store.AgentCodex {
+		return store.AgentClaude
+	}
+	return store.AgentCodex
+}
+
 // listPane is a hand-rolled scrolling session list. Sessions render as
 // three rows (title, meta, blank); in group-by-project mode a one-row
 // header precedes each project's first session, and folded projects show
@@ -47,8 +66,11 @@ type listPane struct {
 	groupByAgent   bool
 	focused        bool
 	styles         styles
-	search         []store.SessionHits // non-nil: flat search-results mode
-	tmuxLive       map[string]bool     // live sm-<agent>-<id8> names; nil = none
+	search         []store.SessionHits       // non-nil: flat search-results mode
+	tmuxLive       map[string]bool           // live sm-<agent>-<id8> names; nil = none
+	activeAgent    store.Agent               // "" = mixed list; else only that agent renders
+	agentTotals    map[store.Agent]int       // per-agent visible counts under the current mode
+	savedViews     map[store.Agent]viewState // parked cursor/scroll/fold of inactive views
 }
 
 func (l *listPane) SetSize(w, h int) {
@@ -111,53 +133,112 @@ func (l *listPane) searchHits(sessionIdx int) int {
 	return 0
 }
 
-// ToggleEmpty flips whether "empty" (hook-only) sessions are shown. No-op
-// while browsing search results: search mode has its own row set that
-// ignores this flag, so toggling it would silently change state that only
-// takes visible effect after the user leaves search mode.
+// toggleAndReselect runs flip under the shared toggle discipline: no-op in
+// search mode (search has its own row set that ignores these flags, so a
+// toggle would silently change state that only shows after leaving search),
+// keep the selected session across the refresh, and otherwise land on the
+// first session — never a stranded header.
+func (l *listPane) toggleAndReselect(flip func()) {
+	if l.search != nil {
+		return
+	}
+	sel, ok := l.selectedSession()
+	flip()
+	l.refresh()
+	if ok {
+		l.selectSession(sel)
+	} else {
+		l.cursorToFirstSession()
+	}
+}
+
+// ToggleEmpty flips whether "empty" (hook-only) sessions are shown.
 func (l *listPane) ToggleEmpty() {
-	if l.search != nil {
-		return
-	}
-	sel, ok := l.selectedSession()
-	l.showEmpty = !l.showEmpty
-	l.refresh()
-	if ok {
-		l.selectSession(sel)
-	}
+	l.toggleAndReselect(func() { l.showEmpty = !l.showEmpty })
 }
 
-// ToggleGroup switches between project-clustered and flat recency order,
-// keeping the current session selected. No-op while browsing search
-// results (same reasoning as ToggleEmpty).
+// ToggleGroup switches between project-clustered and flat recency order.
 func (l *listPane) ToggleGroup() {
-	if l.search != nil {
-		return
-	}
-	sel, ok := l.selectedSession()
-	l.groupByProject = !l.groupByProject
-	l.refresh()
-	if ok {
-		l.selectSession(sel)
-	} else {
-		l.cursorToFirstSession()
-	}
+	l.toggleAndReselect(func() { l.groupByProject = !l.groupByProject })
 }
 
-// ToggleAgentGroup turns per-project agent subgrouping on/off. No-op while
-// browsing search results (same reasoning as ToggleEmpty/ToggleGroup).
-func (l *listPane) ToggleAgentGroup() {
-	if l.search != nil {
+// Agent is the active view: "" is the mixed list, otherwise only that
+// agent's sessions render.
+func (l *listPane) Agent() store.Agent { return l.activeAgent }
+
+// AgentTotal reports how many sessions agent a would display right now,
+// honoring the empty toggle and any live filter or search results.
+func (l *listPane) AgentTotal(a store.Agent) int { return l.agentTotals[a] }
+
+// accent is the active view's accent: the agent's color in a single-agent
+// view, the default (Claude) accent in the mixed list.
+func (l *listPane) accent() lipgloss.AdaptiveColor {
+	return l.styles.AgentAccent(l.activeAgent)
+}
+
+// SetAgent switches the pane to view a, parking the current view's cursor
+// anchor, scroll, and fold state and restoring a's. Anchors are identities
+// (session ID / header project), not row positions, so a rescan, delete, or
+// enrichment landing while the view is parked re-selects the same session
+// rather than whatever row took over its old index. A gone anchor — or a
+// never-visited view — falls back to the first session (never row 0, which
+// is a header when grouped and would clear the preview).
+func (l *listPane) SetAgent(a store.Agent) {
+	if a == l.activeAgent {
 		return
 	}
-	sel, ok := l.selectedSession()
-	l.groupByAgent = !l.groupByAgent
-	l.refresh()
-	if ok {
-		l.selectSession(sel)
-	} else {
-		l.cursorToFirstSession()
+	if l.savedViews == nil {
+		l.savedViews = map[store.Agent]viewState{}
 	}
+	park := viewState{lineOffset: l.lineOffset, folded: l.folded}
+	if s, _, ok := l.Selected(); ok {
+		park.selectedID = s.ID
+	} else if proj, ok := l.CursorProject(); ok {
+		park.header = proj // not a session row, so this is a header
+	}
+	l.savedViews[l.activeAgent] = park
+	st := l.savedViews[a]
+	l.activeAgent = a
+	l.lineOffset, l.folded = st.lineOffset, st.folded
+	l.refresh()
+	l.selectAnchor(st)
+}
+
+// selectAnchor parks the cursor on st's anchor: the session with that ID
+// when it is still visible, else that project's header, else the first
+// session.
+func (l *listPane) selectAnchor(st viewState) {
+	if st.selectedID != "" {
+		for i, r := range l.rows {
+			if !r.header && !r.subheader && l.sessions[r.session].ID == st.selectedID {
+				l.SetCursor(i)
+				return
+			}
+		}
+	}
+	if i := l.headerRow(st.header); i >= 0 {
+		l.SetCursor(i)
+		return
+	}
+	l.cursorToFirstSession()
+}
+
+// headerRow returns the row index of project's header, or -1 (also for "").
+func (l *listPane) headerRow(project string) int {
+	if project == "" {
+		return -1
+	}
+	for i, r := range l.rows {
+		if r.header && r.project == project {
+			return i
+		}
+	}
+	return -1
+}
+
+// ToggleAgentGroup turns per-project agent subgrouping on/off.
+func (l *listPane) ToggleAgentGroup() {
+	l.toggleAndReselect(func() { l.groupByAgent = !l.groupByAgent })
 }
 
 // ToggleFold collapses or expands the project the cursor is currently in
@@ -173,11 +254,8 @@ func (l *listPane) ToggleFold() {
 	}
 	l.folded[p] = !l.folded[p]
 	l.refresh()
-	for i, r := range l.rows {
-		if r.header && r.project == p {
-			l.cursor = i
-			break
-		}
+	if i := l.headerRow(p); i >= 0 {
+		l.cursor = i
 	}
 	l.ensureVisible()
 }
@@ -327,9 +405,15 @@ func (l *listPane) refresh() {
 	if l.search != nil {
 		l.rows = l.rows[:0]
 		l.counts = map[string]int{}
+		l.agentTotals = map[store.Agent]int{}
 		l.total = 0
 		for _, h := range l.search {
 			if h.Session < 0 || h.Session >= len(l.sessions) {
+				continue
+			}
+			ag := l.sessions[h.Session].Agent
+			l.agentTotals[ag]++
+			if l.activeAgent != "" && ag != l.activeAgent {
 				continue
 			}
 			l.total++
@@ -367,22 +451,36 @@ func (l *listPane) refresh() {
 			base = append(base, m.Index)
 		}
 	}
-	l.total = len(base)
-
-	// 2. Count per project.
-	l.counts = map[string]int{}
+	// 2. Count per agent and narrow to the active view ("" keeps all),
+	//    in one pass — this runs on every filter keystroke.
+	l.agentTotals = map[store.Agent]int{}
+	act := base
+	if l.activeAgent != "" {
+		act = make([]int, 0, len(base))
+	}
 	for _, si := range base {
+		ag := l.sessions[si].Agent
+		l.agentTotals[ag]++
+		if l.activeAgent != "" && ag == l.activeAgent {
+			act = append(act, si)
+		}
+	}
+	l.total = len(act)
+
+	// 3. Count per project.
+	l.counts = map[string]int{}
+	for _, si := range act {
 		l.counts[l.sessions[si].Project()]++
 	}
 
-	// 3. Build rows. Grouped: header per project (first-appearance order,
+	// 4. Build rows. Grouped: header per project (first-appearance order,
 	//    i.e. most-recent project first since base is recency-sorted), then
 	//    that project's sessions unless folded. Flat: sessions only.
 	l.rows = l.rows[:0]
 	if l.grouped() {
 		order := []string{}
 		buckets := map[string][]int{}
-		for _, si := range base {
+		for _, si := range act {
 			p := l.sessions[si].Project()
 			if _, seen := buckets[p]; !seen {
 				order = append(order, p)
@@ -418,7 +516,7 @@ func (l *listPane) refresh() {
 			}
 		}
 	} else {
-		for _, si := range base {
+		for _, si := range act {
 			l.rows = append(l.rows, row{project: l.sessions[si].Project(), session: si})
 		}
 	}
@@ -476,6 +574,12 @@ func (l *listPane) ensureVisible() {
 
 func (l *listPane) View() string {
 	if l.total == 0 {
+		if l.search != nil && l.activeAgent != "" {
+			if n := l.agentTotals[otherAgent(l.activeAgent)]; n > 0 {
+				hint := fmt.Sprintf("no matches · %d %s in %s — press a", n, hitWord(n), agentTitle(otherAgent(l.activeAgent)))
+				return l.padHeight(l.styles.ListMeta.Render(hint))
+			}
+		}
 		if l.search != nil || l.filter != "" {
 			return l.padHeight(l.styles.ListMeta.Render("no matches"))
 		}
@@ -502,7 +606,9 @@ func (l *listPane) View() string {
 			label := store.Truncate(name+" "+count, headerWidth)
 			style := l.styles.GroupHeader
 			if i == l.cursor {
-				style = l.styles.GroupHeaderSel
+				// accent() is the default accent in the mixed list (a no-op
+				// re-tint) and the view color in single-agent views.
+				style = l.styles.GroupHeaderSel.Foreground(l.accent())
 			}
 			// Split the name from the "(n)" count so they can carry
 			// different styles while the rendered text stays byte-identical
@@ -512,10 +618,16 @@ func (l *listPane) View() string {
 			// characters, just without the count's distinct color.
 			rendered := style.Render(label)
 			if suffix := " " + count; strings.HasSuffix(label, suffix) {
-				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + l.styles.GroupCount.Render(count)
+				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + l.styles.GroupCount.Foreground(l.accent()).Render(count)
 			}
 			if l.projectHasLiveTmux(r.project) {
-				rendered += " " + lipgloss.NewStyle().Foreground(l.styles.AgentAccent(l.projectMajorityAgent(r.project))).Render("●")
+				dot := l.accent()
+				if l.activeAgent == "" {
+					// Only the mixed list needs the majority scan; a
+					// single-agent view always tints with its own accent.
+					dot = l.styles.AgentAccent(l.projectMajorityAgent(r.project))
+				}
+				rendered += " " + lipgloss.NewStyle().Foreground(dot).Render("●")
 			}
 			lines = append(lines, rendered)
 			continue
@@ -538,21 +650,16 @@ func (l *listPane) View() string {
 			meta += " · (unreadable)"
 		}
 		if n := l.searchHits(r.session); n > 0 {
-			meta += " · " + fmt.Sprintf("%d hit", n)
-			if n != 1 {
-				meta += "s"
-			}
-		}
-		tag := s.Agent.Label()
-		tagStyle := l.styles.ClaudeTag
-		if s.Agent == store.AgentCodex {
-			tagStyle = l.styles.CodexTag
+			meta += " · " + fmt.Sprintf("%d %s", n, hitWord(n))
 		}
 		prefix := "  "
 		titleStyle, metaStyle := l.styles.ListTitle, l.styles.ListMeta
 		if i == l.cursor {
 			prefix = "▶ "
-			titleStyle, metaStyle = l.styles.ListTitleSel, l.styles.ListMetaSel
+			// The selected meta follows the view accent (spec: "selected
+			// title/meta"); in the mixed list accent() is the default color
+			// ListMetaSel already carries, so this is byte-identical there.
+			titleStyle, metaStyle = l.styles.ListTitleSel, l.styles.ListMetaSel.Foreground(l.accent())
 			if s.Agent == store.AgentCodex {
 				titleStyle = l.styles.CodexTitleSel
 			}
@@ -563,10 +670,22 @@ func (l *listPane) View() string {
 			titleWidth -= 2 // reserve space for " ●"
 			marker = " " + lipgloss.NewStyle().Foreground(l.styles.AgentAccent(s.Agent)).Render("●")
 		}
-		metaText := store.Truncate("  "+meta, l.width-len(tag)-3)
+		// The mixed list tags every row with its agent; a single-agent view
+		// doesn't need to — the tab bar carries the identity.
+		var metaLine string
+		if l.activeAgent == "" {
+			tag := s.Agent.Label()
+			tagStyle := l.styles.ClaudeTag
+			if s.Agent == store.AgentCodex {
+				tagStyle = l.styles.CodexTag
+			}
+			metaLine = metaStyle.Render(store.Truncate("  "+meta, l.width-len(tag)-3)) + " " + tagStyle.Render(tag)
+		} else {
+			metaLine = metaStyle.Render(store.Truncate("  "+meta, l.width))
+		}
 		lines = append(lines,
 			titleStyle.Render(store.Truncate(prefix+title, titleWidth))+marker,
-			metaStyle.Render(metaText)+" "+tagStyle.Render(tag),
+			metaLine,
 			"")
 	}
 
@@ -599,14 +718,28 @@ func (l *listPane) padHeight(s string) string {
 // SetTmuxLive records the current live-tmux set for marker rendering.
 func (l *listPane) SetTmuxLive(set map[string]bool) { l.tmuxLive = set }
 
-// projectHasLiveTmux reports whether any session in project has a live tmux.
-func (l *listPane) projectHasLiveTmux(project string) bool {
+// tmuxScoped reports whether s belongs to project under agent's scope
+// ("" = any agent). It is the single membership rule shared by the header
+// dot, the x gate, the kill-confirm count, and the kill itself.
+func tmuxScoped(s store.Session, project string, agent store.Agent) bool {
+	return s.Project() == project && (agent == "" || s.Agent == agent)
+}
+
+// liveTmuxCount counts project's live tmux under the active view's scope —
+// a single-agent view never sees (or offers to kill) tmux it is hiding.
+func (l *listPane) liveTmuxCount(project string) int {
+	n := 0
 	for _, s := range l.sessions {
-		if s.Project() == project && l.tmuxLive[tmuxNameFor(s)] {
-			return true
+		if tmuxScoped(s, project, l.activeAgent) && l.tmuxLive[tmuxNameFor(s)] {
+			n++
 		}
 	}
-	return false
+	return n
+}
+
+// projectHasLiveTmux reports whether project has any live tmux in scope.
+func (l *listPane) projectHasLiveTmux(project string) bool {
+	return l.liveTmuxCount(project) > 0
 }
 
 // CursorProject returns the project label of the row under the cursor
@@ -658,4 +791,12 @@ func agentTitle(a store.Agent) string {
 		return "Codex"
 	}
 	return "Claude"
+}
+
+// hitWord pluralizes the search-hit noun.
+func hitWord(n int) string {
+	if n == 1 {
+		return "hit"
+	}
+	return "hits"
 }

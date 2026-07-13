@@ -262,3 +262,35 @@ func TestErrorDialogDismiss(t *testing.T) {
 		t.Error("any key should dismiss error dialog")
 	}
 }
+
+func TestNewSessionUsesActiveTabView(t *testing.T) {
+	m := newTwoAgentModel(t)
+	m2, _ := m.Update(key("v")) // tab mode, claude view
+	m = m2.(Model)
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir // s1 (claude) is the selection
+	rec := &resumeRecorder{}
+	m.runCmd = rec.cmd
+	m2, _ = m.Update(key("n"))
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Fatalf("tab-mode `n`: dialog = %v, want none (no agent picker)", m.dialog)
+	}
+	if rec.name != "claude" || rec.dir != dir {
+		t.Errorf("claude view `n` launched %q in %q, want claude in %q", rec.name, rec.dir, dir)
+	}
+
+	dir2 := t.TempDir()
+	for i := range m.list.sessions {
+		if m.list.sessions[i].Agent == store.AgentCodex {
+			m.list.sessions[i].CWD = dir2
+		}
+	}
+	m2, _ = m.Update(key("a")) // codex view
+	m = m2.(Model)
+	m2, _ = m.Update(key("n"))
+	m = m2.(Model)
+	if rec.name != "codex" || rec.dir != dir2 {
+		t.Errorf("codex view `n` launched %q in %q, want codex in %q", rec.name, rec.dir, dir2)
+	}
+}

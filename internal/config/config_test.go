@@ -145,3 +145,24 @@ func TestEnsureDefaultNoOpWhenPresent(t *testing.T) {
 		t.Errorf("EnsureDefault overwrote an existing file: got %q, want %q", string(data), custom)
 	}
 }
+
+func TestLoadView(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{"view": "tabs"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil || cfg.View != "tabs" {
+		t.Fatalf(`view "tabs": cfg.View=%q err=%v`, cfg.View, err)
+	}
+	if err := os.WriteFile(p, []byte(`{"view": "bogus"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(p)
+	if err != nil || cfg.View != "list" {
+		t.Fatalf(`unknown view must fall back to "list": cfg.View=%q err=%v`, cfg.View, err)
+	}
+	if def := Default(); def.View != "list" {
+		t.Fatalf(`Default().View = %q, want "list"`, def.View)
+	}
+}
