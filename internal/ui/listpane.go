@@ -26,6 +26,22 @@ type row struct {
 	session   int // index into listPane.sessions; valid when !header && !subheader
 }
 
+// viewState is the navigation state parked for an inactive view ("" is the
+// mixed list, claude/codex the single-agent views).
+type viewState struct {
+	cursor     int
+	lineOffset int
+	folded     map[string]bool
+}
+
+// otherAgent flips between the two agents.
+func otherAgent(a store.Agent) store.Agent {
+	if a == store.AgentCodex {
+		return store.AgentClaude
+	}
+	return store.AgentCodex
+}
+
 // listPane is a hand-rolled scrolling session list. Sessions render as
 // three rows (title, meta, blank); in group-by-project mode a one-row
 // header precedes each project's first session, and folded projects show
@@ -47,8 +63,11 @@ type listPane struct {
 	groupByAgent   bool
 	focused        bool
 	styles         styles
-	search         []store.SessionHits // non-nil: flat search-results mode
-	tmuxLive       map[string]bool     // live sm-<agent>-<id8> names; nil = none
+	search         []store.SessionHits       // non-nil: flat search-results mode
+	tmuxLive       map[string]bool           // live sm-<agent>-<id8> names; nil = none
+	activeAgent    store.Agent               // "" = mixed list; else only that agent renders
+	agentTotals    map[store.Agent]int       // per-agent visible counts under the current mode
+	savedViews     map[store.Agent]viewState // parked cursor/scroll/fold of inactive views
 }
 
 func (l *listPane) SetSize(w, h int) {
@@ -140,6 +159,36 @@ func (l *listPane) ToggleGroup() {
 	if ok {
 		l.selectSession(sel)
 	} else {
+		l.cursorToFirstSession()
+	}
+}
+
+// Agent is the active view: "" is the mixed list, otherwise only that
+// agent's sessions render.
+func (l *listPane) Agent() store.Agent { return l.activeAgent }
+
+// AgentTotal reports how many sessions agent a would display right now,
+// honoring the empty toggle and any live filter or search results.
+func (l *listPane) AgentTotal(a store.Agent) int { return l.agentTotals[a] }
+
+// SetAgent switches the pane to view a, parking the current view's cursor,
+// scroll, and fold state and restoring a's. refresh clamps the restored
+// cursor if that view's rows changed while it was parked; a never-visited
+// view starts on its first session (not row 0, which is a header when
+// grouped — that would clear the preview).
+func (l *listPane) SetAgent(a store.Agent) {
+	if a == l.activeAgent {
+		return
+	}
+	if l.savedViews == nil {
+		l.savedViews = map[store.Agent]viewState{}
+	}
+	l.savedViews[l.activeAgent] = viewState{cursor: l.cursor, lineOffset: l.lineOffset, folded: l.folded}
+	st, seen := l.savedViews[a]
+	l.activeAgent = a
+	l.cursor, l.lineOffset, l.folded = st.cursor, st.lineOffset, st.folded
+	l.refresh()
+	if !seen {
 		l.cursorToFirstSession()
 	}
 }
@@ -327,9 +376,15 @@ func (l *listPane) refresh() {
 	if l.search != nil {
 		l.rows = l.rows[:0]
 		l.counts = map[string]int{}
+		l.agentTotals = map[store.Agent]int{}
 		l.total = 0
 		for _, h := range l.search {
 			if h.Session < 0 || h.Session >= len(l.sessions) {
+				continue
+			}
+			ag := l.sessions[h.Session].Agent
+			l.agentTotals[ag]++
+			if l.activeAgent != "" && ag != l.activeAgent {
 				continue
 			}
 			l.total++
@@ -367,22 +422,36 @@ func (l *listPane) refresh() {
 			base = append(base, m.Index)
 		}
 	}
-	l.total = len(base)
-
-	// 2. Count per project.
-	l.counts = map[string]int{}
+	// 2. Count per agent and narrow to the active view ("" keeps all).
+	l.agentTotals = map[store.Agent]int{}
 	for _, si := range base {
+		l.agentTotals[l.sessions[si].Agent]++
+	}
+	act := base
+	if l.activeAgent != "" {
+		act = nil
+		for _, si := range base {
+			if l.sessions[si].Agent == l.activeAgent {
+				act = append(act, si)
+			}
+		}
+	}
+	l.total = len(act)
+
+	// 3. Count per project.
+	l.counts = map[string]int{}
+	for _, si := range act {
 		l.counts[l.sessions[si].Project()]++
 	}
 
-	// 3. Build rows. Grouped: header per project (first-appearance order,
+	// 4. Build rows. Grouped: header per project (first-appearance order,
 	//    i.e. most-recent project first since base is recency-sorted), then
 	//    that project's sessions unless folded. Flat: sessions only.
 	l.rows = l.rows[:0]
 	if l.grouped() {
 		order := []string{}
 		buckets := map[string][]int{}
-		for _, si := range base {
+		for _, si := range act {
 			p := l.sessions[si].Project()
 			if _, seen := buckets[p]; !seen {
 				order = append(order, p)
@@ -418,7 +487,7 @@ func (l *listPane) refresh() {
 			}
 		}
 	} else {
-		for _, si := range base {
+		for _, si := range act {
 			l.rows = append(l.rows, row{project: l.sessions[si].Project(), session: si})
 		}
 	}

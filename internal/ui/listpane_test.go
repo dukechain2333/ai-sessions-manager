@@ -593,3 +593,122 @@ func TestListViewFillsHeight(t *testing.T) {
 		t.Errorf("View() = %d lines, want 30 (pane height) so it matches the preview box", got)
 	}
 }
+
+// mixedSessions is testSessions plus two codex sessions: one sharing
+// project alpha, one in its own project delta.
+func mixedSessions() []store.Session {
+	s := testSessions()
+	s = append(s,
+		store.Session{ID: "x1", Slug: "-p1", CWD: "/x/alpha", Title: "Rollout in alpha", FirstPrompt: "hello", Agent: store.AgentCodex, UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(-30 * time.Minute)},
+		store.Session{ID: "x2", Slug: "-p4", CWD: "/x/delta", Title: "Rollout in delta", FirstPrompt: "yo", Agent: store.AgentCodex, UserMessages: 2, Enriched: true, LastActivity: time.Now().Add(-3 * time.Hour)},
+	)
+	return s
+}
+
+func newMixedPane() listPane {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(50, 30)
+	l.SetSessions(mixedSessions())
+	return l
+}
+
+func TestAgentViewFiltersRows(t *testing.T) {
+	l := newMixedPane()
+	if l.Agent() != "" {
+		t.Fatalf("default view = %q, want \"\" (mixed)", l.Agent())
+	}
+	if got := l.Len(); got != 4 { // s1, s2, x1, x2 (s3 is empty and hidden)
+		t.Fatalf("mixed Len = %d, want 4", got)
+	}
+	if got := l.AgentTotal(store.AgentClaude); got != 2 {
+		t.Errorf("AgentTotal(claude) = %d, want 2", got)
+	}
+	if got := l.AgentTotal(store.AgentCodex); got != 2 {
+		t.Errorf("AgentTotal(codex) = %d, want 2", got)
+	}
+
+	l.SetAgent(store.AgentClaude)
+	if got := l.Len(); got != 2 {
+		t.Fatalf("claude view Len = %d, want 2", got)
+	}
+	if v := l.View(); strings.Contains(v, "Rollout in alpha") || strings.Contains(v, "delta") {
+		t.Errorf("claude view must not render codex rows:\n%s", v)
+	}
+
+	l.SetAgent(store.AgentCodex)
+	v := l.View()
+	if !strings.Contains(v, "Rollout in delta") {
+		t.Errorf("codex view missing its session:\n%s", v)
+	}
+	if strings.Contains(v, "Fix backup script") {
+		t.Errorf("codex view must not render claude rows:\n%s", v)
+	}
+
+	l.SetAgent("")
+	if got := l.Len(); got != 4 {
+		t.Errorf("back to mixed: Len = %d, want 4", got)
+	}
+}
+
+func TestAgentTotalsHonorFilter(t *testing.T) {
+	l := newMixedPane()
+	l.SetFilter("rollout")
+	if got := l.AgentTotal(store.AgentClaude); got != 0 {
+		t.Errorf("AgentTotal(claude) under filter = %d, want 0", got)
+	}
+	if got := l.AgentTotal(store.AgentCodex); got != 2 {
+		t.Errorf("AgentTotal(codex) under filter = %d, want 2", got)
+	}
+	l.SetAgent(store.AgentClaude)
+	if got := l.Len(); got != 0 {
+		t.Errorf("claude view under filter 'rollout': Len = %d, want 0", got)
+	}
+}
+
+func TestSetAgentKeepsPerViewState(t *testing.T) {
+	l := newMixedPane()
+	l.ToggleFold() // cursor starts in alpha; folds it in the mixed view
+	if !l.folded["alpha"] {
+		t.Fatal("setup: alpha should be folded in the mixed view")
+	}
+	l.MoveCursor(1)
+	cur, off := l.cursor, l.lineOffset
+
+	l.SetAgent(store.AgentCodex)
+	if l.folded["alpha"] {
+		t.Error("codex view must start with its own (empty) fold state")
+	}
+	l.ToggleFold() // fold something in the codex view
+
+	l.SetAgent("")
+	if !l.folded["alpha"] {
+		t.Error("mixed fold state lost across a round-trip")
+	}
+	if l.cursor != cur || l.lineOffset != off {
+		t.Errorf("mixed cursor/offset = %d/%d, want %d/%d", l.cursor, l.lineOffset, cur, off)
+	}
+}
+
+func TestSearchResultsRespectAgentView(t *testing.T) {
+	l := newMixedPane()
+	// Hits on one claude session (index 0) and both codex sessions (3, 4).
+	hits := []store.SessionHits{{Session: 0, MsgHits: 1}, {Session: 3, MsgHits: 5}, {Session: 4, MsgHits: 2}}
+	l.SetSearchResults(append([]store.SessionHits(nil), hits...))
+	if got := l.Len(); got != 3 {
+		t.Fatalf("mixed search Len = %d, want 3", got)
+	}
+	l.SetAgent(store.AgentCodex)
+	l.SetSearchResults(append([]store.SessionHits(nil), hits...))
+	if got := l.Len(); got != 2 {
+		t.Errorf("codex search Len = %d, want 2", got)
+	}
+	if got := l.AgentTotal(store.AgentClaude); got != 1 {
+		t.Errorf("AgentTotal(claude) in search = %d, want 1", got)
+	}
+}
+
+func TestOtherAgent(t *testing.T) {
+	if otherAgent(store.AgentClaude) != store.AgentCodex || otherAgent(store.AgentCodex) != store.AgentClaude {
+		t.Error("otherAgent must flip between the two agents")
+	}
+}
