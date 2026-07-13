@@ -233,6 +233,7 @@ notice.
 
 ```json
 {
+  "view": "list",
   "tmux": { "enabled": false },
   "colors": {
     "claude": { "light": "#C15F3C", "dark": "#D97757" },
