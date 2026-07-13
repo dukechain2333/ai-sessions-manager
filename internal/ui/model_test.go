@@ -85,6 +85,83 @@ func key(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
+func TestUpAtTopRingsBellStaysInList(t *testing.T) {
+	m := newTestModel()
+	rang := false
+	m.bell = func() tea.Msg { rang = true; return nil }
+	// Walk up to the very top row.
+	for {
+		before := m.list.cursor
+		m2, _ := m.Update(key("k"))
+		m = m2.(Model)
+		if m.list.cursor == before {
+			break // at the top edge now
+		}
+	}
+	top := m.list.cursor
+	m2, cmd := m.Update(key("k")) // one more up, at the edge
+	m = m2.(Model)
+	if m.focus != focusList {
+		t.Fatalf("up at the top must stay in the list, focus=%v", m.focus)
+	}
+	if m.list.cursor != top {
+		t.Errorf("cursor moved at the top edge: %d → %d", top, m.list.cursor)
+	}
+	if cmd == nil {
+		t.Fatal("up at the top must return the bell command")
+	}
+	cmd()
+	if !rang {
+		t.Error("up at the top must ring the bell")
+	}
+}
+
+func TestDownAtBottomRingsBellStaysInList(t *testing.T) {
+	m := newTestModel()
+	rang := false
+	m.bell = func() tea.Msg { rang = true; return nil }
+	for {
+		before := m.list.cursor
+		m2, _ := m.Update(key("j"))
+		m = m2.(Model)
+		if m.list.cursor == before {
+			break // at the bottom edge
+		}
+	}
+	bottom := m.list.cursor
+	m2, cmd := m.Update(key("j"))
+	m = m2.(Model)
+	if m.focus != focusList {
+		t.Fatalf("down at the bottom must stay in the list, focus=%v", m.focus)
+	}
+	if m.list.cursor != bottom {
+		t.Errorf("cursor moved at the bottom edge: %d → %d", bottom, m.list.cursor)
+	}
+	if cmd == nil {
+		t.Fatal("down at the bottom must return the bell command")
+	}
+	cmd()
+	if !rang {
+		t.Error("down at the bottom must ring the bell")
+	}
+}
+
+func TestInteriorMoveDoesNotRing(t *testing.T) {
+	m := newTestModel()
+	rang := false
+	m.bell = func() tea.Msg { rang = true; return nil }
+	// Ensure we start with room to move down (cursor on the first session/header).
+	before := m.list.cursor
+	m2, _ := m.Update(key("j"))
+	m = m2.(Model)
+	if m.list.cursor == before {
+		t.Skip("test model has no interior move available")
+	}
+	if rang {
+		t.Error("an interior move must not ring the bell")
+	}
+}
+
 func TestNewBuildsProviders(t *testing.T) {
 	m := New("/nope/claude", "/nope/codex", config.Default())
 	if len(m.providers) == 0 {

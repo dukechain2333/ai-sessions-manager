@@ -693,22 +693,39 @@ func TestSKeyFocusesFullTextSearch(t *testing.T) {
 	}
 }
 
-func TestUpAtTopEntersBarDownReturns(t *testing.T) {
-	m := searchModel(t)         // grouped: row 0 = alpha header, row 1 = s1 (initial cursor)
-	m2, _ := m.Update(key("k")) // row 1 → row 0 (normal move, no focus change)
+func TestUpAtTopStaysInListAndBells(t *testing.T) {
+	m := searchModel(t) // grouped: row 0 = alpha header, row 1 = s1 (initial cursor)
+	rang := false
+	m.bell = func() tea.Msg { rang = true; return nil }
+	m2, _ := m.Update(key("k")) // row 1 → row 0 (header): a normal move
+	m = m2.(Model)
+	if m.focus != focusList || m.list.cursor != 0 {
+		t.Fatalf("k above the first session must move to the header and stay in the list (focus=%v cursor=%d)", m.focus, m.list.cursor)
+	}
+	m2, cmd := m.Update(key("k")) // at row 0: edge — stay put, ring, do NOT enter the bar
 	m = m2.(Model)
 	if m.focus != focusList {
-		t.Fatal("k above the first session must stay in the list (moved to the header)")
+		t.Fatal("k at the top row must stay in the list, not focus the bar")
 	}
-	m2, _ = m.Update(key("k")) // at row 0: enter the bar
+	if m.list.cursor != 0 {
+		t.Errorf("cursor moved off the top edge: 0 → %d", m.list.cursor)
+	}
+	if cmd == nil {
+		t.Fatal("k at the top row must return the bell command")
+	}
+	cmd()
+	if !rang {
+		t.Error("k at the top row must ring the bell")
+	}
+}
+
+func TestDownInBarReturnsToList(t *testing.T) {
+	m := searchModel(t)
+	m2, _ := m.Update(key("/")) // enter the filter bar deliberately
 	m = m2.(Model)
-	if m.focus != focusFilter || !m.filterInput.Focused() {
-		t.Fatal("k at the top row must focus the search bar")
+	if m.focus != focusFilter {
+		t.Fatal("/ must focus the filter bar")
 	}
-	if m.searchAll {
-		t.Error("arrow entry must keep the current (title) layer")
-	}
-	// ↓ returns to the list keeping the text
 	m = typeInto(t, m, "abc")
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = m2.(Model)

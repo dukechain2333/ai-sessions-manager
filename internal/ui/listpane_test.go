@@ -25,6 +25,34 @@ func newTestPane() listPane {
 	return l
 }
 
+func TestMoveCursorReportsEdges(t *testing.T) {
+	l := newTestPane() // flat/grouped list with sessions; cursor starts on the first session
+	// Walk to the very top; the last upward move that changes nothing returns false.
+	for l.MoveCursor(-1) {
+	}
+	topBefore := l.cursor
+	if moved := l.MoveCursor(-1); moved {
+		t.Error("MoveCursor(-1) at the top must return false")
+	}
+	if l.cursor != topBefore {
+		t.Errorf("cursor moved at the top edge: %d → %d", topBefore, l.cursor)
+	}
+	// Walk to the very bottom; one more down returns false and does not move.
+	for l.MoveCursor(1) {
+	}
+	botBefore := l.cursor
+	if moved := l.MoveCursor(1); moved {
+		t.Error("MoveCursor(1) at the bottom must return false")
+	}
+	if l.cursor != botBefore {
+		t.Errorf("cursor moved at the bottom edge: %d → %d", botBefore, l.cursor)
+	}
+	// An interior move returns true.
+	if !l.MoveCursor(-1) {
+		t.Error("MoveCursor(-1) from the bottom must move and return true")
+	}
+}
+
 func TestListFilter(t *testing.T) {
 	l := newTestPane()
 	if got := l.Len(); got != 2 {

@@ -112,6 +112,7 @@ type Model struct {
 	// injected for tests
 	trashFn func(store.Session) (string, error)
 	runCmd  func(name, dir string, args ...string) tea.Cmd
+	bell    tea.Cmd
 
 	// mouse double-click tracking; now is injected for tests
 	lastClickZone zone
@@ -172,6 +173,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 			return p.Trash(s)
 		},
 		runCmd:       execCmd,
+		bell:         ringBell,
 		lastClickRow: -1,
 		now:          time.Now,
 	}
@@ -192,6 +194,14 @@ func execCmd(name, dir string, args ...string) tea.Cmd {
 	c := exec.Command(name, args...)
 	c.Dir = dir
 	return tea.ExecProcess(c, func(err error) tea.Msg { return agentExitMsg{err} })
+}
+
+// ringBell writes the terminal BEL to stderr — not stdout, which is Bubble
+// Tea's alt-screen frame — so it never corrupts the render. The terminal
+// decides how BEL manifests (audible, visual, or silent) per its own setting.
+func ringBell() tea.Msg {
+	fmt.Fprint(os.Stderr, "\a")
+	return nil
 }
 
 // tmuxLookPath reports whether tmux is on PATH; overridable in tests.
@@ -952,17 +962,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterInput.Focus()
 			return m, nil
 		case "j", "down":
-			m.list.MoveCursor(1)
-			return m, m.loadTranscriptCmd()
-		case "k", "up":
-			if m.list.cursor == 0 {
-				// walking up past the top row enters the search bar
-				m.focus = focusFilter
-				m.filterInput.Focus()
-				return m, nil
+			if m.list.MoveCursor(1) {
+				return m, m.loadTranscriptCmd()
 			}
-			m.list.MoveCursor(-1)
-			return m, m.loadTranscriptCmd()
+			return m, m.bell // bottom edge: stay put, ring
+		case "k", "up":
+			if m.list.MoveCursor(-1) {
+				return m, m.loadTranscriptCmd()
+			}
+			return m, m.bell // top edge: stay put, ring (no longer enters the filter)
 		case "s":
 			// s = search: focus the bar on the full-text layer. / stays the
 			// title-filter entry; s never flips an already-on layer back.
