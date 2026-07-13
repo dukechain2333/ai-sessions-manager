@@ -270,9 +270,9 @@ func (l *listPane) IsSubheader(i int) bool {
 	return i >= 0 && i < len(l.rows) && l.rows[i].subheader
 }
 
-func (l *listPane) MoveCursor(delta int) {
+func (l *listPane) MoveCursor(delta int) (moved bool) {
 	if len(l.rows) == 0 {
-		return
+		return false
 	}
 	step := 1
 	if delta < 0 {
@@ -282,6 +282,7 @@ func (l *listPane) MoveCursor(delta int) {
 	if n < 0 {
 		n = -n
 	}
+	start := l.cursor
 	for ; n > 0; n-- {
 		i := l.cursor + step
 		for i >= 0 && i < len(l.rows) && l.rows[i].subheader {
@@ -293,6 +294,7 @@ func (l *listPane) MoveCursor(delta int) {
 		l.cursor = i
 	}
 	l.ensureVisible()
+	return l.cursor != start
 }
 
 // RowAtLine maps a visible content line (0 = the first line currently on

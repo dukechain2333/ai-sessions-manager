@@ -146,7 +146,7 @@ sm --version
 
 | Key | Action |
 |---|---|
-| `↑/↓` `j/k` | move selection (over project headers and sessions); ↑ at the top enters the search bar, ↓ in the bar returns |
+| `↑/↓` `j/k` | move the selection over project headers and sessions; at the top or bottom edge it stays put and rings the terminal bell. Reach the filter/search bar with `/`, `s`, or a mouse click. |
 | `enter` | resume the selected session; on a **project header**, fold/unfold it |
 | `space` | fold / unfold the current project group |
 | `g` | toggle grouping by project ⇄ flat recency |
