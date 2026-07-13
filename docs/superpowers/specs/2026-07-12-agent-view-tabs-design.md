@@ -1,165 +1,148 @@
-# Agent view tabs (Claude ⇄ Codex) — Design
+# Agent view modes: list ⇄ tabs (Claude / Codex) — Design
 
 **Date:** 2026-07-12
-**Status:** Approved (design conversation + interactive mock, 2026-07-12)
+**Status:** Approved v2 (v1 approved same day replaced the mixed list; v2 keeps
+it: both modes coexist and the user picks)
 
 ## Problem
 
 Since Codex support (v0.3.0) the list mixes both agents' sessions, telling
-them apart only by a per-row `claude`/`codex` tag and an opt-in per-project
-`─ Claude ─ / ─ Codex ─` subheader toggle (`a`). Working in both agents, the
-mixed list stays noisy: you scan past sessions of the agent you don't care
-about right now, and the separation never rises above decoration.
+them apart by a per-row `claude`/`codex` tag and an opt-in per-project
+`─ Claude ─ / ─ Codex ─` subheader toggle (`a`). Working in both agents, some
+sessions views want full separation — but the mixed list (and its `a`
+subgrouping) is also worth keeping. Users should choose.
 
 ## Goal
 
-1. The list shows **exactly one agent at a time**: a Claude view and a Codex
-   view. `a` — and clicking the title-bar tabs — switches between them.
-2. Which view you're in is unmistakable: title-bar tabs plus the whole accent
-   theme (focused border, selection, ✻ mark, tmux dots) switching coral ⇄
-   teal.
-3. Each view keeps its own cursor, scroll, and fold state; switching back and
-   forth loses nothing.
-4. Filter and full-text search operate on the current view only, with a
-   cross-view hint when the other view has hits.
-5. Machines with a single agent see no tabs and zero behavior change.
+1. Two view modes:
+   - **List mode** (today's behavior, the default) — one mixed list, per-row
+     agent tags, `a` toggles per-project agent subheaders. Byte-for-byte
+     unchanged.
+   - **Tab mode** — the list shows **exactly one agent at a time**; the title
+     bar grows `[Claude 52]  Codex 18` tabs and `a` (or clicking a tab)
+     switches views.
+2. Mode is the user's choice: `v` toggles it live; `config.json`'s
+   `"view": "list" | "tabs"` sets the startup default (`"list"` built-in).
+3. In tab mode, which view you're in is unmistakable: tabs plus the accent
+   theme (focused border, selection, ✻ mark, filter prompt, tmux dots,
+   project label) switching coral ⇄ teal.
+4. Each view — including the mixed list — keeps its own cursor, scroll, and
+   fold state across switches.
+5. In tab mode, filter and full-text search operate on the current view only,
+   with a cross-view hint when the other view has hits.
+6. Machines with a single agent: list mode is unchanged; tab mode shows no
+   tab bar and `a` is a no-op there.
 
 ## Design
 
-### Views and switching
+### One mechanism: the mixed list is a third view
 
-The list pane gains an **active agent** (`claude` by default at startup;
-`codex` when Claude's provider is unavailable). Row building — grouping,
-folding, filtering, search results — considers only sessions whose
-`Session.Agent` matches the active agent.
+`listPane` gains an **active agent**: `""` (the zero value) means *all
+agents* — the mixed list, exactly today's code paths — while `claude` /
+`codex` filter row-building to that agent. Nothing is deleted: subheaders
+(`groupByAgent`) and per-row tags simply never render in a single-agent view
+(a filtered project can't have both agents; tags render only when the active
+agent is `""`).
 
-`a` toggles the active view. It works in every list-focused mode, including
-while a filter or full-text search is applied (the query re-applies to the
-other view) — unlike the old `a`, which was a no-op in search mode. While the
-filter input has focus, `a` still types the letter, as today.
+Per-view navigation state (`cursor`, `lineOffset`, `folded`) is parked in a
+`map[store.Agent]viewState` keyed by `""`/`claude`/`codex` and swapped by
+`SetAgent`, so mode/view switches lose nothing. A restored cursor is clamped
+by `refresh()` if that view's rows changed while parked.
 
-The strict two-view toggle **replaces** the mixed list; there is no "all"
-state.
+### Mode selection
 
-### Title bar
+- **`v` key** (list focus, like the other toggles; also a `v view` help-bar
+  button): flips list ⇄ tab mode. Entering tab mode restores the last tab
+  view (first entry: Claude, or Codex when Claude's projects dir is missing
+  while a Codex provider registered); leaving parks it and returns to the
+  mixed list.
+- **`config.json`**: top-level `"view": "list" | "tabs"` sets the startup
+  mode. Missing or unrecognized values fall back to `"list"` (the file's
+  existing forgiving philosophy). The scaffolded default file gains
+  `"view": "list"`.
 
-The session count becomes two tabs, active one bracketed and tinted in its
-agent's accent, inactive one dim:
+### Tab mode
 
-```
-✻ sm · AI Sessions  [Claude 52]  Codex 18   · indexing 12/70…
-```
+- `a` toggles Claude ⇄ Codex (strict two-state). It works in every
+  list-focused mode including live filter/search (the query re-applies to the
+  other view). While the filter input has focus, `a` types the letter.
+- **Title bar** replaces the session count with two tabs, active one
+  bracketed and tinted, inactive dim: `✻ sm · AI Sessions  [Claude 52]  Codex 18`.
+  Counts are **live** (they honor the `e` empty toggle and any active
+  filter/search — mid-filter they double as "the other side has N matches").
+  Status suffixes (`· indexing…`, `· N unindexed`, `· scanning…`) append
+  after the tabs. Clicking a tab activates it (new title-row mouse zone).
+  With tabs, the `· N matched` search suffix is dropped — the tab counts
+  carry it.
+- **No per-row agent tags** — inside a single-agent view they are pure noise;
+  the tab bar and theme carry the identity.
+- **Theme follows the view**: focused pane border, selected title/meta,
+  group-header selection/count, header tmux dot, ✻ mark, filter-prompt `>`,
+  and the current-project label all use the active agent's accent. (In list
+  mode all of these keep today's logic, including the majority-agent label
+  and per-session border.)
+- **`n` new session** launches the **active view's agent** directly — no
+  pick-agent dialog. (List mode keeps the existing flow: direct with one
+  provider, `dialogPickAgent` with two.)
+- **Search scope**: `/` and `s` evaluate against the active view only. The
+  index still covers everything; hits are partitioned by agent. Zero hits in
+  the active view with hits in the other renders
+  `no matches · 3 hits in Codex — press a` (singular `1 hit`) instead of the
+  bare `no matches`. The mixed list keeps today's strings.
+- **Single provider**: no tab bar (title falls back to the `N sessions`
+  count), `a` is a no-op; `v` still toggles the mode (the only visible
+  differences in tab mode are the hidden tags).
 
-- Tab counts are **live**: each shows the number of sessions that view would
-  display right now — honoring the `e` empty toggle and any active filter or
-  search. Browsing untouched, they are the full per-agent counts; mid-filter
-  they double as a "the other side has N matches" signal.
-- Status suffixes (`· indexing…`, `· N unindexed`, `· scanning…`) append
-  after the tabs, unchanged.
-- Clicking a tab activates that view (new mouse zone on the title row).
+### List mode
 
-### Per-view state
-
-Cursor position, scroll offset, and per-project fold state are kept **per
-view** — two independent copies, swapped on toggle. The same project may be
-folded in one view and open in the other. After a rescan, each view restores
-its remembered selection when the session still exists, else falls back to
-the first session (existing `selectSession` behavior).
-
-### Theme follows the active view
-
-The style set already carries both accents (`Accent`, `CodexAccent`). In a
-single-agent view every agent-conditional color collapses to the active
-agent's accent: focused pane border, selected title/meta, group-header
-selection and counts, ✻ title mark, filter-prompt `>`, tmux `●` markers, and
-the current-project label. The per-row `claude`/`codex` tag is **removed** —
-inside a single-agent view it is pure noise; the tab bar and theme carry the
-identity. (`projectMajorityAgent` and the per-row tag styles go away with
-it.)
-
-The preview pane keeps rendering whatever session is selected; its glyph
-accent keys off that session's agent as today.
-
-### Filter and search scope
-
-`/` fuzzy filter and `s` full-text search evaluate against the active view's
-sessions only. The index still covers everything (it is keyed by path,
-agent-agnostic), and hits are partitioned by agent:
-
-- Active view has hits → show them, as today.
-- Active view has **zero** hits but the other view has some → the empty-state
-  line says so explicitly instead of a bare "no matches":
-
-  ```
-  no matches · 3 hits in Codex — press a
-  ```
-
-  Switching views with the search live shows those hits.
-
-### New, delete, tmux
-
-- `n` starts a session with the **active view's agent** — the
-  `dialogPickAgent` "[1] Claude [2] Codex" step disappears (its guard for a
-  missing binary moves to the single-agent path). The directory picker and
-  its candidates (all known dirs) are unchanged.
-- `d` delete and `x` tmux-kill act on the selected session/project of the
-  current view; mechanics unchanged.
-
-### Availability and degradation
-
-Tabs appear when **two or more providers are available** (their data dirs
-exist), even if one currently has zero sessions — its view shows
-"no sessions" and `n` can create the first one. With a single available
-provider: no tabs, `a` is a no-op, and the UI is byte-for-byte today's
-single-agent experience.
-
-### Removals
-
-The per-project agent subheader feature is subsumed by the views and is
-deleted: `row.subheader`, `groupByAgent`, `ToggleAgentGroup`,
-`projectHasBothAgents`, the subheader branches in `refresh`/`View`/cursor
-movement, and their tests. (`agentTitle` survives — the tab labels and the
-cross-view search hint reuse it.) The help bar keeps the `a agent` entry
-(same key, new meaning).
+Today's v0.3.1 behavior, untouched: mixed recency list, per-row tags, `a`
+subheaders, majority-agent label/border accents, `n`'s provider-count-based
+flow, plain `no matches` empty states, `N sessions` title (with search
+`· N matched` suffix).
 
 ## Implementation shape
 
-All changes live in `internal/ui`; `internal/store` is untouched.
-
-- **`listpane.go`** — `activeAgent store.Agent` field; row building filters
-  by it; per-view `{cursor, lineOffset, folded}` swapped in a `SetAgent`
-  method; per-agent visible counts exposed for the tabs; subheader machinery
-  removed; empty-state string gains the cross-view hit hint.
-- **`model.go`** — title bar renders tabs; `a` calls the view toggle;
-  `startNew` uses the active agent; startup picks the default view;
-  status-line/current-project label colors read the active accent.
-- **`mouse.go`** — title-row tab hit zones; help-bar `a agent` unchanged.
-- **`styles.go`** — active-accent helper (`AccentFor(activeAgent)`); drop the
-  per-row tag styles.
+- **`internal/config`** — `Config.View string` (+ `"view"` in
+  `DefaultFileJSON`, validated load, tests).
+- **`internal/ui/listpane.go`** — `activeAgent`, `agentTotals` (per-agent
+  visible counts for tabs/hint), `SetAgent` + `viewState` map, conditional
+  tag/accent rendering, search partition, empty-state hint. `otherAgent`
+  helper. Nothing removed.
+- **`internal/ui/model.go`** — `tabsMode`/`tabView` fields, `v` toggle, `a`
+  branches by mode, config wiring in `New`, `agentTabs`/`tabAt` (shared by
+  View and mouse), title-bar tabs with single-provider/list fallback, chrome
+  accents branch on `list.Agent() != ""`.
+- **`internal/ui/mouse.go`** — `zoneTabs` (title row) routed through the same
+  guarded switch as `a`; `v view` help-bar item.
+- **`internal/ui/styles.go`** — `TitleMarkFor(agent)` replaces `TitleMark`
+  (`AgentAccent("")` is the Claude accent, so the mixed list renders as
+  today).
+- `internal/store` is untouched.
 
 ## Testing
 
-Unit tests (table style, matching existing suites):
-
-- listpane: view filtering, per-view cursor/scroll/fold isolation, toggle
-  round-trip preserves selection, live tab counts under filter/empty toggle,
-  search-hit partition and empty-state hint.
-- model: `a` toggles and re-applies filter/search; `n` skips the agent
-  dialog and launches the active agent; single-provider degradation (no
-  tabs, `a` no-op); default view when Claude is unavailable.
-- mouse: clicking each tab switches views; existing zones unaffected.
-
-`make test` and `make vet` green.
+- config: default `"list"`, load `"tabs"`, unknown value falls back;
+  `DefaultFileJSON` pin test covers the new key automatically.
+- listpane: existing tests (mixed defaults) pass unchanged; new tests for
+  agent-view filtering, live totals under filter, per-view state round-trips
+  (including the mixed view), tags hidden and subheaders absent in agent
+  views, search partition + empty-state hint.
+- model: `v` round-trip (mode + state), `a` per mode, startup mode from
+  config, title tabs vs fallback, chrome colors in an empty tab view, filter
+  surviving switches, tab-mode `n`.
+- mouse: `zoneTabs` geometry pinned to the rendered header, tab clicks
+  (inactive switches, active no-op), list-mode/single-provider title clicks
+  inert, `v view` help-bar button.
 
 ## Out of scope
 
-- Remembering the last active view across runs (config or state file).
-- A three-state toggle with a mixed "all" view.
-- Per-view `--projects-dir`-style overrides for Codex.
+- Persisting the last mode/view across runs beyond the config default.
+- A per-project or per-view `--projects-dir` override.
+- Removing any list-mode feature.
 
 ## Rollout note (this machine)
 
 The user runs a Homebrew-installed upstream `sm` 0.3.1 at
 `/opt/homebrew/bin/sm`, which shadows `~/.local/bin`. After `make install`,
 verify `which sm` resolves to the fork build (unlink or overwrite the brew
-binary if not).
+binary if not). The user's own config should set `"view": "tabs"`.
