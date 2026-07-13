@@ -171,6 +171,12 @@ func (l *listPane) Agent() store.Agent { return l.activeAgent }
 // honoring the empty toggle and any live filter or search results.
 func (l *listPane) AgentTotal(a store.Agent) int { return l.agentTotals[a] }
 
+// accent is the active view's accent: the agent's color in a single-agent
+// view, the default (Claude) accent in the mixed list.
+func (l *listPane) accent() lipgloss.AdaptiveColor {
+	return l.styles.AgentAccent(l.activeAgent)
+}
+
 // SetAgent switches the pane to view a, parking the current view's cursor,
 // scroll, and fold state and restoring a's. refresh clamps the restored
 // cursor if that view's rows changed while it was parked; a never-visited
@@ -545,6 +551,16 @@ func (l *listPane) ensureVisible() {
 
 func (l *listPane) View() string {
 	if l.total == 0 {
+		if l.search != nil && l.activeAgent != "" {
+			if n := l.agentTotals[otherAgent(l.activeAgent)]; n > 0 {
+				plural := "s"
+				if n == 1 {
+					plural = ""
+				}
+				hint := fmt.Sprintf("no matches · %d hit%s in %s — press a", n, plural, agentTitle(otherAgent(l.activeAgent)))
+				return l.padHeight(l.styles.ListMeta.Render(hint))
+			}
+		}
 		if l.search != nil || l.filter != "" {
 			return l.padHeight(l.styles.ListMeta.Render("no matches"))
 		}
@@ -572,6 +588,9 @@ func (l *listPane) View() string {
 			style := l.styles.GroupHeader
 			if i == l.cursor {
 				style = l.styles.GroupHeaderSel
+				if l.activeAgent != "" {
+					style = style.Foreground(l.accent())
+				}
 			}
 			// Split the name from the "(n)" count so they can carry
 			// different styles while the rendered text stays byte-identical
@@ -581,10 +600,18 @@ func (l *listPane) View() string {
 			// characters, just without the count's distinct color.
 			rendered := style.Render(label)
 			if suffix := " " + count; strings.HasSuffix(label, suffix) {
-				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + l.styles.GroupCount.Render(count)
+				cntStyle := l.styles.GroupCount
+				if l.activeAgent != "" {
+					cntStyle = cntStyle.Foreground(l.accent())
+				}
+				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + cntStyle.Render(count)
 			}
 			if l.projectHasLiveTmux(r.project) {
-				rendered += " " + lipgloss.NewStyle().Foreground(l.styles.AgentAccent(l.projectMajorityAgent(r.project))).Render("●")
+				dot := l.styles.AgentAccent(l.projectMajorityAgent(r.project))
+				if l.activeAgent != "" {
+					dot = l.accent()
+				}
+				rendered += " " + lipgloss.NewStyle().Foreground(dot).Render("●")
 			}
 			lines = append(lines, rendered)
 			continue
@@ -612,11 +639,6 @@ func (l *listPane) View() string {
 				meta += "s"
 			}
 		}
-		tag := s.Agent.Label()
-		tagStyle := l.styles.ClaudeTag
-		if s.Agent == store.AgentCodex {
-			tagStyle = l.styles.CodexTag
-		}
 		prefix := "  "
 		titleStyle, metaStyle := l.styles.ListTitle, l.styles.ListMeta
 		if i == l.cursor {
@@ -632,10 +654,20 @@ func (l *listPane) View() string {
 			titleWidth -= 2 // reserve space for " ●"
 			marker = " " + lipgloss.NewStyle().Foreground(l.styles.AgentAccent(s.Agent)).Render("●")
 		}
-		metaText := store.Truncate("  "+meta, l.width-len(tag)-3)
+		// The mixed list tags every row with its agent; a single-agent view
+		// doesn't need to — the tab bar carries the identity.
+		metaLine := metaStyle.Render(store.Truncate("  "+meta, l.width))
+		if l.activeAgent == "" {
+			tag := s.Agent.Label()
+			tagStyle := l.styles.ClaudeTag
+			if s.Agent == store.AgentCodex {
+				tagStyle = l.styles.CodexTag
+			}
+			metaLine = metaStyle.Render(store.Truncate("  "+meta, l.width-len(tag)-3)) + " " + tagStyle.Render(tag)
+		}
 		lines = append(lines,
 			titleStyle.Render(store.Truncate(prefix+title, titleWidth))+marker,
-			metaStyle.Render(metaText)+" "+tagStyle.Render(tag),
+			metaLine,
 			"")
 	}
 

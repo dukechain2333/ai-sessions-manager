@@ -712,3 +712,59 @@ func TestOtherAgent(t *testing.T) {
 		t.Error("otherAgent must flip between the two agents")
 	}
 }
+
+func TestAgentViewHidesTagsAndSubheaders(t *testing.T) {
+	l := newMixedPane()
+	l.ToggleAgentGroup() // groupByAgent: false -> true, refreshing rows
+	if v := l.View(); !strings.Contains(v, "─ Claude ─") {
+		t.Fatalf("setup: mixed view with groupByAgent should render subheaders:\n%s", v)
+	}
+	l.SetAgent(store.AgentClaude)
+	v := l.View()
+	if strings.Contains(v, "claude") || strings.Contains(v, "codex") {
+		t.Errorf("single-agent view must not render per-row agent tags:\n%s", v)
+	}
+	if strings.Contains(v, "─ Claude ─") || strings.Contains(v, "─ Codex ─") {
+		t.Errorf("single-agent view must not render agent subheaders:\n%s", v)
+	}
+	l.SetAgent("")
+	if v := l.View(); !strings.Contains(v, "claude") || !strings.Contains(v, "codex") {
+		t.Errorf("mixed view must keep per-row tags:\n%s", v)
+	}
+}
+
+func TestAccentFollowsActiveView(t *testing.T) {
+	l := newMixedPane()
+	if l.accent() != l.styles.Accent {
+		t.Error("mixed view accent should be the default (claude) accent")
+	}
+	l.SetAgent(store.AgentCodex)
+	if l.accent() != l.styles.CodexAccent {
+		t.Error("codex view accent should be the codex accent")
+	}
+}
+
+func TestSearchEmptyStateHintsOtherView(t *testing.T) {
+	l := newMixedPane()
+	l.SetAgent(store.AgentClaude)
+	// Hits land only on the two codex sessions (slice indices 3 and 4).
+	l.SetSearchResults([]store.SessionHits{{Session: 3, MsgHits: 5}, {Session: 4, MsgHits: 1}})
+	if got := l.Len(); got != 0 {
+		t.Fatalf("claude view Len = %d, want 0", got)
+	}
+	if v := l.View(); !strings.Contains(v, "no matches · 2 hits in Codex — press a") {
+		t.Errorf("empty search view = %q, want the cross-view hint", v)
+	}
+	// One hit: singular wording.
+	l.SetAgent(store.AgentCodex)
+	l.SetSearchResults([]store.SessionHits{{Session: 0, MsgHits: 2}}) // s1, claude
+	if v := l.View(); !strings.Contains(v, "no matches · 1 hit in Claude — press a") {
+		t.Errorf("singular hint missing: %q", v)
+	}
+	// The mixed list keeps the bare string.
+	l.SetAgent("")
+	l.SetSearchResults([]store.SessionHits{})
+	if v := l.View(); !strings.Contains(v, "no matches") || strings.Contains(v, "press a") {
+		t.Errorf("mixed empty search view = %q, want bare \"no matches\"", v)
+	}
+}
