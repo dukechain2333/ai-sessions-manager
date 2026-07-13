@@ -768,3 +768,68 @@ func TestSearchEmptyStateHintsOtherView(t *testing.T) {
 		t.Errorf("mixed empty search view = %q, want bare \"no matches\"", v)
 	}
 }
+
+func TestSetAgentRestoresSelectionByIdentity(t *testing.T) {
+	l := newMixedPane()
+	l.SetAgent(store.AgentClaude)
+	l.MoveCursor(2) // alpha header → s1 → beta header… lands on s2's title row
+	s, _, ok := l.Selected()
+	if !ok || s.ID != "s2" {
+		t.Fatalf("setup: selected %v (ok=%v), want s2", s.ID, ok)
+	}
+	l.SetAgent(store.AgentCodex)
+	// A rescan lands while claude is parked: a brand-new claude session is
+	// now the most recent, shifting every row the parked cursor pointed at.
+	ns := append([]store.Session{{ID: "s0", Slug: "-p1", CWD: "/x/alpha", Title: "Brand new", FirstPrompt: "hi", Agent: store.AgentClaude, UserMessages: 1, Enriched: true, LastActivity: time.Now().Add(time.Minute)}}, mixedSessions()...)
+	l.SetSessions(ns)
+	l.SetAgent(store.AgentClaude)
+	if s, _, ok := l.Selected(); !ok || s.ID != "s2" {
+		t.Errorf("after churn, restored selection = %v (ok=%v), want s2 by identity", s.ID, ok)
+	}
+}
+
+func TestSetAgentBeforeSessionsLoadRecovers(t *testing.T) {
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(50, 30)
+	l.SetAgent(store.AgentClaude) // parks the (still empty) mixed view
+	l.SetSessions(mixedSessions())
+	l.SetAgent("") // first REAL visit to the mixed view
+	if _, _, ok := l.Selected(); !ok {
+		t.Error("a view parked before sessions loaded must land on a session, not a header")
+	}
+}
+
+func TestToggleEmptyRecoversFromEmptyView(t *testing.T) {
+	// A view whose sessions are ALL empty shows "no sessions"; e must land
+	// the cursor on a revealed session, not the project header above it.
+	sessions := []store.Session{
+		{ID: "e1", Slug: "-p", CWD: "/x/hooks", Title: "", FirstPrompt: "", Agent: store.AgentClaude, UserMessages: 0, Enriched: true, LastActivity: time.Now()},
+	}
+	l := listPane{styles: defaultStyles(), groupByProject: true}
+	l.SetSize(50, 30)
+	l.SetSessions(sessions)
+	if l.Len() != 0 {
+		t.Fatalf("setup: Len = %d, want 0 (all empty)", l.Len())
+	}
+	l.ToggleEmpty()
+	if s, _, ok := l.Selected(); !ok || s.ID != "e1" {
+		t.Errorf("after e, selected = %v (ok=%v), want e1", s.ID, ok)
+	}
+}
+
+func TestHeaderDotScopedToActiveView(t *testing.T) {
+	l := newMixedPane()
+	// Only the codex session in alpha has a live tmux.
+	l.SetTmuxLive(map[string]bool{tmuxNameFor(l.sessions[3]): true}) // x1
+	if !l.projectHasLiveTmux("alpha") {
+		t.Fatal("mixed list: alpha should report a live tmux")
+	}
+	l.SetAgent(store.AgentClaude)
+	if l.projectHasLiveTmux("alpha") {
+		t.Error("claude view must not report the hidden codex tmux")
+	}
+	l.SetAgent(store.AgentCodex)
+	if !l.projectHasLiveTmux("alpha") {
+		t.Error("codex view should report its own live tmux")
+	}
+}

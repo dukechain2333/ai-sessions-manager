@@ -87,8 +87,9 @@ type Model struct {
 	filterInput textinput.Model
 	focus       focusArea
 
-	tabsMode bool        // false: mixed list (default); true: per-agent tab views
-	tabView  store.Agent // last active tab view, restored on re-entering tab mode
+	// Tab mode is not tracked separately: the list's active agent IS the
+	// mode ("" = mixed list). tabView only remembers which tab to restore.
+	tabView store.Agent // last active tab view, restored on re-entering tab mode
 
 	dialog             dialogKind
 	errText            string
@@ -175,13 +176,8 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		now:          time.Now,
 	}
 	if cfg.View == "tabs" {
-		ret.tabsMode = true
 		ret.tabView = ret.defaultTabView()
 		ret.setAgentView(ret.tabView)
-		// setAgentView parked a zero viewState for the (empty) mixed list;
-		// drop it so the user's first real visit gets first-session
-		// placement like any never-visited view.
-		delete(ret.list.savedViews, "")
 	}
 	ret.index, ret.indexErr = store.NewSearchIndex()
 	if ret.tmuxEnabled && !tmuxLookPath() {
@@ -259,7 +255,11 @@ func (m Model) killOneCmd(name string) tea.Cmd {
 
 // killProjectCmd kills every live tmux belonging to project's sessions
 // (named children), plus any provisional tmux whose path base is project.
-func (m Model) killProjectCmd(project string) tea.Cmd {
+// killProjectCmd kills project's live tmux. agent narrows the kill set to
+// one agent's sessions (and pending tmux) — the single-agent views pass
+// their own agent so a tab view never kills tmux it is hiding; "" (the
+// mixed list) kills project-wide.
+func (m Model) killProjectCmd(project string, agent store.Agent) tea.Cmd {
 	r := m.tmux
 	sessions := append([]store.Session(nil), m.list.Sessions()...)
 	return func() tea.Msg {
@@ -268,7 +268,7 @@ func (m Model) killProjectCmd(project string) tea.Cmd {
 			set = map[string]bool{}
 		}
 		for _, s := range sessions {
-			if s.Project() != project {
+			if s.Project() != project || (agent != "" && s.Agent != agent) {
 				continue
 			}
 			name := tmuxNameFor(s)
@@ -279,6 +279,9 @@ func (m Model) killProjectCmd(project string) tea.Cmd {
 		}
 		for name := range set {
 			if !tmux.IsPending(name) {
+				continue
+			}
+			if agent != "" && tmux.PendingAgent(name) != string(agent) {
 				continue
 			}
 			if p, err := r.Path(name); err == nil && filepath.Base(p) == project {
@@ -352,13 +355,11 @@ func (m *Model) setAgentView(a store.Agent) {
 // tab view (Claude on first entry); leaving parks it and returns to the
 // mixed list.
 func (m *Model) toggleViewMode() {
-	if m.tabsMode {
-		m.tabsMode = false
-		m.tabView = m.list.Agent()
+	if a := m.list.Agent(); a != "" {
+		m.tabView = a
 		m.setAgentView("")
 		return
 	}
-	m.tabsMode = true
 	if m.tabView == "" {
 		m.tabView = m.defaultTabView()
 	}
@@ -369,7 +370,7 @@ func (m *Model) toggleViewMode() {
 // single provider, or when a is already active. Shared by the `a` key and
 // title-tab clicks.
 func (m Model) switchAgentView(a store.Agent) (tea.Model, tea.Cmd) {
-	if !m.tabsMode || len(m.providers) <= 1 || a == "" || a == m.list.Agent() {
+	if m.list.Agent() == "" || len(m.providers) <= 1 || a == "" || a == m.list.Agent() {
 		return m, nil
 	}
 	m.setAgentView(a)
@@ -415,6 +416,11 @@ func waitIndex(ch chan store.IndexProgress) tea.Cmd {
 	}
 }
 
+// loadTranscriptCmd loads the selected session's transcript, short-circuiting
+// when that session is already showing (previewFor). The id is not the full
+// cache key: callers that change what the preview should RENDER for an
+// unchanged session — search highlighting (query/layer changes) or on-disk
+// content (rescans) — must clear previewFor first to defeat the short-circuit.
 func (m *Model) loadTranscriptCmd() tea.Cmd {
 	s, _, ok := m.list.Selected()
 	if !ok {
@@ -455,6 +461,10 @@ func (m *Model) bodyHeight() int {
 	return h
 }
 
+// titleText is the app-title segment rendered after the ✻ mark. tabAt
+// derives the tab x-origin from it, so render and hit-test share one source.
+const titleText = " sm · AI Sessions  "
+
 // agentTab is one title-bar tab: its rendered label and the agent a click
 // on it activates. View() and the mouse hit-test share this table.
 type agentTab struct {
@@ -465,7 +475,7 @@ type agentTab struct {
 // agentTabs returns the title-bar tabs (Claude first, active bracketed,
 // live per-view counts), or nil in list mode / with a single provider.
 func (m Model) agentTabs() []agentTab {
-	if !m.tabsMode || len(m.providers) <= 1 {
+	if m.list.Agent() == "" || len(m.providers) <= 1 {
 		return nil
 	}
 	mk := func(a store.Agent) agentTab {
@@ -479,11 +489,11 @@ func (m Model) agentTabs() []agentTab {
 }
 
 // tabAt maps a title-row x to the tab under it, mirroring View()'s header:
-// the "✻ sm · AI Sessions  " prefix, then tab labels joined by two spaces.
+// the ✻ mark + titleText prefix, then tab labels joined by two spaces.
 // ok is false between/beyond tabs, in list mode, and with one provider
 // (agentTabs is nil in both of the latter cases).
 func (m Model) tabAt(x int) (store.Agent, bool) {
-	pos := lipgloss.Width("✻ sm · AI Sessions  ")
+	pos := lipgloss.Width("✻" + titleText)
 	for _, tb := range m.agentTabs() {
 		w := lipgloss.Width(tb.label)
 		if x >= pos && x < pos+w {
@@ -968,18 +978,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.list.ToggleGroup()
 			return m, m.loadTranscriptCmd()
 		case "a":
-			if m.tabsMode {
+			if m.list.Agent() != "" {
 				return m.switchAgentView(otherAgent(m.list.Agent()))
 			}
 			m.list.ToggleAgentGroup()
 			return m, m.loadTranscriptCmd()
 		case "v":
 			m.toggleViewMode()
-			m.lastClickRow = -1 // rows renumbered
-			// Force a reload: the visible session set changed even when the
-			// cursor happens to land back on the same id (same reasoning as
-			// the toggleSearchLayer/Esc paths).
-			m.previewFor = ""
+			m.lastClickRow = -1 // rows renumbered — a stale click must not pair
+			// No previewFor reset: when the restored selection is the same
+			// session, the already-rendered preview is already correct.
 			return m, m.loadTranscriptCmd()
 		case " ":
 			m.list.ToggleFold()
@@ -1077,33 +1085,28 @@ func (m Model) openNewSession() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// launchNewSession starts a new session in dir. In tab mode the view IS
-// the agent choice, so it launches directly. In list mode: a single
+// launchDirectly starts a new session with provider p in dir, gated on the
+// agent binary being on PATH.
+func (m Model) launchDirectly(p store.Provider, dir string) (Model, tea.Cmd) {
+	if err := binLookPath(p.Binary()); err != nil {
+		m.dialog = dialogError
+		m.errText = p.Binary() + " not found on PATH"
+		return m, nil
+	}
+	return m, m.runAgentCmd(p, dir, nil)
+}
+
+// launchNewSession starts a new session in dir. In tab mode the view IS the
+// agent choice (its provider is always registered — views are only reachable
+// through the provider set), so it launches directly. In list mode: a single
 // provider launches directly; two or more fall back to dialogPickAgent.
 func (m Model) launchNewSession(dir string) (Model, tea.Cmd) {
 	m.dialog = dialogNone
 	if a := m.list.Agent(); a != "" {
-		p := store.ProviderFor(m.providers, a)
-		if p == nil {
-			m.dialog = dialogError
-			m.errText = a.Label() + " is not available"
-			return m, nil
-		}
-		if err := binLookPath(p.Binary()); err != nil {
-			m.dialog = dialogError
-			m.errText = p.Binary() + " not found on PATH"
-			return m, nil
-		}
-		return m, m.runAgentCmd(p, dir, nil)
+		return m.launchDirectly(store.ProviderFor(m.providers, a), dir)
 	}
 	if len(m.providers) == 1 {
-		p := m.providers[0]
-		if err := binLookPath(p.Binary()); err != nil {
-			m.dialog = dialogError
-			m.errText = p.Binary() + " not found on PATH"
-			return m, nil
-		}
-		return m, m.runAgentCmd(p, dir, nil)
+		return m.launchDirectly(m.providers[0], dir)
 	}
 	m.pendingNewDir = dir
 	m.dialog = dialogPickAgent
@@ -1262,7 +1265,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dialog = dialogNone
 		switch msg.String() {
 		case "y", "enter":
-			return m, m.killProjectCmd(proj)
+			return m, m.killProjectCmd(proj, m.list.Agent())
 		}
 		return m, nil
 	}
@@ -1321,9 +1324,13 @@ func (m Model) dialogView() string {
 	case dialogKillProject:
 		n := 0
 		for _, s := range m.list.Sessions() {
-			if s.Project() == m.pendingKillProject && m.tmuxLive[tmuxNameFor(s)] {
-				n++
+			if s.Project() != m.pendingKillProject || !m.tmuxLive[tmuxNameFor(s)] {
+				continue
 			}
+			if a := m.list.Agent(); a != "" && s.Agent != a {
+				continue // a tab view only offers (and kills) its own agent's tmux
+			}
+			n++
 		}
 		return m.st.DialogBox.Render(fmt.Sprintf(
 			"Kill %d tmux in %s?\n\n%s", n, m.pendingKillProject,
@@ -1358,7 +1365,7 @@ func (m Model) View() string {
 	}
 	segs := []string{
 		m.st.TitleMarkFor(m.list.Agent()), // ✻ in the active view's accent
-		m.st.AppTitle.Render(" sm · AI Sessions  "),
+		m.st.AppTitle.Render(titleText),
 	}
 	for i, tb := range tabs {
 		st := m.st.Count
@@ -1404,7 +1411,8 @@ func (m Model) View() string {
 
 	// Clamp to the terminal width so a help line wider than the screen
 	// truncates cleanly instead of wrapping onto another row (which would
-	// corrupt the alt-screen frame). The full bar needs ~113 columns.
+	// corrupt the alt-screen frame). The full bar needs ~122 columns
+	// (~130 with tmux's "x kill").
 	label := m.projectLabelText()
 	labelW := lipgloss.Width(label)
 	helpBudget := m.width - labelW

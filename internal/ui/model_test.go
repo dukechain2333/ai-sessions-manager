@@ -589,21 +589,24 @@ func newTwoAgentModel(t *testing.T) Model {
 
 func TestVKeyTogglesViewMode(t *testing.T) {
 	m := newTwoAgentModel(t)
-	if m.tabsMode || m.list.Agent() != "" {
-		t.Fatalf("default = tabsMode=%v agent=%q, want list mode / mixed", m.tabsMode, m.list.Agent())
+	if m.list.Agent() != "" {
+		t.Fatalf("default agent=%q, want list mode / mixed", m.list.Agent())
 	}
-	m2, cmd := m.Update(key("v"))
+	m2, _ := m.Update(key("v"))
 	m = m2.(Model)
-	if !m.tabsMode || m.list.Agent() != store.AgentClaude {
-		t.Errorf("v: tabsMode=%v agent=%q, want tab mode / claude", m.tabsMode, m.list.Agent())
+	if m.list.Agent() != store.AgentClaude {
+		t.Errorf("v: agent=%q, want tab mode / claude", m.list.Agent())
 	}
-	if cmd == nil {
-		t.Error("mode switch should reload the preview")
+	// The claude view lands on the same newest session the mixed list was
+	// previewing, so no reload is issued — the preview must simply still
+	// track the selection.
+	if s, _, ok := m.list.Selected(); !ok || s.ID != m.previewFor {
+		t.Errorf("preview tracks %q but selection is %v (ok=%v)", m.previewFor, s.ID, ok)
 	}
 	m2, _ = m.Update(key("v"))
 	m = m2.(Model)
-	if m.tabsMode || m.list.Agent() != "" {
-		t.Errorf("v v: tabsMode=%v agent=%q, want list mode / mixed", m.tabsMode, m.list.Agent())
+	if m.list.Agent() != "" {
+		t.Errorf("v v: agent=%q, want list mode / mixed", m.list.Agent())
 	}
 }
 
@@ -676,7 +679,7 @@ func TestTitleTabsNeedTwoProviders(t *testing.T) {
 	m := newTestModel() // single provider
 	m2, _ := m.Update(key("v"))
 	m = m2.(Model)
-	if !m.tabsMode {
+	if m.list.Agent() == "" {
 		t.Fatal("v should still enter tab mode with one provider")
 	}
 	if v := m.View(); strings.Contains(v, "[Claude") || !strings.Contains(v, "2 sessions") {
@@ -693,8 +696,8 @@ func TestStartupModeFromConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.View = "tabs"
 	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", cfg)
-	if !m.tabsMode || m.list.Agent() != store.AgentClaude {
-		t.Errorf("config view=tabs: tabsMode=%v agent=%q, want tabs/claude", m.tabsMode, m.list.Agent())
+	if m.list.Agent() != store.AgentClaude {
+		t.Errorf("config view=tabs: agent=%q, want the claude tab view", m.list.Agent())
 	}
 	m = New("/nonexistent-projects-dir", t.TempDir(), cfg) // codex registers, claude dir missing
 	if m.list.Agent() != store.AgentCodex {
@@ -781,5 +784,45 @@ func TestTitleRowTruncatesToWidth(t *testing.T) {
 	first := strings.SplitN(m.View(), "\n", 2)[0]
 	if w := lipgloss.Width(first); w > 44 {
 		t.Errorf("title row width = %d, must be clamped to 44", w)
+	}
+}
+
+func TestVBeforeScanThenBackSelectsSession(t *testing.T) {
+	m := New(t.TempDir(), "/nonexistent-codex-dir", config.Default())
+	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = m2.(Model)
+	m2, _ = m.Update(key("v")) // the user is faster than the first scan
+	m = m2.(Model)
+	m2, _ = m.Update(scanDoneMsg{sessions: mixedSessions()})
+	m = m2.(Model)
+	m2, _ = m.Update(key("v")) // back to the mixed list
+	m = m2.(Model)
+	if _, _, ok := m.list.Selected(); !ok {
+		t.Error("returning to the pre-scan-parked mixed list must select a session")
+	}
+}
+
+func TestKillProjectScopedToActiveView(t *testing.T) {
+	m := newTwoAgentModel(t)
+	claudeName := tmuxNameFor(m.list.sessions[0]) // s1: alpha, claude
+	codexName := tmuxNameFor(m.list.sessions[3])  // x1: alpha, codex
+	ft := &fakeTmux{live: map[string]bool{claudeName: true, codexName: true}, paths: map[string]string{}}
+	m.tmux = ft
+	m2, _ := m.Update(key("v")) // claude tab view
+	m = m2.(Model)
+	m.killProjectCmd("alpha", m.list.Agent())()
+	if len(ft.killed) != 1 || ft.killed[0] != claudeName {
+		t.Errorf("claude view kill set = %v, want only %s", ft.killed, claudeName)
+	}
+	if !ft.live[codexName] {
+		t.Error("the hidden codex tmux must survive a claude-view project kill")
+	}
+	// The mixed list keeps the project-wide kill.
+	m2, _ = m.Update(key("v"))
+	m = m2.(Model)
+	m.killProjectCmd("alpha", m.list.Agent())()
+	if ft.live[codexName] {
+		t.Error("the mixed list's project kill should cover both agents")
 	}
 }

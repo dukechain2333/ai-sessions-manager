@@ -27,9 +27,12 @@ type row struct {
 }
 
 // viewState is the navigation state parked for an inactive view ("" is the
-// mixed list, claude/codex the single-agent views).
+// mixed list, claude/codex the single-agent views). The cursor is anchored
+// by identity — session ID or header project — not row position, so it
+// survives the session list changing while the view is parked.
 type viewState struct {
-	cursor     int
+	selectedID string // session under the cursor ("" when none)
+	header     string // project header under the cursor ("" when none)
 	lineOffset int
 	folded     map[string]bool
 }
@@ -143,6 +146,10 @@ func (l *listPane) ToggleEmpty() {
 	l.refresh()
 	if ok {
 		l.selectSession(sel)
+	} else {
+		// Same fallback as ToggleGroup: without it, revealing rows in a view
+		// that showed "no sessions" strands the cursor on a project header.
+		l.cursorToFirstSession()
 	}
 }
 
@@ -177,11 +184,13 @@ func (l *listPane) accent() lipgloss.AdaptiveColor {
 	return l.styles.AgentAccent(l.activeAgent)
 }
 
-// SetAgent switches the pane to view a, parking the current view's cursor,
-// scroll, and fold state and restoring a's. refresh clamps the restored
-// cursor if that view's rows changed while it was parked; a never-visited
-// view starts on its first session (not row 0, which is a header when
-// grouped — that would clear the preview).
+// SetAgent switches the pane to view a, parking the current view's cursor
+// anchor, scroll, and fold state and restoring a's. Anchors are identities
+// (session ID / header project), not row positions, so a rescan, delete, or
+// enrichment landing while the view is parked re-selects the same session
+// rather than whatever row took over its old index. A gone anchor — or a
+// never-visited view — falls back to the first session (never row 0, which
+// is a header when grouped and would clear the preview).
 func (l *listPane) SetAgent(a store.Agent) {
 	if a == l.activeAgent {
 		return
@@ -189,14 +198,41 @@ func (l *listPane) SetAgent(a store.Agent) {
 	if l.savedViews == nil {
 		l.savedViews = map[store.Agent]viewState{}
 	}
-	l.savedViews[l.activeAgent] = viewState{cursor: l.cursor, lineOffset: l.lineOffset, folded: l.folded}
-	st, seen := l.savedViews[a]
-	l.activeAgent = a
-	l.cursor, l.lineOffset, l.folded = st.cursor, st.lineOffset, st.folded
-	l.refresh()
-	if !seen {
-		l.cursorToFirstSession()
+	park := viewState{lineOffset: l.lineOffset, folded: l.folded}
+	if s, _, ok := l.Selected(); ok {
+		park.selectedID = s.ID
+	} else if l.OnHeader() {
+		park.header = l.rows[l.cursor].project
 	}
+	l.savedViews[l.activeAgent] = park
+	st := l.savedViews[a]
+	l.activeAgent = a
+	l.lineOffset, l.folded = st.lineOffset, st.folded
+	l.refresh()
+	l.selectAnchor(st)
+}
+
+// selectAnchor parks the cursor on st's anchor: the session with that ID
+// when it is still visible, else that project's header, else the first
+// session.
+func (l *listPane) selectAnchor(st viewState) {
+	if st.selectedID != "" {
+		for i, s := range l.sessions {
+			if s.ID == st.selectedID {
+				l.selectSession(i) // falls back to the first session if hidden
+				return
+			}
+		}
+	}
+	if st.header != "" {
+		for i, r := range l.rows {
+			if r.header && r.project == st.header {
+				l.SetCursor(i)
+				return
+			}
+		}
+	}
+	l.cursorToFirstSession()
 }
 
 // ToggleAgentGroup turns per-project agent subgrouping on/off. No-op while
@@ -435,7 +471,7 @@ func (l *listPane) refresh() {
 	}
 	act := base
 	if l.activeAgent != "" {
-		act = nil
+		act = make([]int, 0, len(base))
 		for _, si := range base {
 			if l.sessions[si].Agent == l.activeAgent {
 				act = append(act, si)
@@ -553,11 +589,7 @@ func (l *listPane) View() string {
 	if l.total == 0 {
 		if l.search != nil && l.activeAgent != "" {
 			if n := l.agentTotals[otherAgent(l.activeAgent)]; n > 0 {
-				plural := "s"
-				if n == 1 {
-					plural = ""
-				}
-				hint := fmt.Sprintf("no matches · %d hit%s in %s — press a", n, plural, agentTitle(otherAgent(l.activeAgent)))
+				hint := fmt.Sprintf("no matches · %d %s in %s — press a", n, hitWord(n), agentTitle(otherAgent(l.activeAgent)))
 				return l.padHeight(l.styles.ListMeta.Render(hint))
 			}
 		}
@@ -587,10 +619,9 @@ func (l *listPane) View() string {
 			label := store.Truncate(name+" "+count, headerWidth)
 			style := l.styles.GroupHeader
 			if i == l.cursor {
-				style = l.styles.GroupHeaderSel
-				if l.activeAgent != "" {
-					style = style.Foreground(l.accent())
-				}
+				// accent() is the default accent in the mixed list (a no-op
+				// re-tint) and the view color in single-agent views.
+				style = l.styles.GroupHeaderSel.Foreground(l.accent())
 			}
 			// Split the name from the "(n)" count so they can carry
 			// different styles while the rendered text stays byte-identical
@@ -600,16 +631,14 @@ func (l *listPane) View() string {
 			// characters, just without the count's distinct color.
 			rendered := style.Render(label)
 			if suffix := " " + count; strings.HasSuffix(label, suffix) {
-				cntStyle := l.styles.GroupCount
-				if l.activeAgent != "" {
-					cntStyle = cntStyle.Foreground(l.accent())
-				}
-				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + cntStyle.Render(count)
+				rendered = style.Render(label[:len(label)-len(suffix)]) + " " + l.styles.GroupCount.Foreground(l.accent()).Render(count)
 			}
 			if l.projectHasLiveTmux(r.project) {
-				dot := l.styles.AgentAccent(l.projectMajorityAgent(r.project))
-				if l.activeAgent != "" {
-					dot = l.accent()
+				dot := l.accent()
+				if l.activeAgent == "" {
+					// Only the mixed list needs the majority scan; a
+					// single-agent view always tints with its own accent.
+					dot = l.styles.AgentAccent(l.projectMajorityAgent(r.project))
 				}
 				rendered += " " + lipgloss.NewStyle().Foreground(dot).Render("●")
 			}
@@ -634,16 +663,16 @@ func (l *listPane) View() string {
 			meta += " · (unreadable)"
 		}
 		if n := l.searchHits(r.session); n > 0 {
-			meta += " · " + fmt.Sprintf("%d hit", n)
-			if n != 1 {
-				meta += "s"
-			}
+			meta += " · " + fmt.Sprintf("%d %s", n, hitWord(n))
 		}
 		prefix := "  "
 		titleStyle, metaStyle := l.styles.ListTitle, l.styles.ListMeta
 		if i == l.cursor {
 			prefix = "▶ "
-			titleStyle, metaStyle = l.styles.ListTitleSel, l.styles.ListMetaSel
+			// The selected meta follows the view accent (spec: "selected
+			// title/meta"); in the mixed list accent() is the default color
+			// ListMetaSel already carries, so this is byte-identical there.
+			titleStyle, metaStyle = l.styles.ListTitleSel, l.styles.ListMetaSel.Foreground(l.accent())
 			if s.Agent == store.AgentCodex {
 				titleStyle = l.styles.CodexTitleSel
 			}
@@ -656,7 +685,7 @@ func (l *listPane) View() string {
 		}
 		// The mixed list tags every row with its agent; a single-agent view
 		// doesn't need to — the tab bar carries the identity.
-		metaLine := metaStyle.Render(store.Truncate("  "+meta, l.width))
+		var metaLine string
 		if l.activeAgent == "" {
 			tag := s.Agent.Label()
 			tagStyle := l.styles.ClaudeTag
@@ -664,6 +693,8 @@ func (l *listPane) View() string {
 				tagStyle = l.styles.CodexTag
 			}
 			metaLine = metaStyle.Render(store.Truncate("  "+meta, l.width-len(tag)-3)) + " " + tagStyle.Render(tag)
+		} else {
+			metaLine = metaStyle.Render(store.Truncate("  "+meta, l.width))
 		}
 		lines = append(lines,
 			titleStyle.Render(store.Truncate(prefix+title, titleWidth))+marker,
@@ -700,12 +731,18 @@ func (l *listPane) padHeight(s string) string {
 // SetTmuxLive records the current live-tmux set for marker rendering.
 func (l *listPane) SetTmuxLive(set map[string]bool) { l.tmuxLive = set }
 
-// projectHasLiveTmux reports whether any session in project has a live tmux.
+// projectHasLiveTmux reports whether a session of project has a live tmux —
+// scoped to the active agent in a single-agent view, so the header dot and
+// the x header-kill never point at tmux the view is hiding.
 func (l *listPane) projectHasLiveTmux(project string) bool {
 	for _, s := range l.sessions {
-		if s.Project() == project && l.tmuxLive[tmuxNameFor(s)] {
-			return true
+		if s.Project() != project || !l.tmuxLive[tmuxNameFor(s)] {
+			continue
 		}
+		if l.activeAgent != "" && s.Agent != l.activeAgent {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -759,4 +796,12 @@ func agentTitle(a store.Agent) string {
 		return "Codex"
 	}
 	return "Claude"
+}
+
+// hitWord pluralizes the search-hit noun.
+func hitWord(n int) string {
+	if n == 1 {
+		return "hit"
+	}
+	return "hits"
 }

@@ -727,26 +727,34 @@ func TestClickHelpWithProjectLabelStillWorks(t *testing.T) {
 	}
 }
 
-// TestTabAtMatchesRenderedHeader pins tabAt's geometry to View()'s header
-// segments (mark + app title + two-space-separated tabs) — the same
-// single-source discipline as helpBar and dialogOrigin.
+// TestTabAtMatchesRenderedHeader pins tabAt's geometry to View()'s ACTUAL
+// rendered header: each tab is located inside the emitted title row (tests
+// render colorless, so it is plain text) and tabAt must agree — a prefix or
+// separator drift on either side fails here instead of passing circularly.
 func TestTabAtMatchesRenderedHeader(t *testing.T) {
 	m := newTwoAgentModel(t)
 	m2, _ := m.Update(key("v"))
 	m = m2.(Model)
-	pos := lipgloss.Width("✻ sm · AI Sessions  ")
+	first := strings.SplitN(m.View(), "\n", 2)[0]
 	for _, tb := range m.agentTabs() {
+		at := strings.Index(first, tb.label)
+		if at < 0 {
+			t.Fatalf("rendered title %q is missing tab %q", first, tb.label)
+		}
+		pos := lipgloss.Width(first[:at])
 		w := lipgloss.Width(tb.label)
 		for _, dx := range []int{0, w - 1} {
 			ag, ok := m.tabAt(pos + dx)
 			if !ok || ag != tb.agent {
-				t.Errorf("tabAt(%d) = (%v,%v), want (%v,true)", pos+dx, ag, ok, tb.agent)
+				t.Errorf("tabAt(%d) = (%v,%v), want (%v,true) per rendered %q", pos+dx, ag, ok, tb.agent, first)
 			}
 		}
-		pos += w + 2
+		if ag, ok := m.tabAt(pos + w); ok && ag == tb.agent {
+			t.Errorf("tabAt(%d) still hits %v past its right edge", pos+w, tb.agent)
+		}
 	}
-	if _, ok := m.tabAt(pos + 5); ok {
-		t.Error("far right of the tabs should miss")
+	if _, ok := m.tabAt(lipgloss.Width(first) + 5); ok {
+		t.Error("beyond the rendered title should miss")
 	}
 	if _, ok := m.tabAt(0); ok {
 		t.Error("the ✻ mark is not a tab")
@@ -757,7 +765,13 @@ func TestClickTabSwitchesView(t *testing.T) {
 	m := newTwoAgentModel(t)
 	m2, _ := m.Update(key("v"))
 	m = m2.(Model)
-	x := lipgloss.Width("✻ sm · AI Sessions  ") + lipgloss.Width(m.agentTabs()[0].label) + 2
+	// Locate the codex tab in the actually rendered title row.
+	first := strings.SplitN(m.View(), "\n", 2)[0]
+	at := strings.Index(first, "Codex")
+	if at < 0 {
+		t.Fatalf("rendered title %q is missing the codex tab", first)
+	}
+	x := lipgloss.Width(first[:at])
 	m2, _ = m.Update(click(x, 0))
 	m = m2.(Model)
 	if m.list.Agent() != store.AgentCodex {
@@ -774,7 +788,7 @@ func TestTitleClickInertInListMode(t *testing.T) {
 	m := newTwoAgentModel(t) // list mode
 	m2, _ := m.Update(click(25, 0))
 	m = m2.(Model)
-	if m.list.Agent() != "" || m.tabsMode {
+	if m.list.Agent() != "" {
 		t.Error("list mode: title clicks must not switch modes or views")
 	}
 }

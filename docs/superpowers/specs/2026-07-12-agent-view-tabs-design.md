@@ -44,10 +44,13 @@ agents* — the mixed list, exactly today's code paths — while `claude` /
 (a filtered project can't have both agents; tags render only when the active
 agent is `""`).
 
-Per-view navigation state (`cursor`, `lineOffset`, `folded`) is parked in a
-`map[store.Agent]viewState` keyed by `""`/`claude`/`codex` and swapped by
-`SetAgent`, so mode/view switches lose nothing. A restored cursor is clamped
-by `refresh()` if that view's rows changed while parked.
+Per-view navigation state is parked in a `map[store.Agent]viewState` keyed
+by `""`/`claude`/`codex` and swapped by `SetAgent`. The cursor is parked as
+an **identity anchor** (session ID, or header project), not a row position:
+a rescan, delete, or enrichment landing while a view is parked re-selects
+the same session on switch-back; a gone anchor — or a never-visited view —
+falls back to the first session. Scroll offset and fold state are restored
+verbatim.
 
 ### Mode selection
 
@@ -78,7 +81,10 @@ by `refresh()` if that view's rows changed while parked.
   the tab bar and theme carry the identity.
 - **Theme follows the view**: focused pane border, selected title/meta,
   group-header selection/count, header tmux dot, ✻ mark, filter-prompt `>`,
-  and the current-project label all use the active agent's accent. (In list
+  and the current-project label all use the active agent's accent. The
+  header tmux dot — and the `x` header-kill it advertises — cover only the
+  active agent's tmux in a single-agent view (the mixed list stays
+  project-wide across both agents). (In list
   mode all of these keep today's logic, including the majority-agent label
   and per-session border.)
 - **`n` new session** launches the **active view's agent** directly — no
@@ -108,10 +114,11 @@ flow, plain `no matches` empty states, `N sessions` title (with search
   visible counts for tabs/hint), `SetAgent` + `viewState` map, conditional
   tag/accent rendering, search partition, empty-state hint. `otherAgent`
   helper. Nothing removed.
-- **`internal/ui/model.go`** — `tabsMode`/`tabView` fields, `v` toggle, `a`
-  branches by mode, config wiring in `New`, `agentTabs`/`tabAt` (shared by
-  View and mouse), title-bar tabs with single-provider/list fallback, chrome
-  accents branch on `list.Agent() != ""`.
+- **`internal/ui/model.go`** — `tabView` field (tab mode itself is derived:
+  the list's active agent is non-empty), `v` toggle, `a` branches by mode,
+  config wiring in `New`, `agentTabs`/`tabAt` (shared by View and mouse),
+  title-bar tabs with single-provider/list fallback, chrome accents branch
+  on `list.Agent() != ""`.
 - **`internal/ui/mouse.go`** — `zoneTabs` (title row) routed through the same
   guarded switch as `a`; `v view` help-bar item.
 - **`internal/ui/styles.go`** — `TitleMarkFor(agent)` replaces `TitleMark`
