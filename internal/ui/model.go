@@ -1057,13 +1057,25 @@ func (m Model) openNewSession() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// launchNewSession starts a new session in dir. Codex support must activate
-// only when a second provider is actually registered (~/.codex exists): a
-// Claude-only user has exactly one provider, so this launches it directly
-// with no extra keypress and no agent-pick dialog. With two or more
-// providers it falls back to the dialogPickAgent flow.
+// launchNewSession starts a new session in dir. In tab mode the view IS
+// the agent choice, so it launches directly. In list mode: a single
+// provider launches directly; two or more fall back to dialogPickAgent.
 func (m Model) launchNewSession(dir string) (Model, tea.Cmd) {
 	m.dialog = dialogNone
+	if a := m.list.Agent(); a != "" {
+		p := store.ProviderFor(m.providers, a)
+		if p == nil {
+			m.dialog = dialogError
+			m.errText = a.Label() + " is not available"
+			return m, nil
+		}
+		if err := binLookPath(p.Binary()); err != nil {
+			m.dialog = dialogError
+			m.errText = p.Binary() + " not found on PATH"
+			return m, nil
+		}
+		return m, m.runAgentCmd(p, dir, nil)
+	}
 	if len(m.providers) == 1 {
 		p := m.providers[0]
 		if err := binLookPath(p.Binary()); err != nil {
