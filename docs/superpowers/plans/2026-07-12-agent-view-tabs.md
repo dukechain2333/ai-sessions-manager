@@ -14,7 +14,7 @@
 
 - Module path: `github.com/dukechain2333/ai-sessions-manager`.
 - Branch: `feat/agent-tabs` (already checked out; spec/plan committed).
-- **List mode (the default) must stay byte-for-byte today's behavior** — every pre-existing test keeps passing unmodified. Only ADD tests in this plan; never edit or delete an existing one (the one exception: `TestZoneAt`'s title-row case, Task 6).
+- **List mode (the default) must stay byte-for-byte today's behavior** — every pre-existing test keeps passing unmodified. Only ADD tests in this plan; never edit or delete an existing one (exceptions, all in Task 6: `TestZoneAt`'s title-row case, plus pure x-offset recomputation in the help-bar click tests that the inserted `v view` item shifts — the same surgery commit 3ba1c74 performed for `s search`).
 - UI copy is English. Exact new strings: config key `"view": "list" | "tabs"`; tab labels `[Claude 52]` / `Codex 18` (active bracketed, two-space separated); help-bar item `v view`; search empty state `no matches · 3 hits in Codex — press a` (singular `1 hit`).
 - Two-agent signal is `len(m.providers) > 1` (Codex provider registers only when its dir exists) — same signal `launchNewSession` uses today.
 - Tests: plain `testing`, existing helper style. `make test` and `make vet` green at every commit.
@@ -413,7 +413,7 @@ Append to `internal/ui/listpane_test.go`:
 ```go
 func TestAgentViewHidesTagsAndSubheaders(t *testing.T) {
 	l := newMixedPane()
-	l.groupByAgent = true
+	l.ToggleAgentGroup() // a bare field write would skip refresh() and leave rows stale
 	if v := l.View(); !strings.Contains(v, "─ Claude ─") {
 		t.Fatalf("setup: mixed view with groupByAgent should render subheaders:\n%s", v)
 	}
@@ -635,7 +635,10 @@ Append to `internal/ui/model_test.go`:
 // mixed-agent session set, for mode/view tests. Starts in list mode.
 func newTwoAgentModel(t *testing.T) Model {
 	t.Helper()
-	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", config.Default())
+	// The claude dir must EXIST: with it missing and a codex provider
+	// registered, defaultTabView legitimately picks Codex and the
+	// claude-first assertions below would be wrong.
+	m := New(t.TempDir(), "/nonexistent-codex-dir", config.Default())
 	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
@@ -884,6 +887,10 @@ func (m Model) switchAgentView(a store.Agent) (tea.Model, tea.Cmd) {
 		case "v":
 			m.toggleViewMode()
 			m.lastClickRow = -1 // rows renumbered
+			// A mode switch can land on the same selected session ID;
+			// clear previewFor so the reload isn't short-circuited
+			// (same precedent as toggleSearchLayer).
+			m.previewFor = ""
 			return m, m.loadTranscriptCmd()
 ```
 
