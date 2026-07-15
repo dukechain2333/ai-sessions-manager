@@ -23,6 +23,11 @@ type Launch struct {
 	Argv   []string `json:"argv,omitempty"`
 	Tmux   bool     `json:"tmux,omitempty"`
 	Attach bool     `json:"attach,omitempty"`
+	// BinDir is the directory holding the agent binary, resolved by sm in
+	// the user's real (interactive) environment. The remote end of a fresh
+	// ssh runs with sshd's bare PATH — tmux panes created from it inherit
+	// that PATH, so without this hint the agent is "command not found".
+	BinDir string `json:"bindir,omitempty"`
 }
 
 // Sequence renders the escape sequence for l. insideTmux wraps it in tmux's

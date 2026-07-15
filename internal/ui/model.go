@@ -297,6 +297,18 @@ var binLookPath = func(bin string) error {
 	return err
 }
 
+// binDir resolves the directory holding an agent binary using sm's own
+// (interactive-shell) PATH — the iTerm2 bridge prepends it remotely, where
+// sshd's bare PATH would otherwise miss it. "" when unresolvable.
+// Overridable in tests.
+var binDir = func(bin string) string {
+	p, err := exec.LookPath(bin)
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(p)
+}
+
 // launchErr reports why launching p cannot proceed right now ("" = it can):
 // the agent binary is missing, or open_in "window" lacks its tmux
 // preconditions. Checked at launch time, not startup, so a config problem
@@ -1175,7 +1187,7 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 		}
 		if m.openIn == config.OpenInWindow {
 			if m.iterm2Windows() {
-				l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...)}
+				l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
 				if m.tmuxEnabled {
 					l.Name, l.Tmux = sess, true
 				}
@@ -1195,7 +1207,7 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 	name, args := p.NewCommand()
 	if m.openIn == config.OpenInWindow {
 		if m.iterm2Windows() {
-			l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...)}
+			l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
 			if m.tmuxEnabled {
 				l.Name, l.Tmux = tmux.PendingName(string(p.Agent()), m.now().UnixNano()), true
 			}

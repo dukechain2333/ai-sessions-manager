@@ -23,6 +23,7 @@ HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
 NAME_RE = re.compile(r"^sm(-[a-z0-9]+)+$")
 AGENTS = ("claude", "codex")
 ARG_RE = re.compile(r"^[A-Za-z0-9._/=@-]{1,256}$")
+BINDIR_RE = re.compile(r"^/[A-Za-z0-9._@/-]{0,512}$")
 
 windows = {}
 
@@ -44,13 +45,23 @@ def remote_command(spec):
     if not argv or argv[0] not in AGENTS or not all(ARG_RE.match(a) for a in argv):
         return None, None, None
     inner = " ".join(shlex.quote(a) for a in argv)
+    # The remote end of a fresh ssh runs with sshd's bare PATH, and tmux
+    # panes it creates inherit that PATH — the agent would be "command not
+    # found". sm resolves the agent's directory in the user's real
+    # environment and sends it as bindir; prepend it remotely.
+    path = ""
+    bindir = spec.get("bindir", "")
+    if bindir:
+        if not BINDIR_RE.match(bindir):
+            return None, None, None
+        path = "export PATH=" + shlex.quote(bindir) + ':"$PATH" && '
     if spec.get("tmux"):
         if not NAME_RE.match(name):
             return None, None, None
-        cmd = "cd {d} && exec tmux new-session -A -s {n} -c {d} {i}".format(
-            d=shlex.quote(dir_), n=shlex.quote(name), i=inner)
+        cmd = "{p}cd {d} && exec tmux new-session -A -s {n} -c {d} {i}".format(
+            p=path, d=shlex.quote(dir_), n=shlex.quote(name), i=inner)
     else:
-        cmd = "cd {d} && exec {i}".format(d=shlex.quote(dir_), i=inner)
+        cmd = "{p}cd {d} && exec {i}".format(p=path, d=shlex.quote(dir_), i=inner)
     # Dedupe key: tracked launches have a unique tmux name; untracked ones
     # must include dir, or every untracked "new session" (bare agent argv)
     # would collide on one window across all projects.
