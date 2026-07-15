@@ -1076,3 +1076,67 @@ func TestSilentFailureShowsErrorAndRefreshes(t *testing.T) {
 		t.Errorf("clean exit should not raise a dialog, got %v", m.dialog)
 	}
 }
+
+func TestEnterLiveWindowJumpsInsideTmux(t *testing.T) {
+	m, cap := newWindowModel(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{windows: map[string][2]string{"sm-claude-s1": {"@7", "main"}}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "select-window -t @7 ; switch-client -t main") {
+		t.Errorf("live window jump argv = %v", *cap)
+	}
+}
+
+// Jumping to a live window must work regardless of open_in — here the config
+// says "current", sm runs outside tmux, and enter still lands in the window
+// by attaching the terminal to its owning session.
+func TestEnterLiveWindowAttachesOutsideTmux(t *testing.T) {
+	origIn := insideTmux
+	insideTmux = func() bool { return false }
+	defer func() { insideTmux = origIn }()
+	m := newTestModel() // openIn stays "current"
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{windows: map[string][2]string{"sm-claude-s1": {"@7", "main"}}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*captured, " ")
+	if !strings.Contains(joined, "select-window -t @7 ; attach-session -t main") {
+		t.Errorf("outside-tmux window jump argv = %v", *captured)
+	}
+}
+
+// A live session-form tmux must attach (new-session -A) even in window mode:
+// creating a window with the same sm- name would fork the id across two
+// tmux entities.
+func TestEnterLiveSessionFormAttachesEvenInWindowMode(t *testing.T) {
+	m, _ := newWindowModel(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}} // no windows
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd { // replace the trap
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*captured, " ")
+	if !strings.Contains(joined, "new-session -A -s sm-claude-s1") {
+		t.Errorf("live session-form resume argv = %v", *captured)
+	}
+}

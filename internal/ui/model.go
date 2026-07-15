@@ -1117,9 +1117,7 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 		name, args := p.ResumeCommand(*resume)
 		sess := tmux.Name(string(resume.Agent), tmux.Short(resume.ID))
 		if m.tmuxEnabled && m.tmuxLive[sess] {
-			// Session form: new-session -A attaches. (Window form jump
-			// lands in attachLiveCmd — Task 6.)
-			return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, name, args)...)
+			return m.attachLiveCmd(sess, cwd, name, args)
 		}
 		if m.openIn == config.OpenInWindow {
 			win := ""
@@ -1146,6 +1144,22 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 		return m.runCmd("tmux", cwd, tmux.NewArgs(pend, cwd, name, args)...)
 	}
 	return m.runCmd(name, cwd, args...)
+}
+
+// attachLiveCmd jumps to the live tmux backing sess. Window form: select the
+// window and switch the client to its owning session (a same-session switch
+// is a no-op); when sm itself runs outside tmux, attach the terminal to that
+// session instead. The ";" argv element is tmux's command separator, so both
+// steps ride one invocation. Session form: attach via new-session -A, exactly
+// as before.
+func (m Model) attachLiveCmd(sess, cwd, agentName string, agentArgs []string) tea.Cmd {
+	if id, owner, ok := m.tmux.Window(sess); ok {
+		if insideTmux() {
+			return m.runSilent("tmux", cwd, "select-window", "-t", id, ";", "switch-client", "-t", owner)
+		}
+		return m.runCmd("tmux", cwd, "select-window", "-t", id, ";", "attach-session", "-t", owner)
+	}
+	return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, agentName, agentArgs)...)
 }
 
 func (m Model) startResume() (tea.Model, tea.Cmd) {
