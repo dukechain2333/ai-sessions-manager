@@ -1139,13 +1139,36 @@ func TestEnterLiveWindowAttachesOutsideTmux(t *testing.T) {
 // A live session-form tmux must attach (new-session -A) even in window mode:
 // creating a window with the same sm- name would fork the id across two
 // tmux entities.
-func TestEnterLiveSessionFormAttachesEvenInWindowMode(t *testing.T) {
-	m, _ := newWindowModel(t)
+// A live session-form tmux, with sm inside tmux (the normal state now that
+// open_in "window" auto-wraps sm), must switch the client — new-session -A
+// would refuse to nest and die silently.
+func TestEnterLiveSessionFormSwitchesClientInsideTmux(t *testing.T) {
+	m, cap := newWindowModel(t)
 	m.tmuxEnabled = true
 	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}} // no windows
 	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "switch-client -t =sm-claude-s1") {
+		t.Errorf("live session-form inside tmux argv = %v", *cap)
+	}
+}
+
+// Outside tmux the session form still attaches via new-session -A, exactly
+// as before the auto-wrap existed.
+func TestEnterLiveSessionFormAttachesOutsideTmux(t *testing.T) {
+	origIn := insideTmux
+	insideTmux = func() bool { return false }
+	defer func() { insideTmux = origIn }()
+	m := newTestModel() // open_in "current": the jump is mode-independent
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
 	captured := &[]string{}
-	m.runCmd = func(name, dir string, args ...string) tea.Cmd { // replace the trap
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
 		*captured = append([]string{name, dir}, args...)
 		return nil
 	}
@@ -1155,7 +1178,7 @@ func TestEnterLiveSessionFormAttachesEvenInWindowMode(t *testing.T) {
 	m.startResume()
 	joined := strings.Join(*captured, " ")
 	if !strings.Contains(joined, "new-session -A -s sm-claude-s1") {
-		t.Errorf("live session-form resume argv = %v", *captured)
+		t.Errorf("live session-form outside tmux argv = %v", *captured)
 	}
 }
 

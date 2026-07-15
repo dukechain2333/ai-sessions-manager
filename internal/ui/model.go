@@ -1166,14 +1166,19 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 // window and switch the client to its owning session (a same-session switch
 // is a no-op); when sm itself runs outside tmux, attach the terminal to that
 // session instead. The ";" argv element is tmux's command separator, so both
-// steps ride one invocation. Session form: attach via new-session -A, exactly
-// as before.
+// steps ride one invocation. Session form: inside tmux, switch the client to
+// the live session — new-session -A would refuse to nest and, because
+// agentExitMsg swallows ExitError as a normal agent exit, the refusal dies
+// silently; outside tmux it attaches via new-session -A as before.
 func (m Model) attachLiveCmd(sess, cwd, agentName string, agentArgs []string) tea.Cmd {
 	if id, owner, ok := m.tmux.Window(sess); ok {
 		if insideTmux() {
 			return m.runSilent("tmux", cwd, "select-window", "-t", id, ";", "switch-client", "-t", owner)
 		}
 		return m.runCmd("tmux", cwd, "select-window", "-t", id, ";", "attach-session", "-t", owner)
+	}
+	if insideTmux() {
+		return m.runSilent("tmux", cwd, "switch-client", "-t", "="+sess)
 	}
 	return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, agentName, agentArgs)...)
 }
