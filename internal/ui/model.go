@@ -197,6 +197,11 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		ret.dialog = dialogError
 		ret.errText = "tmux integration is enabled but tmux was not found on PATH"
 	}
+	if ret.openIn == config.OpenInWindow && !tmuxLookPath() {
+		ret.openIn = config.OpenInCurrent
+		ret.dialog = dialogError
+		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
+	}
 	return ret
 }
 

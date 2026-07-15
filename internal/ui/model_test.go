@@ -1158,3 +1158,18 @@ func TestEnterLiveSessionFormAttachesEvenInWindowMode(t *testing.T) {
 		t.Errorf("live session-form resume argv = %v", *captured)
 	}
 }
+
+func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
+	orig := tmuxLookPath
+	tmuxLookPath = func() bool { return false }
+	defer func() { tmuxLookPath = orig }()
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInCurrent {
+		t.Errorf("openIn = %q, want fallback to current", m.openIn)
+	}
+	if m.dialog != dialogError || !strings.Contains(m.errText, "tmux on PATH") {
+		t.Errorf("expected startup error dialog, got dialog=%v err=%q", m.dialog, m.errText)
+	}
+}

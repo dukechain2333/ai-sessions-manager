@@ -251,11 +251,14 @@ notice.
   session) launch the agent. `"current"` suspends `sm` and runs it in this
   terminal. `"window"` opens a new tmux window in the tmux session you are
   attached to — `sm` stays on screen, and over SSH the window naturally lives
-  on the same connection. Requires running `sm` inside tmux (and `tmux` on
-  `PATH`); `sm` shows an error otherwise. Works independently of
-  `tmux.enabled`: with tmux integration on, the window is named `sm-…` and
-  gets the ● marker / `x` kill treatment; with it off, it is a plain
-  untracked window.
+  on the same connection. Started outside tmux, `sm` automatically
+  re-launches itself inside its own tmux session (named `sm`) and reattaches
+  it if one is already running — an SSH drop later, `sm` brings the whole
+  workspace (sm plus every agent window) back. Needs `tmux` on `PATH`;
+  without it `sm` shows a notice and falls back to `"current"` for the run.
+  Works independently of `tmux.enabled`: with tmux integration on, the
+  window is named `sm-…` and gets the ● marker / `x` kill treatment; with it
+  off, it is a plain untracked window.
 - `colors.claude` / `colors.codex` — each takes optional `light` and `dark`
   `#RRGGBB` accents; omitted or invalid values keep the defaults.
 - `"view"`: `"list"` (default) or `"tabs"` — the view mode `sm` starts in.
