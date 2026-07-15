@@ -66,12 +66,15 @@ async def handle(connection, payload):
         return
     old = windows.get(key)
     if old is not None:
-        try:
+        # async_activate on a closed window does not raise — verify against
+        # the live app state, or a closed window would eat every relaunch.
+        app = await iterm2.async_get_app(connection)
+        if app.get_window_by_id(old.window_id) is not None:
             await old.async_activate()
             print("[sm] focused existing window for", key)
             return
-        except Exception:
-            windows.pop(key, None)
+        print("[sm] window for", key, "is gone; opening a new one")
+        windows.pop(key, None)
     ssh = "ssh -t -- {h} {c}".format(h=shlex.quote(host), c=shlex.quote(cmd))
     print("[sm] running:", ssh)
     # Open a plain shell window and type the command into it: the user's own
