@@ -112,15 +112,26 @@ const (
 // detached-workspace reattach); session whose sm window has exited — spawn a
 // fresh sm window (new-window makes it current) and attach. The last branch
 // is why a bare `new-session -A` is not enough: quitting sm kills its window
-// while agent windows keep the session alive.
+// while agent windows keep the session alive. The first branch still carries
+// -A so two sm's racing past SelfState both land attached instead of the
+// loser dying on "duplicate session". An empty cwd (deleted directory) drops
+// -c rather than handing tmux an empty path.
 func SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID string) []string {
 	switch {
 	case !sessionExists:
-		return append([]string{"new-session", "-s", SelfSession, "-n", SelfWindow, "-c", cwd}, selfCmd...)
+		args := []string{"new-session", "-A", "-s", SelfSession, "-n", SelfWindow}
+		if cwd != "" {
+			args = append(args, "-c", cwd)
+		}
+		return append(args, selfCmd...)
 	case smWindowID != "":
 		return []string{"select-window", "-t", smWindowID, ";", "attach-session", "-t", "=" + SelfSession}
 	default:
-		args := append([]string{"new-window", "-t", "=" + SelfSession + ":", "-n", SelfWindow, "-c", cwd}, selfCmd...)
+		args := []string{"new-window", "-t", "=" + SelfSession + ":", "-n", SelfWindow}
+		if cwd != "" {
+			args = append(args, "-c", cwd)
+		}
+		args = append(args, selfCmd...)
 		return append(args, ";", "attach-session", "-t", "="+SelfSession)
 	}
 }
