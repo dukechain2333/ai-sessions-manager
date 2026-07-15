@@ -101,13 +101,13 @@ the discovered name space to windows leaves the upper layers almost untouched.
   *windows* participate in the same flow, with the rename going through
   `rename-window`.
 - **`enter` on a session with a live tracked tmux:** jump to it regardless of
-  `open_in` — session form attaches via ExecProcess (today's behavior); window
-  form switches via `select-window`. If sm is itself running *outside* tmux
-  when the live tmux is window-form, `select-window` alone would change
-  nothing visible — instead ExecProcess-attach to the owning tmux session with
-  that window selected (`tmux attach -t <session> \; select-window -t %N`).
-  `open_in` only governs the form of *new* launches, which also makes a
-  same-id dual-form conflict impossible.
+  `open_in`. Window form switches via `select-window` (+`switch-client` when
+  sm runs inside tmux, or an ExecProcess attach with that window selected
+  when it runs outside). Session form: inside tmux, `switch-client -t =name`
+  — a nested `new-session -A` attach would be refused by tmux and swallowed
+  silently by the normal-agent-exit handling; outside tmux it attaches via
+  `new-session -A` as always. `open_in` only governs the form of *new*
+  launches, which also makes a same-id dual-form conflict impossible.
 - **`x`:** window form kills via `kill-window`; the project-header bulk kill
   covers both forms (it iterates the same name set).
 
