@@ -1196,3 +1196,32 @@ func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
 		t.Errorf("expected startup error dialog, got dialog=%v err=%q", m.dialog, m.errText)
 	}
 }
+
+// Running sm inside a PLAIN (non -CC) tmux attach on iTerm2 silently gives
+// in-terminal tmux windows where the user expects native ones — the client's
+// control mode was fixed at attach time and cannot be upgraded. sm must say
+// so instead of looking broken.
+func TestWindowModePlainClientOniTerm2Warns(t *testing.T) {
+	origIn, origLook, origIT, origPlain := insideTmux, tmuxLookPath, iTerm2Env, plainTmuxClient
+	insideTmux = func() bool { return true }
+	tmuxLookPath = func() bool { return true }
+	iTerm2Env = func() bool { return true }
+	plainTmuxClient = func() bool { return true }
+	defer func() {
+		insideTmux, tmuxLookPath, iTerm2Env, plainTmuxClient = origIn, origLook, origIT, origPlain
+	}()
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	m := New("/nope", "/nope", cfg)
+	if m.dialog != dialogError || !strings.Contains(m.errText, "control mode") {
+		t.Errorf("expected control-mode hint dialog, got dialog=%v err=%q", m.dialog, m.errText)
+	}
+	if m.openIn != config.OpenInWindow {
+		t.Errorf("hint must not downgrade openIn, got %q", m.openIn)
+	}
+	iTerm2Env = func() bool { return false } // plain attach elsewhere is the expected experience
+	m = New("/nope", "/nope", cfg)
+	if m.dialog == dialogError {
+		t.Error("non-iTerm2 plain attach must not warn")
+	}
+}

@@ -202,6 +202,14 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		ret.dialog = dialogError
 		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
 	}
+	// An iTerm2 user inside a plain (non -CC) attach would get in-terminal
+	// tmux windows and reasonably read that as "new window is broken" —
+	// control mode is fixed at attach time, so the only cure is restarting
+	// sm outside tmux (the auto-wrap then attaches with -CC). Say so.
+	if ret.openIn == config.OpenInWindow && insideTmux() && iTerm2Env() && plainTmuxClient() {
+		ret.dialog = dialogError
+		ret.errText = `open_in "window": this tmux client is not in iTerm2 control mode, so new windows open as plain tmux windows here. For native iTerm2 windows, detach (Ctrl-b d) and run sm outside tmux.`
+	}
 	return ret
 }
 
@@ -249,6 +257,22 @@ var tmuxLookPath = func() bool {
 // Overridable in tests.
 var insideTmux = func() bool {
 	return os.Getenv("TMUX") != ""
+}
+
+// iTerm2Env reports whether the terminal is iTerm2, recognized by the
+// LC_TERMINAL it forwards over ssh. Overridable in tests.
+var iTerm2Env = func() bool {
+	return os.Getenv("LC_TERMINAL") == "iTerm2"
+}
+
+// plainTmuxClient reports whether the tmux client sm is displayed on is a
+// plain (non control-mode) attach. Control mode is fixed at attach time, so
+// a plain iTerm2 client can never render native windows — worth a warning.
+// Errors (detached, no tmux) read as "not plain" so no dialog fires.
+// Overridable in tests.
+var plainTmuxClient = func() bool {
+	out, err := exec.Command("tmux", "display-message", "-p", "#{client_control_mode}").Output()
+	return err == nil && strings.TrimSpace(string(out)) == "0"
 }
 
 // binLookPath reports an error when an agent binary (claude/codex) is not on
