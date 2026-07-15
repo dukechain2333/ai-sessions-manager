@@ -999,3 +999,80 @@ func TestNewCarriesOpenInFromConfig(t *testing.T) {
 		t.Errorf("openIn = %q, want window", m.openIn)
 	}
 }
+
+// newWindowModel is newTestModel in open_in "window" mode: tmux preconditions
+// stubbed true, runSilent captured, runCmd trapped (window mode must never
+// suspend the TUI via ExecProcess).
+func newWindowModel(t *testing.T) (Model, *[]string) {
+	t.Helper()
+	origIn, origLook := insideTmux, tmuxLookPath
+	insideTmux = func() bool { return true }
+	tmuxLookPath = func() bool { return true }
+	t.Cleanup(func() { insideTmux, tmuxLookPath = origIn, origLook })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	captured := &[]string{}
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("window mode must not suspend via runCmd: %s %s %v", name, dir, args)
+		return nil
+	}
+	m.now = func() time.Time { return time.Unix(0, 1234) }
+	return m, captured
+}
+
+func TestResumeWindowModeTracked(t *testing.T) {
+	m, cap := newWindowModel(t)
+	m.tmuxEnabled = true
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "new-window -c "+dir+" -n sm-claude-s1 claude --resume s1") {
+		t.Errorf("tracked window resume argv = %v", *cap)
+	}
+}
+
+func TestResumeWindowModeUntracked(t *testing.T) {
+	m, cap := newWindowModel(t) // tmuxEnabled stays false
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "new-window -c "+dir+" claude --resume s1") {
+		t.Errorf("untracked window resume argv = %v", *cap)
+	}
+	if strings.Contains(joined, "-n sm-") {
+		t.Error("untracked window must not carry an sm- name")
+	}
+}
+
+func TestNewSessionWindowModePending(t *testing.T) {
+	m, cap := newWindowModel(t)
+	m.tmuxEnabled = true
+	m.launchNewSession("/x/alpha") // single provider (claude-only test model)
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "new-window -c /x/alpha -n sm-claude-pending-1234 claude") {
+		t.Errorf("pending window new argv = %v", *cap)
+	}
+}
+
+func TestSilentFailureShowsErrorAndRefreshes(t *testing.T) {
+	m := newTestModel()
+	m2, _ := m.Update(silentDoneMsg{err: errors.New("boom")})
+	m = m2.(Model)
+	if m.dialog != dialogError || !strings.Contains(m.errText, "boom") {
+		t.Errorf("dialog=%v errText=%q, want error containing boom", m.dialog, m.errText)
+	}
+	m = newTestModel()
+	m2, _ = m.Update(silentDoneMsg{})
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Errorf("clean exit should not raise a dialog, got %v", m.dialog)
+	}
+}

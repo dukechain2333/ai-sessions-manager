@@ -55,6 +55,11 @@ type (
 	}
 	agentExitMsg struct{ err error }
 
+	// silentDoneMsg reports a fire-and-forget command (tmux new-window /
+	// select-window) finishing. Unlike agentExitMsg there is no ExecProcess —
+	// the TUI never suspended.
+	silentDoneMsg struct{ err error }
+
 	tmuxTickMsg struct{}
 	tmuxListMsg struct{ set map[string]bool }
 )
@@ -111,9 +116,10 @@ type Model struct {
 	ready         bool
 
 	// injected for tests
-	trashFn func(store.Session) (string, error)
-	runCmd  func(name, dir string, args ...string) tea.Cmd
-	bell    tea.Cmd
+	trashFn   func(store.Session) (string, error)
+	runCmd    func(name, dir string, args ...string) tea.Cmd
+	runSilent func(name, dir string, args ...string) tea.Cmd
+	bell      tea.Cmd
 
 	// mouse double-click tracking; now is injected for tests
 	lastClickZone zone
@@ -175,6 +181,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 			return p.Trash(s)
 		},
 		runCmd:       execCmd,
+		runSilent:    execSilent,
 		bell:         ringBell,
 		lastClickRow: -1,
 		now:          time.Now,
@@ -196,6 +203,15 @@ func execCmd(name, dir string, args ...string) tea.Cmd {
 	c := exec.Command(name, args...)
 	c.Dir = dir
 	return tea.ExecProcess(c, func(err error) tea.Msg { return agentExitMsg{err} })
+}
+
+// execSilent runs a quick command without suspending the TUI the way
+// execCmd's ExecProcess does — for tmux new-window and friends, which
+// return immediately while the agent keeps running in its window.
+func execSilent(name, dir string, args ...string) tea.Cmd {
+	c := exec.Command(name, args...)
+	c.Dir = dir
+	return func() tea.Msg { return silentDoneMsg{err: c.Run()} }
 }
 
 // ringBell writes the terminal BEL to stderr — not stdout, which is Bubble
@@ -831,6 +847,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.scanCmd()
 
+	case silentDoneMsg:
+		if msg.err != nil {
+			m.dialog = dialogError
+			m.errText = "tmux window failed: " + msg.err.Error()
+		}
+		if m.tmuxEnabled {
+			return m, tea.Batch(m.scanCmd(), m.refreshTmuxCmd())
+		}
+		return m, m.scanCmd()
+
 	case tmuxTickMsg:
 		if !m.tmuxEnabled {
 			return m, nil
@@ -1081,19 +1107,40 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// runAgentCmd launches an agent, wrapping it in tmux when integration is on.
-// resume != nil resumes that session; resume == nil starts a new session with
-// p in cwd.
+// runAgentCmd launches an agent. resume != nil resumes that session;
+// resume == nil starts a new session with p in cwd. open_in decides where it
+// opens (current terminal vs new tmux window); tmux.enabled decides whether
+// the launch carries an sm- name and is therefore tracked. A live tracked
+// tmux always wins: enter jumps to it instead of creating a second one.
 func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) tea.Cmd {
 	if resume != nil {
 		name, args := p.ResumeCommand(*resume)
+		sess := tmux.Name(string(resume.Agent), tmux.Short(resume.ID))
+		if m.tmuxEnabled && m.tmuxLive[sess] {
+			// Session form: new-session -A attaches. (Window form jump
+			// lands in attachLiveCmd — Task 6.)
+			return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, name, args)...)
+		}
+		if m.openIn == config.OpenInWindow {
+			win := ""
+			if m.tmuxEnabled {
+				win = sess
+			}
+			return m.runSilent("tmux", cwd, tmux.WindowArgs(win, cwd, name, args)...)
+		}
 		if m.tmuxEnabled {
-			sess := tmux.Name(string(resume.Agent), tmux.Short(resume.ID))
 			return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, name, args)...)
 		}
 		return m.runCmd(name, cwd, args...)
 	}
 	name, args := p.NewCommand()
+	if m.openIn == config.OpenInWindow {
+		win := ""
+		if m.tmuxEnabled {
+			win = tmux.PendingName(string(p.Agent()), m.now().UnixNano())
+		}
+		return m.runSilent("tmux", cwd, tmux.WindowArgs(win, cwd, name, args)...)
+	}
 	if m.tmuxEnabled {
 		pend := tmux.PendingName(string(p.Agent()), m.now().UnixNano())
 		return m.runCmd("tmux", cwd, tmux.NewArgs(pend, cwd, name, args)...)
