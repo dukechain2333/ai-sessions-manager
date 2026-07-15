@@ -1200,6 +1200,25 @@ func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
 	}
 }
 
+// The startup tmux-on-PATH downgrade must not disable the iTerm2 mechanism:
+// iTerm2 window mode runs sm plain, with no local tmux client involved.
+func TestITerm2WindowModeSurvivesMissingTmuxAtStartup(t *testing.T) {
+	origLook, origIT := tmuxLookPath, iTerm2Env
+	tmuxLookPath = func() bool { return false }
+	iTerm2Env = func() bool { return true }
+	defer func() { tmuxLookPath, iTerm2Env = origLook, origIT }()
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	cfg.ITerm2SSH = "myhost"
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInWindow {
+		t.Errorf("openIn = %q, want window preserved", m.openIn)
+	}
+	if !m.iterm2Windows() {
+		t.Error("iterm2Windows() must stay active without local tmux")
+	}
+}
+
 // Running sm inside a PLAIN (non -CC) tmux attach on iTerm2 silently gives
 // in-terminal tmux windows where the user expects native ones — the client's
 // control mode was fixed at attach time and cannot be upgraded. sm must say

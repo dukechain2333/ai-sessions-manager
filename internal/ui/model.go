@@ -202,7 +202,11 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		ret.dialog = dialogError
 		ret.errText = "tmux integration is enabled but tmux was not found on PATH"
 	}
-	if ret.openIn == config.OpenInWindow && !tmuxLookPath() {
+	// iTerm2 window mode is exempt: it needs no local tmux client — the
+	// launches ssh back and tmux (if tracking is on) runs in that new
+	// connection; tracking degradation is handled by the tmuxEnabled block
+	// above.
+	if ret.openIn == config.OpenInWindow && !tmuxLookPath() && !(ret.iterm2Host != "" && iTerm2Env()) {
 		ret.openIn = config.OpenInCurrent
 		ret.dialog = dialogError
 		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
