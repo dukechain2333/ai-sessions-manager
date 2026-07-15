@@ -4,8 +4,10 @@
 Listens for sm's custom control sequences (OSC 1337 Custom=id=sm:<base64>)
 and opens a native iTerm2 window that ssh-es back into the host to run the
 agent. Terminal output is untrusted input: every payload field is validated
-against a strict pattern before anything runs, and the only command shape
-ever executed is `ssh -t <host> <cd+tmux+agent>`.
+against a strict pattern before anything runs (the host must start with an
+alphanumeric and ssh gets an explicit `--` end-of-options marker, so a host
+can never be parsed as a flag), and the only command shape ever executed is
+`ssh -t -- <host> <cd+tmux+agent>`.
 
 Install: ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/ and enable
 Settings → General → Magic → "Enable Python API".
@@ -17,7 +19,7 @@ import shlex
 
 import iterm2
 
-HOST_RE = re.compile(r"^[A-Za-z0-9._@-]{1,128}$")
+HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
 NAME_RE = re.compile(r"^sm(-[a-z0-9]+)+$")
 AGENTS = ("claude", "codex")
 ARG_RE = re.compile(r"^[A-Za-z0-9._/=@-]{1,256}$")
@@ -62,7 +64,7 @@ async def handle(connection, payload):
             return
         except Exception:
             windows.pop(key, None)
-    ssh = "/usr/bin/env ssh -t {h} {c}".format(h=shlex.quote(host), c=shlex.quote(cmd))
+    ssh = "/usr/bin/env ssh -t -- {h} {c}".format(h=shlex.quote(host), c=shlex.quote(cmd))
     win = await iterm2.Window.async_create(connection, command=ssh)
     if win is not None:
         windows[key] = win

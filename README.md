@@ -276,7 +276,7 @@ How it works: pressing `enter` makes `sm` write an invisible [custom control
 sequence](https://iterm2.com/python-api/customcontrol.html) to your
 terminal. An AutoLaunch script inside your local iTerm2 picks it up and
 opens a native window that runs
-`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent> --resume <id>"`,
+`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent's resume command>"`,
 so the agent lands in the same tracked tmux session `sm` already knows how
 to mark (●), kill (`x`), and re-enter. No tmux needed around `sm` itself.
 
