@@ -206,7 +206,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 	// launches ssh back and tmux (if tracking is on) runs in that new
 	// connection; tracking degradation is handled by the tmuxEnabled block
 	// above.
-	if ret.openIn == config.OpenInWindow && !tmuxLookPath() && !(ret.iterm2Host != "" && iTerm2Env()) {
+	if ret.openIn == config.OpenInWindow && !tmuxLookPath() && !((ret.iterm2Host != "" || !overSSH()) && iTerm2Env()) {
 		ret.openIn = config.OpenInCurrent
 		ret.dialog = dialogError
 		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
@@ -215,7 +215,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 	// mode is configured (e.g. a plain, non-wrapped attach), let the emitted
 	// control sequences pass through the pane to the terminal instead of
 	// being swallowed by tmux.
-	if ret.openIn == config.OpenInWindow && ret.iterm2Host != "" && iTerm2Env() && insideTmux() {
+	if ret.openIn == config.OpenInWindow && (ret.iterm2Host != "" || !overSSH()) && iTerm2Env() && insideTmux() {
 		_ = exec.Command("tmux", "set-option", "-p", "allow-passthrough", "on").Run()
 	}
 	return ret
@@ -267,7 +267,21 @@ func emitEscape(seq string) tea.Cmd {
 // local iTerm2 AutoLaunch script instead of tmux windows: explicit
 // config opt-in plus a detected iTerm2.
 func (m Model) iterm2Windows() bool {
-	return m.openIn == config.OpenInWindow && m.iterm2Host != "" && iTerm2Env()
+	if m.openIn != config.OpenInWindow || !iTerm2Env() {
+		return false
+	}
+	// Local runs need no destination — the bridge executes directly; over
+	// ssh the new window must dial back, so iterm2.ssh is required.
+	return !overSSH() || m.iterm2Host != ""
+}
+
+// iterm2SSHHost is the payload host: the configured dial-back destination
+// over ssh, empty for local runs (the bridge executes directly).
+func (m Model) iterm2SSHHost() string {
+	if overSSH() {
+		return m.iterm2Host
+	}
+	return ""
 }
 
 // tmuxLookPath reports whether tmux is on PATH; overridable in tests.
@@ -287,6 +301,13 @@ var insideTmux = func() bool {
 // LC_TERMINAL it forwards over ssh. Overridable in tests.
 var iTerm2Env = func() bool {
 	return os.Getenv("LC_TERMINAL") == "iTerm2"
+}
+
+// overSSH reports whether sm runs on the far side of an ssh connection —
+// then iTerm2 launches must dial back (iterm2.ssh required); locally the
+// bridge runs commands directly. Overridable in tests.
+var overSSH = func() bool {
+	return os.Getenv("SSH_CONNECTION") != ""
 }
 
 // binLookPath reports an error when an agent binary (claude/codex) is not on
@@ -1187,7 +1208,7 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 		}
 		if m.openIn == config.OpenInWindow {
 			if m.iterm2Windows() {
-				l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
+				l := iterm2.Launch{Host: m.iterm2SSHHost(), Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
 				if m.tmuxEnabled {
 					l.Name, l.Tmux = sess, true
 				}
@@ -1207,7 +1228,7 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 	name, args := p.NewCommand()
 	if m.openIn == config.OpenInWindow {
 		if m.iterm2Windows() {
-			l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
+			l := iterm2.Launch{Host: m.iterm2SSHHost(), Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
 			if m.tmuxEnabled {
 				l.Name, l.Tmux = tmux.PendingName(string(p.Agent()), m.now().UnixNano()), true
 			}
@@ -1240,7 +1261,7 @@ func (m Model) attachLiveCmd(sess, cwd, agentName string, agentArgs []string) te
 		// of a fresh ssh. A window-form live tmux (legacy of the
 		// tmux-window mechanism) falls through to the local jump below.
 		if _, _, ok := m.tmux.Window(sess); !ok {
-			return m.emitSeq(iterm2.Sequence(iterm2.Launch{Host: m.iterm2Host, Name: sess, Attach: true}, insideTmux()))
+			return m.emitSeq(iterm2.Sequence(iterm2.Launch{Host: m.iterm2SSHHost(), Name: sess, Attach: true}, insideTmux()))
 		}
 	}
 	if id, owner, ok := m.tmux.Window(sess); ok {

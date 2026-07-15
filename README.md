@@ -234,7 +234,7 @@ notice.
 ```json
 {
   "view": "list",
-  "open_in": "current",
+  "open_in": { "mode": "current", "iterm2": { "ssh": "" } },
   "tmux": { "enabled": false },
   "colors": {
     "claude": { "light": "#C15F3C", "dark": "#D97757" },
@@ -247,20 +247,24 @@ notice.
   inside a tmux session named `sm-<agent>-<id8>`, so work survives detaching
   (Ctrl-b d). Requires `tmux` on `PATH`; if it is missing, `sm` shows a
   startup notice and runs without it.
-- `open_in` (default `"current"`) — where `enter` (resume) and `n` (new
-  session) launch the agent. `"current"` suspends `sm` and runs it in this
-  terminal. `"window"` opens a new tmux window in the tmux session you are
-  attached to — `sm` stays on screen, and over SSH the window naturally lives
-  on the same connection. Started outside tmux, `sm` automatically
-  re-launches itself inside its own tmux session (named `sm`) and reattaches
-  it if one is already running — an SSH drop later, `sm` brings the whole
-  workspace (sm plus every agent window) back. Needs `tmux` on `PATH`;
-  without it `sm` shows a notice and falls back to `"current"` for the run.
-  Works independently of `tmux.enabled`: with tmux integration on, the
-  window is named `sm-…` and gets the ● marker / `x` kill treatment; with it
-  off, it is a plain untracked window.
-  **iTerm2 users can get real OS windows** — see
-  [iTerm2 native windows](#iterm2-native-windows-macos).
+- `open_in` — where `enter` (resume) and `n` (new session) launch the agent.
+  Accepts the object above or, as shorthand, just the mode string
+  (`"open_in": "window"`).
+  - `mode: "current"` (default) suspends `sm` and runs the agent in this
+    terminal — exactly the classic behavior.
+  - `mode: "window"` opens each launch in a **new window** and `sm` stays on
+    screen. In [iTerm2](#iterm2-native-windows-macos) that is a genuine OS
+    window (locally and over SSH); in any other terminal it is a new tmux
+    window: `sm` auto-relaunches itself inside its own tmux session (named
+    `sm`) and reattaches it if one is already running — an SSH drop later,
+    `sm` brings the whole workspace back. The tmux path needs `tmux` on
+    `PATH`; without it `sm` shows a notice and falls back to `"current"`.
+  - `iterm2.ssh` — only needed when `sm` runs **over SSH**: whatever you
+    type after `ssh` on the Mac to reach this host. Leave `""` for local
+    use. See below.
+  - Works independently of `tmux.enabled`: with tmux integration on, every
+    launch is tracked (● marker, `x` kill, `enter` re-enters); with it off,
+    windows are untracked.
 - `colors.claude` / `colors.codex` — each takes optional `light` and `dark`
   `#RRGGBB` accents; omitted or invalid values keep the defaults.
 - `"view"`: `"list"` (default) or `"tabs"` — the view mode `sm` starts in.
@@ -270,51 +274,92 @@ notice.
 
 With one small companion script, `open_in: "window"` opens every resume/new
 session as a **genuine iTerm2 window** — `sm` itself stays exactly where you
-ran it, even over SSH.
+ran it. Works both for local development on the Mac and over SSH.
 
 How it works: pressing `enter` makes `sm` write an invisible [custom control
 sequence](https://iterm2.com/python-api/customcontrol.html) to your
-terminal. An AutoLaunch script inside your local iTerm2 picks it up and
-opens a native window that runs
-`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent's resume command>"`,
-so the agent lands in the same tracked tmux session `sm` already knows how
-to mark (●), kill (`x`), and re-enter. No tmux needed around `sm` itself.
+terminal — it travels through SSH like any other output. An AutoLaunch
+script inside your local iTerm2 picks it up and opens a native window that
+runs the agent: locally it types the command straight into a fresh shell;
+over SSH it dials back with
+`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent's resume command>"`.
+Either way the agent lands in the same tracked tmux session `sm` already
+knows how to mark (●), kill (`x`), and re-enter — and `sm` itself never
+wraps into tmux. Closing a window is fine: the tmux session keeps running,
+and the next `enter` opens a fresh window into it. Repeating a launch whose
+window is still open just focuses that window.
 
-**Install (on the Mac, one command):**
+**Step 1 — install the bridge (on the Mac, one command):**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/scripts/install-iterm2.sh | sh
 ```
 
-Then, in iTerm2: *Settings → General → Magic → Enable Python API*, and start
-the script under *Scripts → AutoLaunch → sm_open_window.py* (auto-starts on
-the next iTerm2 launch; the first run offers to install iTerm2's Python
-runtime — accept it).
+(It drops one Python file into
+`~/Library/Application Support/iTerm2/Scripts/AutoLaunch/`. No `curl`
+available? Copy `scripts/iterm2/sm_open_window.py` there by hand or with
+`scp`.)
 
-**Configure (on the remote host)** in `~/.config/sm/config.json`:
+**Step 2 — two switches in iTerm2 (one-time):**
 
-```json
-{
-  "open_in": "window",
-  "iterm2": { "ssh": "myserver" }
-}
-```
+1. *Settings → General → Magic →* check **Enable Python API**.
+2. Menu bar *Scripts → AutoLaunch → sm_open_window.py* to start it now
+   (it auto-starts with iTerm2 from then on). The very first run offers to
+   download iTerm2's Python runtime — accept it.
 
-`iterm2.ssh` is whatever you type after `ssh` on the Mac to reach the host
-(alias from `~/.ssh/config`, hostname, or IP) — the new window dials a fresh
-connection, so key-based login should already work.
+You can confirm it is listening under *Scripts → Manage → Console*: pick
+`sm_open_window` and look for `[sm] bridge listening`.
 
-**Troubleshooting** — pressing `enter` does nothing:
-- The AutoLaunch script isn't running (iTerm2 *Scripts → Manage → Console*
-  shows it) or the Python API checkbox is off.
-- `iterm2.ssh` missing from config, or `$LC_TERMINAL` not reaching the host
-  (check `echo $LC_TERMINAL` there; your ssh config must not strip `LC_*`).
-- Running `sm` inside a tmux attach: `sm` auto-enables pane passthrough, but
-  a tmux older than 3.3 lacks `allow-passthrough` — run `sm` outside tmux.
+**Step 3 — configure `sm`:**
 
-Security note: the script treats terminal output as untrusted — payloads are
-validated against strict patterns and the only thing it will ever run is
-`ssh -t <host>` with a `cd`+`tmux`+`claude|codex` command line.
+- **Local Mac use:** nothing but the mode —
+
+  ```json
+  { "open_in": "window" }
+  ```
+
+- **Over SSH** (sm runs on the server, iTerm2 on your Mac): also tell `sm`
+  how your Mac reaches the server —
+
+  ```json
+  { "open_in": { "mode": "window", "iterm2": { "ssh": "myserver" } } }
+  ```
+
+  `iterm2.ssh` is whatever you type after `ssh` on the Mac (an alias from
+  `~/.ssh/config`, a hostname, or an IP). The new window dials a fresh
+  connection, so key-based (non-interactive) login must already work.
+
+Prefer separate windows over tabs? *Settings → General → tmux → Open tmux
+windows as: Native windows* does not apply here (no tmux integration is
+involved); the bridge always opens windows.
+
+**Troubleshooting** — pressing `enter` does nothing, or windows die
+instantly:
+- Open *Scripts → Manage → Console → sm_open_window*. Every keypress logs a
+  `[sm] payload:` and `[sm] running:` line. No lines at all → the sequence
+  never reached iTerm2 (see the next two items). Lines but no window → read
+  the logged error.
+- The script isn't running (restart it under *Scripts → AutoLaunch*) or the
+  Python API checkbox is off.
+- Over SSH: `iterm2.ssh` missing from config, or `$LC_TERMINAL` not
+  reaching the host — check `echo $LC_TERMINAL` prints `iTerm2` there; your
+  ssh setup must forward `LC_*` (macOS ssh does by default).
+- Running `sm` inside a tmux attach: `sm` auto-enables pane passthrough,
+  but a tmux older than 3.3 lacks `allow-passthrough` — run `sm` outside
+  tmux.
+- The window opens but the agent is "command not found": `sm` sends the
+  agent's directory (resolved from its own environment) and the bridge
+  prepends it to `PATH` remotely, so this should not happen — if it does,
+  check that `sm` itself can run the agent (`enter` works with
+  `mode: "current"`).
+- Shells: the generated commands are plain POSIX and are tested against
+  both zsh and bash login shells on the remote side.
+
+Security note: the bridge treats terminal output as untrusted — payloads
+are validated against strict patterns (host charset, `sm-` session-name
+shape, `claude`/`codex` argv allowlist, safe `PATH` directory) and the only
+shapes it will ever run are that `cd`+`tmux`+agent command line, locally or
+via `ssh -t --`.
 
 ### tmux integration
 

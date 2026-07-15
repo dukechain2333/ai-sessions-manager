@@ -29,12 +29,16 @@ windows = {}
 
 
 def remote_command(spec):
-    """Build the validated remote command, or None to reject the payload."""
+    """Build the validated command, or None to reject the payload.
+
+    An empty host means sm runs on THIS machine (no ssh involved): the
+    command is typed directly into the new window's local shell.
+    """
     host = spec.get("host", "")
     name = spec.get("name", "")
     dir_ = spec.get("dir", "")
     argv = spec.get("argv") or []
-    if not HOST_RE.match(host):
+    if host and not HOST_RE.match(host):
         return None, None, None
     if spec.get("attach"):
         if not NAME_RE.match(name):
@@ -86,8 +90,11 @@ async def handle(connection, payload):
             return
         print("[sm] window for", key, "is gone; opening a new one")
         windows.pop(key, None)
-    ssh = "ssh -t -- {h} {c}".format(h=shlex.quote(host), c=shlex.quote(cmd))
-    print("[sm] running:", ssh)
+    if host:
+        line = "ssh -t -- {h} {c}".format(h=shlex.quote(host), c=shlex.quote(cmd))
+    else:
+        line = cmd  # local sm: run directly in the new window's shell
+    print("[sm] running:", line)
     # Open a plain shell window and type the command into it: the user's own
     # shell does the parsing (not iTerm2's tokenizer) and supplies the usual
     # environment (ssh agent etc.); on failure the window stays open showing
@@ -108,7 +115,7 @@ async def handle(connection, payload):
     if session is None:
         print("[sm] no session in new window", win.window_id)
         return
-    await session.async_send_text(" " + ssh + "\n")
+    await session.async_send_text(" " + line + "\n")
     windows[key] = win
 
 

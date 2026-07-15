@@ -189,15 +189,43 @@ func TestLoadOpenIn(t *testing.T) {
 }
 
 func TestLoadITerm2SSH(t *testing.T) {
+	// The retired top-level "iterm2" key must be ignored — it moved under
+	// open_in (TestLoadOpenInObjectForm covers the live location).
 	p := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(p, []byte(`{"iterm2": {"ssh": "myhost"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(p)
-	if err != nil || cfg.ITerm2SSH != "myhost" {
-		t.Fatalf(`iterm2.ssh: cfg.ITerm2SSH=%q err=%v`, cfg.ITerm2SSH, err)
+	if err != nil || cfg.ITerm2SSH != "" {
+		t.Fatalf(`legacy top-level iterm2 must be inert: cfg.ITerm2SSH=%q err=%v`, cfg.ITerm2SSH, err)
 	}
 	if def := Default(); def.ITerm2SSH != "" {
 		t.Fatalf(`Default().ITerm2SSH = %q, want ""`, def.ITerm2SSH)
+	}
+}
+
+func TestLoadOpenInObjectForm(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{"open_in": {"mode": "window", "iterm2": {"ssh": "myhost"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil || cfg.OpenIn != OpenInWindow || cfg.ITerm2SSH != "myhost" {
+		t.Fatalf("object form: OpenIn=%q ITerm2SSH=%q err=%v", cfg.OpenIn, cfg.ITerm2SSH, err)
+	}
+	if err := os.WriteFile(p, []byte(`{"open_in": {"mode": "bogus"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(p)
+	if err != nil || cfg.OpenIn != OpenInCurrent {
+		t.Fatalf(`bogus object mode must fall back: OpenIn=%q err=%v`, cfg.OpenIn, err)
+	}
+	// The bare-string shorthand must keep working.
+	if err := os.WriteFile(p, []byte(`{"open_in": "window"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(p)
+	if err != nil || cfg.OpenIn != OpenInWindow || cfg.ITerm2SSH != "" {
+		t.Fatalf("string shorthand: OpenIn=%q ITerm2SSH=%q err=%v", cfg.OpenIn, cfg.ITerm2SSH, err)
 	}
 }

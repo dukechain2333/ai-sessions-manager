@@ -1341,3 +1341,47 @@ func TestEnterLiveWindowFormITerm2FallsBackToLocalJump(t *testing.T) {
 		t.Errorf("expected local window jump, got %v", *captured)
 	}
 }
+
+// A local (non-SSH) iTerm2 user needs zero config beyond mode "window": the
+// payload carries no host and the bridge runs the command locally.
+func TestITerm2LocalModeNeedsNoHost(t *testing.T) {
+	origIn, origIT, origSSH := insideTmux, iTerm2Env, overSSH
+	insideTmux = func() bool { return false }
+	iTerm2Env = func() bool { return true }
+	overSSH = func() bool { return false }
+	t.Cleanup(func() { insideTmux, iTerm2Env, overSSH = origIn, origIT, origSSH })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow // iterm2Host stays ""
+	m.tmuxEnabled = true
+	seqs := &[]string{}
+	m.emitSeq = func(seq string) tea.Cmd { *seqs = append(*seqs, seq); return nil }
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("local iTerm2 mode must emit, not runSilent: %s %v", name, args)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %d", len(*seqs))
+	}
+	l := decodeLaunch(t, (*seqs)[0])
+	if l.Host != "" || l.Name != "sm-claude-s1" || !l.Tmux {
+		t.Errorf("local launch = %+v, want empty host", l)
+	}
+}
+
+// Over SSH the host is mandatory: without iterm2.ssh the mechanism stays
+// off and window mode falls back to the tmux path.
+func TestITerm2OverSSHRequiresHost(t *testing.T) {
+	origIT, origSSH := iTerm2Env, overSSH
+	iTerm2Env = func() bool { return true }
+	overSSH = func() bool { return true }
+	t.Cleanup(func() { iTerm2Env, overSSH = origIT, origSSH })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	if m.iterm2Windows() {
+		t.Error("no host over SSH must disable the iTerm2 mechanism")
+	}
+}
