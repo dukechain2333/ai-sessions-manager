@@ -1000,3 +1000,251 @@ git commit -m "docs: document open_in (current terminal vs new tmux window)"
 - **Spec coverage:** config key + validation (Task 1); launch matrix all four cells (Task 5 tests: tracked/untracked window resume, pending window new; existing tests pin the two `current` cells); window preconditions and exact error copy (Task 4); List/Kill/Rename/Path dual-form + window ids for duplicate-name safety (Task 3); adoption via unchanged `adoptPending` (name-based — Task 3's `Rename`/`Path` handle the window form; no new adoption code needed); live-tmux jump incl. the sm-outside-tmux attach edge and the session-form-in-window-mode pin (Task 6); non-suspending runner + failure surfacing (Task 5); README (Task 7).
 - **Deliberate scope note:** `killProjectCmd` and `killOneCmd` need no changes — they call `Runner.Kill`/`Path` by name, which Task 3 makes form-agnostic.
 - **Type consistency:** `Window(name) (id, session string, ok bool)` is used identically in Task 3 (Exec + fake), and Task 6 (`m.tmux.Window`). `runSilent` signature matches `runCmd`'s shape everywhere.
+
+---
+
+## Amendment (2026-07-15, post-review): startup auto-wrap
+
+User feedback after live testing: requiring sm to already run inside tmux is
+too awkward. Approved design change (spec section 5): with
+`open_in: "window"`, sm started outside tmux replaces itself with a tmux
+client attached to sm's own session (named `sm`), creating the session or a
+fresh sm window as needed; a live detached workspace is reattached.
+
+### Task 8: tmux — self-wrap argv builders and server probe
+
+**Files:**
+- Modify: `internal/tmux/tmux.go`
+- Test: `internal/tmux/tmux_test.go`
+
+**Interfaces:**
+- Consumes: nothing new.
+- Produces: `tmux.SelfSession = "sm"`, `tmux.SelfWindow = "sm"` (consts);
+  `tmux.SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID string) []string`;
+  `tmux.SelfState() (sessionExists bool, smWindowID string)` (shells out);
+  `parseSelfWindow(out string) string` (unexported, tested). Task 9's main.go
+  calls `SelfState` + `SelfWrapArgs`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/tmux/tmux_test.go`:
+
+```go
+func TestSelfWrapArgs(t *testing.T) {
+	self := []string{"/usr/local/bin/sm", "--config", "/x/c.json"}
+	got := SelfWrapArgs(self, "/work", false, "")
+	want := []string{"new-session", "-s", "sm", "-n", "sm", "-c", "/work",
+		"/usr/local/bin/sm", "--config", "/x/c.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("fresh session = %v", got)
+	}
+	got = SelfWrapArgs(self, "/work", true, "@3")
+	want = []string{"select-window", "-t", "@3", ";", "attach-session", "-t", "=sm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("reattach = %v", got)
+	}
+	got = SelfWrapArgs(self, "/work", true, "")
+	want = []string{"new-window", "-t", "=sm:", "-n", "sm", "-c", "/work",
+		"/usr/local/bin/sm", "--config", "/x/c.json", ";", "attach-session", "-t", "=sm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("respawn = %v", got)
+	}
+}
+
+func TestParseSelfWindow(t *testing.T) {
+	out := "@1\tvim\n@2\tsm\n"
+	if got := parseSelfWindow(out); got != "@2" {
+		t.Errorf("parseSelfWindow = %q, want @2", got)
+	}
+	if got := parseSelfWindow("@1\tother\n\n"); got != "" {
+		t.Errorf("no sm window should yield empty, got %q", got)
+	}
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `go test ./internal/tmux/ -run 'TestSelfWrapArgs|TestParseSelfWindow' -v`
+Expected: FAIL — `undefined: SelfWrapArgs`, `undefined: parseSelfWindow`.
+
+- [ ] **Step 3: Implement**
+
+Add to `internal/tmux/tmux.go` (after `WindowArgs`):
+
+```go
+// SelfSession / SelfWindow name sm's own tmux home used by the open_in
+// "window" startup wrap. Deliberately NOT "sm-" prefixed: agent tracking
+// discovers by that prefix, and sm's own tmux must stay invisible to
+// ●/x/adoption. Reattachment probes by exact match instead.
+const (
+	SelfSession = "sm"
+	SelfWindow  = "sm"
+)
+
+// SelfWrapArgs builds the tmux argv (after the "tmux" binary) that lands the
+// user inside sm's own tmux session, (re)starting sm as needed. selfCmd is
+// sm's own binary and args; cwd pins the window so relative flag paths keep
+// resolving. Three server states (probed by SelfState): no session — create
+// it running sm; session with a live sm window — select it and attach (the
+// detached-workspace reattach); session whose sm window has exited — spawn a
+// fresh sm window (new-window makes it current) and attach. The last branch
+// is why a bare `new-session -A` is not enough: quitting sm kills its window
+// while agent windows keep the session alive.
+func SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID string) []string {
+	switch {
+	case !sessionExists:
+		return append([]string{"new-session", "-s", SelfSession, "-n", SelfWindow, "-c", cwd}, selfCmd...)
+	case smWindowID != "":
+		return []string{"select-window", "-t", smWindowID, ";", "attach-session", "-t", "=" + SelfSession}
+	default:
+		args := append([]string{"new-window", "-t", "=" + SelfSession + ":", "-n", SelfWindow, "-c", cwd}, selfCmd...)
+		return append(args, ";", "attach-session", "-t", "="+SelfSession)
+	}
+}
+
+// SelfState probes the tmux server for sm's own session and its live sm
+// window id ("" when absent). A missing server is (false, "").
+func SelfState() (sessionExists bool, smWindowID string) {
+	if exec.Command("tmux", "has-session", "-t", "="+SelfSession).Run() != nil {
+		return false, ""
+	}
+	out, err := exec.Command("tmux", "list-windows", "-t", "="+SelfSession, "-F",
+		"#{window_id}\t#{window_name}").Output()
+	if err != nil {
+		return true, ""
+	}
+	return true, parseSelfWindow(string(out))
+}
+
+// parseSelfWindow finds the SelfWindow-named window id in list-windows
+// "id\tname" output, or "".
+func parseSelfWindow(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(parts) == 2 && parts[1] == SelfWindow {
+			return parts[0]
+		}
+	}
+	return ""
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `go test ./internal/tmux/ -v` then `go test ./...`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/tmux/tmux.go internal/tmux/tmux_test.go
+git commit -m "feat(tmux): self-wrap argv builders for open_in window startup"
+```
+
+---
+
+### Task 9: startup wiring — main.go self-exec, ui fallback dialog, README
+
+**Files:**
+- Modify: `cmd/sm/main.go`
+- Modify: `internal/ui/model.go` (New: tmux-missing downgrade)
+- Modify: `README.md` (open_in bullet)
+- Test: `internal/ui/model_test.go`
+
+**Interfaces:**
+- Consumes: `tmux.SelfState`, `tmux.SelfWrapArgs`, `tmux.SelfSession` (Task 8);
+  `config.OpenInWindow/OpenInCurrent`.
+- Produces: no new exported surface.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `internal/ui/model_test.go`:
+
+```go
+func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
+	orig := tmuxLookPath
+	tmuxLookPath = func() bool { return false }
+	defer func() { tmuxLookPath = orig }()
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInCurrent {
+		t.Errorf("openIn = %q, want fallback to current", m.openIn)
+	}
+	if m.dialog != dialogError || !strings.Contains(m.errText, "tmux on PATH") {
+		t.Errorf("expected startup error dialog, got dialog=%v err=%q", m.dialog, m.errText)
+	}
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `go test ./internal/ui/ -run TestWindowModeWithoutTmuxFallsBackAtStartup -v`
+Expected: FAIL — openIn stays `"window"`, no dialog.
+
+- [ ] **Step 3: Implement the ui downgrade**
+
+In `internal/ui/model.go`, in `New`, directly after the existing
+`if ret.tmuxEnabled && !tmuxLookPath() { … }` block:
+
+```go
+	if ret.openIn == config.OpenInWindow && !tmuxLookPath() {
+		ret.openIn = config.OpenInCurrent
+		ret.dialog = dialogError
+		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
+	}
+```
+
+- [ ] **Step 4: Implement the main.go self-exec wrap**
+
+In `cmd/sm/main.go`, after the `cfg, cfgErr := config.Load(path)` error
+handling and before `tea.NewProgram`:
+
+```go
+	// open_in "window" wants sm living inside tmux — the windows it opens
+	// land in the attached session. Started outside tmux, sm replaces itself
+	// with a tmux client on its own session (creating the session or a fresh
+	// sm window as needed; a live detached workspace is reattached). Any
+	// failure falls through to a normal run: ui.New shows the tmux-missing
+	// dialog and downgrades, and the in-app launch check still guards $TMUX.
+	if cfg.OpenIn == config.OpenInWindow && os.Getenv("TMUX") == "" {
+		if tmuxPath, err := exec.LookPath("tmux"); err == nil {
+			if self, err := os.Executable(); err == nil {
+				cwd, _ := os.Getwd()
+				exists, winID := tmux.SelfState()
+				selfCmd := append([]string{self}, os.Args[1:]...)
+				argv := append([]string{"tmux"}, tmux.SelfWrapArgs(selfCmd, cwd, exists, winID)...)
+				_ = syscall.Exec(tmuxPath, argv, os.Environ())
+			}
+		}
+	}
+```
+
+Add imports: `"os/exec"`, `"syscall"`, and
+`"github.com/dukechain2333/ai-sessions-manager/internal/tmux"`.
+
+- [ ] **Step 5: Update README**
+
+In the `open_in` bullet added by Task 7, replace the sentence
+`Requires running `sm` inside tmux (and `tmux` on `PATH`); `sm` shows an error otherwise.`
+with:
+
+```markdown
+  Started outside tmux, `sm` automatically re-launches itself inside its own
+  tmux session (named `sm`) and reattaches it if one is already running — an
+  SSH drop later, `sm` brings the whole workspace (sm plus every agent
+  window) back. Needs `tmux` on `PATH`; without it `sm` shows a notice and
+  falls back to `"current"` for the run.
+```
+
+- [ ] **Step 6: Run the full suite and verify the wrap manually**
+
+Run: `go test ./...` — expected: PASS.
+Run: `gofmt -l cmd internal` — expected: empty.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add cmd/sm/main.go internal/ui/model.go internal/ui/model_test.go README.md
+git commit -m "feat: auto-wrap sm into its own tmux session when open_in is window"
+```

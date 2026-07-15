@@ -67,6 +67,13 @@ error dialog style:
 2. `$TMUX` set — sm must itself be running inside tmux. Error text:
    `open_in "window" requires running sm inside tmux`.
 
+The startup auto-wrap (section 5) makes precondition 2 normally impossible to
+violate — it survives as a defense-in-depth fallback (e.g. the self-exec
+failed). Precondition 1 additionally downgrades at startup: `ui.New` with
+`open_in: "window"` and no tmux on PATH shows the error dialog once and falls
+back to `"current"` for the run, mirroring the existing
+tmux-enabled-but-missing pattern.
+
 Window mode must NOT use `tea.ExecProcess` (that suspends the TUI). It uses a
 non-suspending runner: plain `exec.Command` — `tmux new-window` returns
 immediately and switches focus to the new window (tmux default). After launch,
@@ -115,7 +122,39 @@ the discovered name space to windows leaves the upper layers almost untouched.
   combination, not a bug.
 - Malformed `open_in` value → default `"current"`.
 
-## 5. Testing
+## 5. Startup auto-wrap: sm lives in its own tmux session
+
+Requiring the user to manually start tmux before sm defeats the point of
+`open_in: "window"`. Instead, sm started *outside* tmux with that config
+replaces itself with a tmux client attached to sm's own session:
+
+```
+sm starts, open_in == "window", $TMUX empty:
+  tmux missing from PATH        → ui.New error dialog + downgrade to "current"
+  session "sm" does not exist   → exec tmux new-session -s sm -n sm -c <cwd> <sm argv>
+  session exists, sm window live→ exec tmux select-window ; attach   (reattach)
+  session exists, sm exited     → exec tmux new-window (fresh sm) ; attach
+```
+
+- The wrap is a `syscall.Exec` self-replacement (no parent process left);
+  sm's binary comes from `os.Executable()`, its original args are passed
+  through, and `-c <cwd>` pins the window to the invoking directory so
+  relative flag paths keep resolving.
+- sm's own session and window are both named `sm` — deliberately NOT
+  `sm-`-prefixed, so agent tracking (which discovers by that prefix) never
+  sees them; reattachment probes by exact match (`has-session -t =sm`).
+- The third branch is why a bare `new-session -A` is not enough: quitting sm
+  kills its window while agent windows keep the session alive, and a naive
+  re-attach would land the user in an agent window with no sm running.
+- Natural consequence: sm and every agent window it opens live in the one
+  `sm` session — after an SSH drop, running `sm` restores the whole
+  workspace.
+- A second concurrent `sm` from another terminal attaches to the same
+  session (mirrored clients) — standard tmux behavior, no special handling.
+- Already inside tmux → no wrap (unchanged); `tmux.enabled` does not gate
+  the wrap (the trigger is `open_in` alone).
+
+## 6. Testing
 
 - **config:** parse `open_in`; invalid value falls back; `DefaultFileJSON` ↔
   `Default()` pin test updated.
