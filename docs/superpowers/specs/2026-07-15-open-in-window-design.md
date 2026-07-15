@@ -153,6 +153,12 @@ sm starts, open_in == "window", $TMUX empty:
   session (mirrored clients) — standard tmux behavior, no special handling.
 - Already inside tmux → no wrap (unchanged); `tmux.enabled` does not gate
   the wrap (the trigger is `open_in` alone).
+- **iTerm2 → real OS windows:** when the wrap detects iTerm2 (via the
+  `LC_TERMINAL=iTerm2` env iTerm2 forwards over ssh; `tmux.CCFlag`), it
+  attaches with `tmux -CC` — iTerm2's control-mode integration renders
+  every tmux window as a native window/tab, so `open_in: "window"` launches
+  pop genuine OS windows even over SSH. Other terminals attach plain and
+  get in-terminal tmux windows.
 
 ## 6. Testing
 

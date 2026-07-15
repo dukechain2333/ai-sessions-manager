@@ -145,3 +145,18 @@ func TestParseSelfWindow(t *testing.T) {
 		t.Errorf("no sm window should yield empty, got %q", got)
 	}
 }
+
+func TestCCFlag(t *testing.T) {
+	env := func(vals map[string]string) func(string) string {
+		return func(k string) string { return vals[k] }
+	}
+	if got := CCFlag(env(map[string]string{"LC_TERMINAL": "iTerm2"})); !reflect.DeepEqual(got, []string{"-CC"}) {
+		t.Errorf("iTerm2 should get -CC, got %v", got)
+	}
+	if got := CCFlag(env(map[string]string{"LC_TERMINAL": "kitty"})); got != nil {
+		t.Errorf("non-iTerm2 must get no flags, got %v", got)
+	}
+	if got := CCFlag(env(map[string]string{})); got != nil {
+		t.Errorf("no LC_TERMINAL must get no flags, got %v", got)
+	}
+}

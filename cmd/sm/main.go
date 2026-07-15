@@ -61,7 +61,8 @@ func main() {
 				cwd, _ := os.Getwd()
 				exists, winID := tmux.SelfState()
 				selfCmd := append([]string{self}, os.Args[1:]...)
-				argv := append([]string{"tmux"}, tmux.SelfWrapArgs(selfCmd, cwd, exists, winID)...)
+				argv := append([]string{"tmux"}, tmux.CCFlag(os.Getenv)...)
+				argv = append(argv, tmux.SelfWrapArgs(selfCmd, cwd, exists, winID)...)
 				_ = syscall.Exec(tmuxPath, argv, os.Environ())
 			}
 		}

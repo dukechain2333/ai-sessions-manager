@@ -136,6 +136,18 @@ func SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID s
 	}
 }
 
+// CCFlag returns the tmux client flags for the startup wrap. iTerm2
+// (recognized by the LC_TERMINAL it forwards over ssh) natively speaks tmux
+// control mode: with -CC every tmux window renders as a real OS window, so
+// open_in "window" launches pop native terminal windows instead of in-pane
+// tabs. Other terminals get no flags. env is os.Getenv, injectable in tests.
+func CCFlag(env func(string) string) []string {
+	if env("LC_TERMINAL") == "iTerm2" {
+		return []string{"-CC"}
+	}
+	return nil
+}
+
 // SelfState probes the tmux server for sm's own session and its live sm
 // window id ("" when absent). A missing server is (false, "").
 func SelfState() (sessionExists bool, smWindowID string) {

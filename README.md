@@ -259,6 +259,11 @@ notice.
   Works independently of `tmux.enabled`: with tmux integration on, the
   window is named `sm-…` and gets the ● marker / `x` kill treatment; with it
   off, it is a plain untracked window.
+  **iTerm2 users get real OS windows:** when `sm` detects iTerm2 (via the
+  `LC_TERMINAL` it forwards over ssh), the auto-relaunch attaches with
+  `tmux -CC` — iTerm2's native tmux integration — so every window `sm`
+  opens is a genuine iTerm2 window/tab, even over SSH. Pick windows vs
+  tabs in iTerm2 under *Settings → General → tmux*.
 - `colors.claude` / `colors.codex` — each takes optional `light` and `dark`
   `#RRGGBB` accents; omitted or invalid values keep the defaults.
 - `"view"`: `"list"` (default) or `"tabs"` — the view mode `sm` starts in.
