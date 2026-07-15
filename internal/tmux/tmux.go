@@ -81,6 +81,20 @@ func NewArgs(name, cwd, agentName string, agentArgs []string) []string {
 	return append(args, agentArgs...)
 }
 
+// WindowArgs builds the tmux argv (after the "tmux" binary) that opens a new
+// window in the caller's current tmux session, running the agent command in
+// cwd. A non-empty name tags the window for sm's tracking — -n also disables
+// tmux's automatic-rename for that window, so the name stays stable until
+// adoption renames it. An empty name leaves the window untracked.
+func WindowArgs(name, cwd, agentName string, agentArgs []string) []string {
+	args := []string{"new-window", "-c", cwd}
+	if name != "" {
+		args = append(args, "-n", name)
+	}
+	args = append(args, agentName)
+	return append(args, agentArgs...)
+}
+
 // Runner is the injectable tmux boundary. The real implementation is Exec;
 // tests inject a fake.
 type Runner interface {

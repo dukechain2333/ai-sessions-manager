@@ -65,6 +65,19 @@ func TestNewArgs(t *testing.T) {
 	}
 }
 
+func TestWindowArgs(t *testing.T) {
+	got := WindowArgs("sm-claude-s1", "/x/alpha", "claude", []string{"--resume", "s1"})
+	want := []string{"new-window", "-c", "/x/alpha", "-n", "sm-claude-s1", "claude", "--resume", "s1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("WindowArgs named = %v", got)
+	}
+	got = WindowArgs("", "/x/beta", "codex", nil)
+	want = []string{"new-window", "-c", "/x/beta", "codex"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("WindowArgs unnamed = %v", got)
+	}
+}
+
 func TestParseList(t *testing.T) {
 	out := "sm-claude-s1\nother-session\nsm-codex-pending-9\n\n"
 	got := parseList(out)
