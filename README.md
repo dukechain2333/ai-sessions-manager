@@ -234,6 +234,7 @@ notice.
 ```json
 {
   "view": "list",
+  "open_in": "current",
   "tmux": { "enabled": false },
   "colors": {
     "claude": { "light": "#C15F3C", "dark": "#D97757" },
@@ -246,6 +247,15 @@ notice.
   inside a tmux session named `sm-<agent>-<id8>`, so work survives detaching
   (Ctrl-b d). Requires `tmux` on `PATH`; if it is missing, `sm` shows a
   startup notice and runs without it.
+- `open_in` (default `"current"`) — where `enter` (resume) and `n` (new
+  session) launch the agent. `"current"` suspends `sm` and runs it in this
+  terminal. `"window"` opens a new tmux window in the tmux session you are
+  attached to — `sm` stays on screen, and over SSH the window naturally lives
+  on the same connection. Requires running `sm` inside tmux (and `tmux` on
+  `PATH`); `sm` shows an error otherwise. Works independently of
+  `tmux.enabled`: with tmux integration on, the window is named `sm-…` and
+  gets the ● marker / `x` kill treatment; with it off, it is a plain
+  untracked window.
 - `colors.claude` / `colors.codex` — each takes optional `light` and `dark`
   `#RRGGBB` accents; omitted or invalid values keep the defaults.
 - `"view"`: `"list"` (default) or `"tabs"` — the view mode `sm` starts in.
@@ -263,6 +273,9 @@ notice.
   rescan by matching the newest session in that directory; starting two new
   sessions in the same directory before returning can label them in either
   order (both stay killable from the project header).
+- With `open_in: "window"`, tracked launches are tmux *windows* (named
+  `sm-<agent>-<id8>`) instead of detached sessions; ●, `x`, and adoption
+  work the same, and `enter` on a live one switches to its window.
 
 ## Uninstall
 
