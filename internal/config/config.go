@@ -22,6 +22,7 @@ const (
 const DefaultFileJSON = `{
   "view": "list",
   "open_in": "current",
+  "iterm2": { "ssh": "" },
   "tmux": { "enabled": false },
   "colors": {
     "claude": { "light": "#C15F3C", "dark": "#D97757" },
@@ -40,6 +41,7 @@ type Config struct {
 	Codex       AgentColors
 	View        string // startup view mode: "list" (mixed) or "tabs" (per-agent)
 	OpenIn      string // where launches open: "current" (this terminal) or "window" (new tmux window)
+	ITerm2SSH   string // ssh destination for iTerm2 native-window launches ("" = disabled)
 }
 
 // Default is the built-in configuration used when no file (or no key) is set.
@@ -50,6 +52,7 @@ func Default() Config {
 		Codex:       AgentColors{Light: "#0A7C66", Dark: "#10A37F"},
 		View:        "list",
 		OpenIn:      OpenInCurrent,
+		ITerm2SSH:   "",
 	}
 }
 
@@ -96,7 +99,10 @@ type fileColors struct {
 type fileConfig struct {
 	View   *string `json:"view"`
 	OpenIn *string `json:"open_in"`
-	Tmux   *struct {
+	ITerm2 *struct {
+		SSH *string `json:"ssh"`
+	} `json:"iterm2"`
+	Tmux *struct {
 		Enabled bool `json:"enabled"`
 	} `json:"tmux"`
 	Colors *struct {
@@ -135,6 +141,9 @@ func Load(path string) (Config, error) {
 	}
 	if f.OpenIn != nil && (*f.OpenIn == OpenInCurrent || *f.OpenIn == OpenInWindow) {
 		cfg.OpenIn = *f.OpenIn
+	}
+	if f.ITerm2 != nil && f.ITerm2.SSH != nil {
+		cfg.ITerm2SSH = *f.ITerm2.SSH
 	}
 	return cfg, nil
 }

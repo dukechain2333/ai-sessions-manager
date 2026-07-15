@@ -187,3 +187,17 @@ func TestLoadOpenIn(t *testing.T) {
 		t.Fatalf(`Default().OpenIn = %q, want "current"`, def.OpenIn)
 	}
 }
+
+func TestLoadITerm2SSH(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{"iterm2": {"ssh": "myhost"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil || cfg.ITerm2SSH != "myhost" {
+		t.Fatalf(`iterm2.ssh: cfg.ITerm2SSH=%q err=%v`, cfg.ITerm2SSH, err)
+	}
+	if def := Default(); def.ITerm2SSH != "" {
+		t.Fatalf(`Default().ITerm2SSH = %q, want ""`, def.ITerm2SSH)
+	}
+}
