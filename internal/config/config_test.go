@@ -166,3 +166,24 @@ func TestLoadView(t *testing.T) {
 		t.Fatalf(`Default().View = %q, want "list"`, def.View)
 	}
 }
+
+func TestLoadOpenIn(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{"open_in": "window"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil || cfg.OpenIn != OpenInWindow {
+		t.Fatalf(`open_in "window": cfg.OpenIn=%q err=%v`, cfg.OpenIn, err)
+	}
+	if err := os.WriteFile(p, []byte(`{"open_in": "bogus"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(p)
+	if err != nil || cfg.OpenIn != OpenInCurrent {
+		t.Fatalf(`unknown open_in must fall back to "current": cfg.OpenIn=%q err=%v`, cfg.OpenIn, err)
+	}
+	if def := Default(); def.OpenIn != OpenInCurrent {
+		t.Fatalf(`Default().OpenIn = %q, want "current"`, def.OpenIn)
+	}
+}

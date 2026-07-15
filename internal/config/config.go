@@ -11,10 +11,17 @@ import (
 	"regexp"
 )
 
+// OpenIn values: where resume/new-session launches the agent.
+const (
+	OpenInCurrent = "current" // suspend sm, run in the current terminal (default)
+	OpenInWindow  = "window"  // open a new tmux window; sm stays on screen
+)
+
 // DefaultFileJSON is the pretty-printed default config written on first run.
 // TestDefaultFileJSONParsesToDefault pins it to Default() so it cannot drift.
 const DefaultFileJSON = `{
   "view": "list",
+  "open_in": "current",
   "tmux": { "enabled": false },
   "colors": {
     "claude": { "light": "#C15F3C", "dark": "#D97757" },
@@ -32,6 +39,7 @@ type Config struct {
 	Claude      AgentColors
 	Codex       AgentColors
 	View        string // startup view mode: "list" (mixed) or "tabs" (per-agent)
+	OpenIn      string // where launches open: "current" (this terminal) or "window" (new tmux window)
 }
 
 // Default is the built-in configuration used when no file (or no key) is set.
@@ -41,6 +49,7 @@ func Default() Config {
 		Claude:      AgentColors{Light: "#C15F3C", Dark: "#D97757"},
 		Codex:       AgentColors{Light: "#0A7C66", Dark: "#10A37F"},
 		View:        "list",
+		OpenIn:      OpenInCurrent,
 	}
 }
 
@@ -85,8 +94,9 @@ type fileColors struct {
 }
 
 type fileConfig struct {
-	View *string `json:"view"`
-	Tmux *struct {
+	View   *string `json:"view"`
+	OpenIn *string `json:"open_in"`
+	Tmux   *struct {
 		Enabled bool `json:"enabled"`
 	} `json:"tmux"`
 	Colors *struct {
@@ -122,6 +132,9 @@ func Load(path string) (Config, error) {
 	}
 	if f.View != nil && (*f.View == "list" || *f.View == "tabs") {
 		cfg.View = *f.View
+	}
+	if f.OpenIn != nil && (*f.OpenIn == OpenInCurrent || *f.OpenIn == OpenInWindow) {
+		cfg.OpenIn = *f.OpenIn
 	}
 	return cfg, nil
 }
