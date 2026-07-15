@@ -108,3 +108,34 @@ func TestParseWindows(t *testing.T) {
 		t.Errorf("parseWindows size = %d, want 2", len(got))
 	}
 }
+
+func TestSelfWrapArgs(t *testing.T) {
+	self := []string{"/usr/local/bin/sm", "--config", "/x/c.json"}
+	got := SelfWrapArgs(self, "/work", false, "")
+	want := []string{"new-session", "-s", "sm", "-n", "sm", "-c", "/work",
+		"/usr/local/bin/sm", "--config", "/x/c.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("fresh session = %v", got)
+	}
+	got = SelfWrapArgs(self, "/work", true, "@3")
+	want = []string{"select-window", "-t", "@3", ";", "attach-session", "-t", "=sm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("reattach = %v", got)
+	}
+	got = SelfWrapArgs(self, "/work", true, "")
+	want = []string{"new-window", "-t", "=sm:", "-n", "sm", "-c", "/work",
+		"/usr/local/bin/sm", "--config", "/x/c.json", ";", "attach-session", "-t", "=sm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("respawn = %v", got)
+	}
+}
+
+func TestParseSelfWindow(t *testing.T) {
+	out := "@1\tvim\n@2\tsm\n"
+	if got := parseSelfWindow(out); got != "@2" {
+		t.Errorf("parseSelfWindow = %q, want @2", got)
+	}
+	if got := parseSelfWindow("@1\tother\n\n"); got != "" {
+		t.Errorf("no sm window should yield empty, got %q", got)
+	}
+}

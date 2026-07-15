@@ -95,6 +95,62 @@ func WindowArgs(name, cwd, agentName string, agentArgs []string) []string {
 	return append(args, agentArgs...)
 }
 
+// SelfSession / SelfWindow name sm's own tmux home used by the open_in
+// "window" startup wrap. Deliberately NOT "sm-" prefixed: agent tracking
+// discovers by that prefix, and sm's own tmux must stay invisible to
+// ●/x/adoption. Reattachment probes by exact match instead.
+const (
+	SelfSession = "sm"
+	SelfWindow  = "sm"
+)
+
+// SelfWrapArgs builds the tmux argv (after the "tmux" binary) that lands the
+// user inside sm's own tmux session, (re)starting sm as needed. selfCmd is
+// sm's own binary and args; cwd pins the window so relative flag paths keep
+// resolving. Three server states (probed by SelfState): no session — create
+// it running sm; session with a live sm window — select it and attach (the
+// detached-workspace reattach); session whose sm window has exited — spawn a
+// fresh sm window (new-window makes it current) and attach. The last branch
+// is why a bare `new-session -A` is not enough: quitting sm kills its window
+// while agent windows keep the session alive.
+func SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID string) []string {
+	switch {
+	case !sessionExists:
+		return append([]string{"new-session", "-s", SelfSession, "-n", SelfWindow, "-c", cwd}, selfCmd...)
+	case smWindowID != "":
+		return []string{"select-window", "-t", smWindowID, ";", "attach-session", "-t", "=" + SelfSession}
+	default:
+		args := append([]string{"new-window", "-t", "=" + SelfSession + ":", "-n", SelfWindow, "-c", cwd}, selfCmd...)
+		return append(args, ";", "attach-session", "-t", "="+SelfSession)
+	}
+}
+
+// SelfState probes the tmux server for sm's own session and its live sm
+// window id ("" when absent). A missing server is (false, "").
+func SelfState() (sessionExists bool, smWindowID string) {
+	if exec.Command("tmux", "has-session", "-t", "="+SelfSession).Run() != nil {
+		return false, ""
+	}
+	out, err := exec.Command("tmux", "list-windows", "-t", "="+SelfSession, "-F",
+		"#{window_id}\t#{window_name}").Output()
+	if err != nil {
+		return true, ""
+	}
+	return true, parseSelfWindow(string(out))
+}
+
+// parseSelfWindow finds the SelfWindow-named window id in list-windows
+// "id\tname" output, or "".
+func parseSelfWindow(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(parts) == 2 && parts[1] == SelfWindow {
+			return parts[0]
+		}
+	}
+	return ""
+}
+
 // Runner is the injectable tmux boundary. The real implementation is Exec;
 // tests inject a fake. Names may denote tmux *sessions* (open_in "current")
 // or tmux *windows* (open_in "window"); List discovers both, and the other
