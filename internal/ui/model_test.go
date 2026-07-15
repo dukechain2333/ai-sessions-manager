@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -12,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
+	"github.com/dukechain2333/ai-sessions-manager/internal/iterm2"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
@@ -1201,27 +1204,95 @@ func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
 // in-terminal tmux windows where the user expects native ones — the client's
 // control mode was fixed at attach time and cannot be upgraded. sm must say
 // so instead of looking broken.
-func TestWindowModePlainClientOniTerm2Warns(t *testing.T) {
-	origIn, origLook, origIT, origPlain := insideTmux, tmuxLookPath, iTerm2Env, plainTmuxClient
-	insideTmux = func() bool { return true }
-	tmuxLookPath = func() bool { return true }
+// newITerm2Model is a window-mode model with the iTerm2 mechanism active:
+// iterm2.ssh configured, LC_TERMINAL detected, outside tmux, and both
+// runners trapped — iTerm2 launches must not run anything, only emit.
+func newITerm2Model(t *testing.T) (Model, *[]string) {
+	t.Helper()
+	origIn, origIT := insideTmux, iTerm2Env
+	insideTmux = func() bool { return false }
 	iTerm2Env = func() bool { return true }
-	plainTmuxClient = func() bool { return true }
-	defer func() {
-		insideTmux, tmuxLookPath, iTerm2Env, plainTmuxClient = origIn, origLook, origIT, origPlain
-	}()
-	cfg := config.Default()
-	cfg.OpenIn = config.OpenInWindow
-	m := New("/nope", "/nope", cfg)
-	if m.dialog != dialogError || !strings.Contains(m.errText, "control mode") {
-		t.Errorf("expected control-mode hint dialog, got dialog=%v err=%q", m.dialog, m.errText)
+	t.Cleanup(func() { insideTmux, iTerm2Env = origIn, origIT })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	m.iterm2Host = "myhost"
+	seqs := &[]string{}
+	m.emitSeq = func(seq string) tea.Cmd { *seqs = append(*seqs, seq); return nil }
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("iTerm2 mode must not runCmd: %s %v", name, args)
+		return nil
 	}
-	if m.openIn != config.OpenInWindow {
-		t.Errorf("hint must not downgrade openIn, got %q", m.openIn)
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("iTerm2 mode must not runSilent: %s %v", name, args)
+		return nil
 	}
-	iTerm2Env = func() bool { return false } // plain attach elsewhere is the expected experience
-	m = New("/nope", "/nope", cfg)
+	m.now = func() time.Time { return time.Unix(0, 1234) }
+	return m, seqs
+}
+
+func decodeLaunch(t *testing.T, seq string) iterm2.Launch {
+	t.Helper()
+	const pre = "\x1b]1337;Custom=id=sm:"
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(seq, pre), "\a"))
+	if err != nil {
+		t.Fatalf("cannot decode %q: %v", seq, err)
+	}
+	var l iterm2.Launch
+	if err := json.Unmarshal(raw, &l); err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+func TestResumeITerm2EmitsTrackedLaunch(t *testing.T) {
+	m, seqs := newITerm2Model(t)
+	m.tmuxEnabled = true
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %v", *seqs)
+	}
+	l := decodeLaunch(t, (*seqs)[0])
+	if l.Host != "myhost" || l.Dir != dir || l.Name != "sm-claude-s1" || !l.Tmux ||
+		l.Attach || len(l.Argv) < 2 || l.Argv[0] != "claude" {
+		t.Errorf("launch = %+v", l)
+	}
+}
+
+func TestEnterLiveITerm2EmitsAttach(t *testing.T) {
+	m, seqs := newITerm2Model(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %v", *seqs)
+	}
+	l := decodeLaunch(t, (*seqs)[0])
+	if !l.Attach || l.Name != "sm-claude-s1" || l.Host != "myhost" {
+		t.Errorf("attach launch = %+v", l)
+	}
+}
+
+func TestITerm2SkipsWindowTmuxPreconditions(t *testing.T) {
+	origLook := tmuxLookPath
+	tmuxLookPath = func() bool { return true } // irrelevant; insideTmux=false is the check
+	defer func() { tmuxLookPath = origLook }()
+	m, seqs := newITerm2Model(t) // outside tmux — would error without iTerm2 mechanism
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	m = m2.(Model)
 	if m.dialog == dialogError {
-		t.Error("non-iTerm2 plain attach must not warn")
+		t.Fatalf("iTerm2 mode must skip inside-tmux precondition, got %q", m.errText)
+	}
+	if len(*seqs) != 1 {
+		t.Errorf("expected an emitted sequence, got %v", *seqs)
 	}
 }

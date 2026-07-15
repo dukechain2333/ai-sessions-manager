@@ -55,14 +55,14 @@ func main() {
 	// sm window as needed; a live detached workspace is reattached). Any
 	// failure falls through to a normal run: ui.New shows the tmux-missing
 	// dialog and downgrades, and the in-app launch check still guards $TMUX.
-	if cfg.OpenIn == config.OpenInWindow && os.Getenv("TMUX") == "" {
+	if cfg.OpenIn == config.OpenInWindow && os.Getenv("TMUX") == "" &&
+		!(cfg.ITerm2SSH != "" && os.Getenv("LC_TERMINAL") == "iTerm2") {
 		if tmuxPath, err := exec.LookPath("tmux"); err == nil {
 			if self, err := os.Executable(); err == nil {
 				cwd, _ := os.Getwd()
 				exists, winID := tmux.SelfState()
 				selfCmd := append([]string{self}, os.Args[1:]...)
-				argv := append([]string{"tmux"}, tmux.CCFlag(os.Getenv)...)
-				argv = append(argv, tmux.SelfWrapArgs(selfCmd, cwd, exists, winID)...)
+				argv := append([]string{"tmux"}, tmux.SelfWrapArgs(selfCmd, cwd, exists, winID)...)
 				_ = syscall.Exec(tmuxPath, argv, os.Environ())
 			}
 		}

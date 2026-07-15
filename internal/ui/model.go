@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
+	"github.com/dukechain2333/ai-sessions-manager/internal/iterm2"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
@@ -87,6 +88,7 @@ type Model struct {
 	tmux        tmux.Runner
 	tmuxLive    map[string]bool
 	openIn      string // config.OpenInCurrent or config.OpenInWindow
+	iterm2Host  string
 	st          styles
 
 	list        listPane
@@ -120,6 +122,7 @@ type Model struct {
 	trashFn   func(store.Session) (string, error)
 	runCmd    func(name, dir string, args ...string) tea.Cmd
 	runSilent func(name, dir string, args ...string) tea.Cmd
+	emitSeq   func(string) tea.Cmd
 	bell      tea.Cmd
 
 	// mouse double-click tracking; now is injected for tests
@@ -173,6 +176,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		providers:     provs,
 		tmuxEnabled:   cfg.TmuxEnabled,
 		openIn:        cfg.OpenIn,
+		iterm2Host:    cfg.ITerm2SSH,
 		tmux:          tmux.Exec{},
 		trashFn: func(s store.Session) (string, error) {
 			p := store.ProviderFor(provs, s.Agent)
@@ -183,6 +187,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		},
 		runCmd:       execCmd,
 		runSilent:    execSilent,
+		emitSeq:      emitEscape,
 		bell:         ringBell,
 		lastClickRow: -1,
 		now:          time.Now,
@@ -202,13 +207,12 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		ret.dialog = dialogError
 		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
 	}
-	// An iTerm2 user inside a plain (non -CC) attach would get in-terminal
-	// tmux windows and reasonably read that as "new window is broken" —
-	// control mode is fixed at attach time, so the only cure is restarting
-	// sm outside tmux (the auto-wrap then attaches with -CC). Say so.
-	if ret.openIn == config.OpenInWindow && insideTmux() && iTerm2Env() && plainTmuxClient() {
-		ret.dialog = dialogError
-		ret.errText = `open_in "window": this tmux client is not in iTerm2 control mode, so new windows open as plain tmux windows here. For native iTerm2 windows, detach (Ctrl-b d) and run sm outside tmux.`
+	// Best-effort: if sm ends up attached inside tmux while iTerm2 window
+	// mode is configured (e.g. a plain, non-wrapped attach), let the emitted
+	// control sequences pass through the pane to the terminal instead of
+	// being swallowed by tmux.
+	if ret.openIn == config.OpenInWindow && ret.iterm2Host != "" && iTerm2Env() && insideTmux() {
+		_ = exec.Command("tmux", "set-option", "-p", "allow-passthrough", "on").Run()
 	}
 	return ret
 }
@@ -246,6 +250,22 @@ func ringBell() tea.Msg {
 	return nil
 }
 
+// emitEscape writes a control sequence to stderr — the tty, not Bubble
+// Tea's stdout frame — same reasoning as ringBell.
+func emitEscape(seq string) tea.Cmd {
+	return func() tea.Msg {
+		fmt.Fprint(os.Stderr, seq)
+		return nil
+	}
+}
+
+// iterm2Windows reports whether window-mode launches go through the
+// local iTerm2 AutoLaunch script instead of tmux windows: explicit
+// config opt-in plus a detected iTerm2.
+func (m Model) iterm2Windows() bool {
+	return m.openIn == config.OpenInWindow && m.iterm2Host != "" && iTerm2Env()
+}
+
 // tmuxLookPath reports whether tmux is on PATH; overridable in tests.
 var tmuxLookPath = func() bool {
 	_, err := exec.LookPath("tmux")
@@ -265,16 +285,6 @@ var iTerm2Env = func() bool {
 	return os.Getenv("LC_TERMINAL") == "iTerm2"
 }
 
-// plainTmuxClient reports whether the tmux client sm is displayed on is a
-// plain (non control-mode) attach. Control mode is fixed at attach time, so
-// a plain iTerm2 client can never render native windows — worth a warning.
-// Errors (detached, no tmux) read as "not plain" so no dialog fires.
-// Overridable in tests.
-var plainTmuxClient = func() bool {
-	out, err := exec.Command("tmux", "display-message", "-p", "#{client_control_mode}").Output()
-	return err == nil && strings.TrimSpace(string(out)) == "0"
-}
-
 // binLookPath reports an error when an agent binary (claude/codex) is not on
 // PATH. Overridable in tests so the suite does not depend on those binaries
 // being installed on the runner.
@@ -291,7 +301,7 @@ func (m Model) launchErr(p store.Provider) string {
 	if err := binLookPath(p.Binary()); err != nil {
 		return p.Binary() + " not found on PATH"
 	}
-	if m.openIn == config.OpenInWindow {
+	if m.openIn == config.OpenInWindow && !m.iterm2Windows() {
 		if !tmuxLookPath() {
 			return `open_in "window" requires tmux on PATH`
 		}
@@ -1160,6 +1170,13 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 			return m.attachLiveCmd(sess, cwd, name, args)
 		}
 		if m.openIn == config.OpenInWindow {
+			if m.iterm2Windows() {
+				l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...)}
+				if m.tmuxEnabled {
+					l.Name, l.Tmux = sess, true
+				}
+				return m.emitSeq(iterm2.Sequence(l, insideTmux()))
+			}
 			win := ""
 			if m.tmuxEnabled {
 				win = sess
@@ -1173,6 +1190,13 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 	}
 	name, args := p.NewCommand()
 	if m.openIn == config.OpenInWindow {
+		if m.iterm2Windows() {
+			l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...)}
+			if m.tmuxEnabled {
+				l.Name, l.Tmux = tmux.PendingName(string(p.Agent()), m.now().UnixNano()), true
+			}
+			return m.emitSeq(iterm2.Sequence(l, insideTmux()))
+		}
 		win := ""
 		if m.tmuxEnabled {
 			win = tmux.PendingName(string(p.Agent()), m.now().UnixNano())
@@ -1195,6 +1219,9 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 // agentExitMsg swallows ExitError as a normal agent exit, the refusal dies
 // silently; outside tmux it attaches via new-session -A as before.
 func (m Model) attachLiveCmd(sess, cwd, agentName string, agentArgs []string) tea.Cmd {
+	if m.iterm2Windows() {
+		return m.emitSeq(iterm2.Sequence(iterm2.Launch{Host: m.iterm2Host, Name: sess, Attach: true}, insideTmux()))
+	}
 	if id, owner, ok := m.tmux.Window(sess); ok {
 		if insideTmux() {
 			return m.runSilent("tmux", cwd, "select-window", "-t", id, ";", "switch-client", "-t", owner)
