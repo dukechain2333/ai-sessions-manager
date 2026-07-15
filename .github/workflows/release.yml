@@ -34,9 +34,11 @@ jobs:
 
   # Rebuild the signed APT repo after the release exists. Chained via
   # workflow_call because `release: published` does not fire for a release
-  # created by this workflow's GITHUB_TOKEN.
+  # created by this workflow's GITHUB_TOKEN. Prerelease tags (v*-beta.*)
+  # skip the stable APT channel.
   apt:
     needs: goreleaser
+    if: ${{ !contains(github.ref_name, '-') }}
     permissions:
       contents: write
     uses: ./.github/workflows/apt.yml
