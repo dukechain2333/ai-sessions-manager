@@ -57,31 +57,42 @@ def remote_command(spec):
 
 async def handle(connection, payload):
     spec = json.loads(base64.b64decode(payload))
+    print("[sm] payload:", json.dumps(spec, sort_keys=True))
     host, key, cmd = remote_command(spec)
     if not cmd:
+        print("[sm] rejected by validation")
         return
     old = windows.get(key)
     if old is not None:
         try:
             await old.async_activate()
+            print("[sm] focused existing window for", key)
             return
         except Exception:
             windows.pop(key, None)
-    ssh = "/usr/bin/env ssh -t -- {h} {c}".format(h=shlex.quote(host), c=shlex.quote(cmd))
-    win = await iterm2.Window.async_create(connection, command=ssh)
+    ssh = "ssh -t -- {h} {c}".format(h=shlex.quote(host), c=shlex.quote(cmd))
+    print("[sm] running:", ssh)
+    # Open a plain shell window and type the command into it: the user's own
+    # shell does the parsing (not iTerm2's tokenizer) and supplies the usual
+    # environment (ssh agent etc.); on failure the window stays open showing
+    # the error instead of flashing closed. The leading space keeps it out of
+    # histories configured with HIST_IGNORE_SPACE.
+    win = await iterm2.Window.async_create(connection)
     if win is not None:
+        await win.current_tab.current_session.async_send_text(" " + ssh + "\n")
         windows[key] = win
 
 
 async def main(connection):
+    print("[sm] bridge listening (identity 'sm')")
     async with iterm2.CustomControlSequenceMonitor(
             connection, "sm", r"^(.+)$") as mon:
         while True:
             match = await mon.async_get()
             try:
                 await handle(connection, match.group(1))
-            except Exception:
-                pass  # a bad payload must never kill the listener
+            except Exception as e:
+                print("[sm] dropped payload:", e)  # never kill the listener
 
 
 iterm2.run_forever(main)
