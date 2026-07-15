@@ -1062,18 +1062,36 @@ func TestNewSessionWindowModePending(t *testing.T) {
 	}
 }
 
+func TestNewSessionWindowModeUntracked(t *testing.T) {
+	m, cap := newWindowModel(t) // tmuxEnabled stays false
+	m.launchNewSession("/x/alpha")
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "new-window -c /x/alpha claude") {
+		t.Errorf("untracked window new argv = %v", *cap)
+	}
+	if strings.Contains(joined, "-n sm-") {
+		t.Error("untracked window must not carry an sm- name")
+	}
+}
+
 func TestSilentFailureShowsErrorAndRefreshes(t *testing.T) {
 	m := newTestModel()
-	m2, _ := m.Update(silentDoneMsg{err: errors.New("boom")})
+	m2, cmd := m.Update(silentDoneMsg{err: errors.New("boom")})
 	m = m2.(Model)
 	if m.dialog != dialogError || !strings.Contains(m.errText, "boom") {
 		t.Errorf("dialog=%v errText=%q, want error containing boom", m.dialog, m.errText)
 	}
+	if cmd == nil {
+		t.Error("expected a non-nil rescan/refresh cmd after a failed silentDoneMsg")
+	}
 	m = newTestModel()
-	m2, _ = m.Update(silentDoneMsg{})
+	m2, cmd = m.Update(silentDoneMsg{})
 	m = m2.(Model)
 	if m.dialog != dialogNone {
 		t.Errorf("clean exit should not raise a dialog, got %v", m.dialog)
+	}
+	if cmd == nil {
+		t.Error("expected a non-nil rescan/refresh cmd after a clean silentDoneMsg")
 	}
 }
 

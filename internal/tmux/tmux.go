@@ -100,11 +100,12 @@ func WindowArgs(name, cwd, agentName string, agentArgs []string) []string {
 // or tmux *windows* (open_in "window"); List discovers both, and the other
 // operations resolve a name session-first, then window.
 type Runner interface {
-	// List returns the set of live sm-prefixed session names. A missing tmux
-	// server yields an empty set, not an error.
+	// List returns the set of live sm-prefixed session and window names. A
+	// missing tmux server yields an empty set, not an error.
 	List() (map[string]bool, error)
-	// Path returns a session's pane_current_path (used to place provisional
-	// new-session tmux during adoption).
+	// Path returns the pane_current_path of a session or window (used to
+	// place provisional new-session tmux during adoption). For the window
+	// form, the path is resolved via the window's active pane.
 	Path(name string) (string, error)
 	Kill(name string) error
 	Rename(from, to string) error
@@ -145,7 +146,7 @@ func (e Exec) Kill(name string) error {
 			return exec.Command("tmux", "kill-window", "-t", id).Run()
 		}
 	}
-	return exec.Command("tmux", "kill-session", "-t", name).Run()
+	return exec.Command("tmux", "kill-session", "-t", "="+name).Run()
 }
 
 func (e Exec) Rename(from, to string) error {
@@ -154,11 +155,11 @@ func (e Exec) Rename(from, to string) error {
 			return exec.Command("tmux", "rename-window", "-t", id, to).Run()
 		}
 	}
-	return exec.Command("tmux", "rename-session", "-t", from, to).Run()
+	return exec.Command("tmux", "rename-session", "-t", "="+from, to).Run()
 }
 
 func (e Exec) Path(name string) (string, error) {
-	target := name
+	target := "=" + name
 	if !hasSession(name) {
 		if id, _, ok := e.Window(name); ok {
 			target = id

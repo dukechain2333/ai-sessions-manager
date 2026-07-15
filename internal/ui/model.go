@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -211,7 +212,17 @@ func execCmd(name, dir string, args ...string) tea.Cmd {
 func execSilent(name, dir string, args ...string) tea.Cmd {
 	c := exec.Command(name, args...)
 	c.Dir = dir
-	return func() tea.Msg { return silentDoneMsg{err: c.Run()} }
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	return func() tea.Msg {
+		err := c.Run()
+		if err != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				err = fmt.Errorf("%v: %s", err, msg)
+			}
+		}
+		return silentDoneMsg{err: err}
+	}
 }
 
 // ringBell writes the terminal BEL to stderr — not stdout, which is Bubble
