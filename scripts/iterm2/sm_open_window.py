@@ -78,9 +78,22 @@ async def handle(connection, payload):
     # the error instead of flashing closed. The leading space keeps it out of
     # histories configured with HIST_IGNORE_SPACE.
     win = await iterm2.Window.async_create(connection)
-    if win is not None:
-        await win.current_tab.current_session.async_send_text(" " + ssh + "\n")
-        windows[key] = win
+    if win is None:
+        print("[sm] window creation failed")
+        return
+    # The Window object returned by async_create may not carry tab/session
+    # data yet; re-fetch it from the app state before typing into it.
+    session = win.current_tab.current_session if win.current_tab else None
+    if session is None:
+        app = await iterm2.async_get_app(connection)
+        fresh = app.get_window_by_id(win.window_id)
+        if fresh is not None and fresh.current_tab is not None:
+            session = fresh.current_tab.current_session
+    if session is None:
+        print("[sm] no session in new window", win.window_id)
+        return
+    await session.async_send_text(" " + ssh + "\n")
+    windows[key] = win
 
 
 async def main(connection):
