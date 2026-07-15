@@ -2,12 +2,14 @@
 """sm → iTerm2 bridge.
 
 Listens for sm's custom control sequences (OSC 1337 Custom=id=sm:<base64>)
-and opens a native iTerm2 window that ssh-es back into the host to run the
-agent. Terminal output is untrusted input: every payload field is validated
-against a strict pattern before anything runs (the host must start with an
-alphanumeric and ssh gets an explicit `--` end-of-options marker, so a host
-can never be parsed as a flag), and the only command shape ever executed is
-`ssh -t -- <host> <cd+tmux+agent>`.
+and opens a native iTerm2 window running the agent: over ssh it dials back
+into the host, and for a local sm (empty host) it types the command straight
+into a fresh local shell. Terminal output is untrusted input: every payload
+field is validated against a strict pattern before anything runs (the host
+must start with an alphanumeric and ssh gets an explicit `--` end-of-options
+marker, so a host can never be parsed as a flag; the PATH-prepend hint is
+honored only for the ssh form). The only command shapes ever executed are a
+`cd`+`tmux`+`claude|codex` line — locally, or via `ssh -t -- <host>`.
 
 Install: ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/ and enable
 Settings → General → Magic → "Enable Python API".
@@ -45,17 +47,20 @@ def remote_command(spec):
             return None, None, None
         # Hard single quotes, not shlex.quote: "=" is in shlex's safe set,
         # but an unquoted =word triggers zsh's equals expansion remotely.
-        return host, name, "exec tmux attach-session -t '=" + name + "'"
+        return host, host + "|" + name, "exec tmux attach-session -t '=" + name + "'"
     if not argv or argv[0] not in AGENTS or not all(ARG_RE.match(a) for a in argv):
         return None, None, None
     inner = " ".join(shlex.quote(a) for a in argv)
     # The remote end of a fresh ssh runs with sshd's bare PATH, and tmux
     # panes it creates inherit that PATH — the agent would be "command not
     # found". sm resolves the agent's directory in the user's real
-    # environment and sends it as bindir; prepend it remotely.
+    # environment and sends it as bindir; prepend it remotely. LOCAL
+    # execution deliberately ignores bindir: a fresh local shell already has
+    # the user's normal PATH, and honoring a forged bindir here would let
+    # terminal output steer which local binary "claude" resolves to.
     path = ""
     bindir = spec.get("bindir", "")
-    if bindir:
+    if bindir and host:
         if not BINDIR_RE.match(bindir):
             return None, None, None
         path = "export PATH=" + shlex.quote(bindir) + ':"$PATH" && '
@@ -69,7 +74,9 @@ def remote_command(spec):
     # Dedupe key: tracked launches have a unique tmux name; untracked ones
     # must include dir, or every untracked "new session" (bare agent argv)
     # would collide on one window across all projects.
-    return host, name or (dir_ + " " + inner), cmd
+    # host joins the dedupe key so a local and a remote launch with the same
+    # tmux name (or dir+argv) never focus each other's window.
+    return host, host + "|" + (name or (dir_ + " " + inner)), cmd
 
 
 async def handle(connection, payload):

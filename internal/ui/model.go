@@ -305,9 +305,11 @@ var iTerm2Env = func() bool {
 
 // overSSH reports whether sm runs on the far side of an ssh connection —
 // then iTerm2 launches must dial back (iterm2.ssh required); locally the
-// bridge runs commands directly. Overridable in tests.
+// bridge runs commands directly. Checks all three sshd markers so an rc
+// file scrubbing one of them cannot flip a remote sm into (broken) local
+// mode. Overridable in tests.
 var overSSH = func() bool {
-	return os.Getenv("SSH_CONNECTION") != ""
+	return os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_TTY") != ""
 }
 
 // binLookPath reports an error when an agent binary (claude/codex) is not on
