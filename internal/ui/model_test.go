@@ -1315,3 +1315,29 @@ func TestITerm2SkipsWindowTmuxPreconditions(t *testing.T) {
 		t.Errorf("expected an emitted sequence, got %v", *seqs)
 	}
 }
+
+// A live *window-form* tmux (legacy of the tmux-window mechanism) cannot be
+// attach-session'd remotely; the iTerm2 mechanism must fall back to the
+// local jump instead of emitting a broken Attach payload.
+func TestEnterLiveWindowFormITerm2FallsBackToLocalJump(t *testing.T) {
+	m, seqs := newITerm2Model(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{windows: map[string][2]string{"sm-claude-s1": {"@7", "sm"}}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd { // replace the trap
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 0 {
+		t.Errorf("window-form live must not emit iTerm2 payloads, got %v", *seqs)
+	}
+	joined := strings.Join(*captured, " ")
+	if !strings.Contains(joined, "select-window -t @7 ; attach-session -t sm") {
+		t.Errorf("expected local window jump, got %v", *captured)
+	}
+}

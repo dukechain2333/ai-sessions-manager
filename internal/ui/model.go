@@ -1224,7 +1224,12 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 // silently; outside tmux it attaches via new-session -A as before.
 func (m Model) attachLiveCmd(sess, cwd, agentName string, agentArgs []string) tea.Cmd {
 	if m.iterm2Windows() {
-		return m.emitSeq(iterm2.Sequence(iterm2.Launch{Host: m.iterm2Host, Name: sess, Attach: true}, insideTmux()))
+		// Only the session form can be attach-session'd by the remote end
+		// of a fresh ssh. A window-form live tmux (legacy of the
+		// tmux-window mechanism) falls through to the local jump below.
+		if _, _, ok := m.tmux.Window(sess); !ok {
+			return m.emitSeq(iterm2.Sequence(iterm2.Launch{Host: m.iterm2Host, Name: sess, Attach: true}, insideTmux()))
+		}
 	}
 	if id, owner, ok := m.tmux.Window(sess); ok {
 		if insideTmux() {

@@ -38,7 +38,9 @@ def remote_command(spec):
     if spec.get("attach"):
         if not NAME_RE.match(name):
             return None, None, None
-        return host, name, "exec tmux attach-session -t " + shlex.quote("=" + name)
+        # Hard single quotes, not shlex.quote: "=" is in shlex's safe set,
+        # but an unquoted =word triggers zsh's equals expansion remotely.
+        return host, name, "exec tmux attach-session -t '=" + name + "'"
     if not argv or argv[0] not in AGENTS or not all(ARG_RE.match(a) for a in argv):
         return None, None, None
     inner = " ".join(shlex.quote(a) for a in argv)
