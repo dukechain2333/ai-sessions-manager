@@ -259,15 +259,62 @@ notice.
   Works independently of `tmux.enabled`: with tmux integration on, the
   window is named `sm-…` and gets the ● marker / `x` kill treatment; with it
   off, it is a plain untracked window.
-  **iTerm2 users get real OS windows:** when `sm` detects iTerm2 (via the
-  `LC_TERMINAL` it forwards over ssh), the auto-relaunch attaches with
-  `tmux -CC` — iTerm2's native tmux integration — so every window `sm`
-  opens is a genuine iTerm2 window/tab, even over SSH. Pick windows vs
-  tabs in iTerm2 under *Settings → General → tmux*.
+  **iTerm2 users can get real OS windows** — see
+  [iTerm2 native windows](#iterm2-native-windows-macos).
 - `colors.claude` / `colors.codex` — each takes optional `light` and `dark`
   `#RRGGBB` accents; omitted or invalid values keep the defaults.
 - `"view"`: `"list"` (default) or `"tabs"` — the view mode `sm` starts in.
   `v` toggles it live either way.
+
+### iTerm2 native windows (macOS)
+
+With one small companion script, `open_in: "window"` opens every resume/new
+session as a **genuine iTerm2 window** — `sm` itself stays exactly where you
+ran it, even over SSH.
+
+How it works: pressing `enter` makes `sm` write an invisible [custom control
+sequence](https://iterm2.com/python-api/customcontrol.html) to your
+terminal. An AutoLaunch script inside your local iTerm2 picks it up and
+opens a native window that runs
+`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent> --resume <id>"`,
+so the agent lands in the same tracked tmux session `sm` already knows how
+to mark (●), kill (`x`), and re-enter. No tmux needed around `sm` itself.
+
+**Install (on the Mac, one command):**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/scripts/install-iterm2.sh | sh
+```
+
+Then, in iTerm2: *Settings → General → Magic → Enable Python API*, and start
+the script under *Scripts → AutoLaunch → sm_open_window.py* (auto-starts on
+the next iTerm2 launch; the first run offers to install iTerm2's Python
+runtime — accept it).
+
+**Configure (on the remote host)** in `~/.config/sm/config.json`:
+
+```json
+{
+  "open_in": "window",
+  "iterm2": { "ssh": "myserver" }
+}
+```
+
+`iterm2.ssh` is whatever you type after `ssh` on the Mac to reach the host
+(alias from `~/.ssh/config`, hostname, or IP) — the new window dials a fresh
+connection, so key-based login should already work.
+
+**Troubleshooting** — pressing `enter` does nothing:
+- The AutoLaunch script isn't running (iTerm2 *Scripts → Manage → Console*
+  shows it) or the Python API checkbox is off.
+- `iterm2.ssh` missing from config, or `$LC_TERMINAL` not reaching the host
+  (check `echo $LC_TERMINAL` there; your ssh config must not strip `LC_*`).
+- Running `sm` inside a tmux attach: `sm` auto-enables pane passthrough, but
+  a tmux older than 3.3 lacks `allow-passthrough` — run `sm` outside tmux.
+
+Security note: the script treats terminal output as untrusted — payloads are
+validated against strict patterns and the only thing it will ever run is
+`ssh -t <host>` with a `cd`+`tmux`+`claude|codex` command line.
 
 ### tmux integration
 
