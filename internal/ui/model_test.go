@@ -507,6 +507,50 @@ func TestAdoptRenamesNewestMatch(t *testing.T) {
 	}
 }
 
+// A new-session tmux must never adopt a session that was already idle when the
+// tmux was created: the real session has no transcript yet at adopt time, and
+// claiming the newest pre-existing one hijacks an unrelated conversation.
+func TestAdoptSkipsSessionsOlderThanPending(t *testing.T) {
+	start := time.Unix(1000, 0)
+	sessions := []store.Session{
+		{ID: "stale111", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: start.Add(-5 * time.Second)},
+	}
+	pend := tmux.PendingName("claude", start.UnixNano())
+	f := &fakeTmux{
+		live:  map[string]bool{pend: true},
+		paths: map[string]string{pend: "/x/alpha"},
+	}
+	set := map[string]bool{pend: true}
+	adoptPending(f, sessions, set)
+	if len(f.renamed) != 0 {
+		t.Errorf("must not adopt a session older than the pending tmux, got %v", f.renamed)
+	}
+	if !set[pend] {
+		t.Errorf("pending should stay pending until its real session appears: %v", set)
+	}
+}
+
+// Once the real session writes its transcript, it is adopted even though an
+// older session in the same cwd is still unbacked.
+func TestAdoptPicksSessionNewerThanPending(t *testing.T) {
+	start := time.Unix(1000, 0)
+	sessions := []store.Session{
+		{ID: "stale111", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: start.Add(-5 * time.Second)},
+		{ID: "real2222", CWD: "/x/alpha", Agent: store.AgentClaude, LastActivity: start.Add(2 * time.Second)},
+	}
+	pend := tmux.PendingName("claude", start.UnixNano())
+	f := &fakeTmux{
+		live:  map[string]bool{pend: true},
+		paths: map[string]string{pend: "/x/alpha"},
+	}
+	set := map[string]bool{pend: true}
+	adoptPending(f, sessions, set)
+	want := tmux.Name("claude", tmux.Short("real2222"))
+	if len(f.renamed) != 1 || f.renamed[0][1] != want {
+		t.Errorf("expected rename to %s, got %v", want, f.renamed)
+	}
+}
+
 func TestAdoptSkipsBacked(t *testing.T) {
 	backed := tmux.Name("claude", tmux.Short("new22222"))
 	sessions := []store.Session{

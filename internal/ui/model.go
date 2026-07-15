@@ -599,6 +599,14 @@ func (m *Model) layout() {
 // matching (same cwd + agent) session that isn't already backed by a real
 // sm-<agent>-<id8> tmux, renaming the provisional session to that name. It
 // mutates set to reflect the renames.
+//
+// A candidate must also have been active *after* the provisional tmux was
+// created. A freshly launched agent has written no transcript yet, so without
+// that floor the newest pre-existing session in the same cwd gets hijacked:
+// its row then attaches to someone else's conversation, and the real new
+// session — once it does appear — looks tmux-less and resumes into a second
+// tmux backed by the same id. Staying pending until the real transcript shows
+// up is the correct wait.
 func adoptPending(r tmux.Runner, sessions []store.Session, set map[string]bool) {
 	backed := map[string]bool{}
 	for name := range set {
@@ -615,9 +623,17 @@ func adoptPending(r tmux.Runner, sessions []store.Session, set map[string]bool) 
 			continue
 		}
 		agent := tmux.PendingAgent(name)
+		nonce, ok := tmux.PendingNonce(name)
+		if !ok {
+			continue
+		}
+		floor := time.Unix(0, nonce)
 		best := -1
 		for i, s := range sessions {
 			if string(s.Agent) != agent || s.CWD != cwd {
+				continue
+			}
+			if !s.LastActivity.After(floor) {
 				continue
 			}
 			target := tmux.Name(agent, tmux.Short(s.ID))

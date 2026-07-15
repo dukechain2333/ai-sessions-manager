@@ -36,6 +36,19 @@ func TestPending(t *testing.T) {
 	}
 }
 
+func TestPendingNonce(t *testing.T) {
+	got, ok := PendingNonce(PendingName("codex", 42))
+	if !ok || got != 42 {
+		t.Errorf("PendingNonce = %d, %v; want 42, true", got, ok)
+	}
+	if _, ok := PendingNonce("sm-codex-abcd1234"); ok {
+		t.Error("PendingNonce should not parse a non-pending name")
+	}
+	if _, ok := PendingNonce("sm-codex-pending-nope"); ok {
+		t.Error("PendingNonce should not parse a non-numeric nonce")
+	}
+}
+
 func TestResumeArgs(t *testing.T) {
 	got := ResumeArgs("sm-claude-s1", "/x/alpha", "claude", []string{"--resume", "s1"})
 	want := []string{"new-session", "-A", "-s", "sm-claude-s1", "-c", "/x/alpha", "claude", "--resume", "s1"}

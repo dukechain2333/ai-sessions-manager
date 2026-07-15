@@ -53,6 +53,21 @@ func PendingAgent(name string) string {
 	return rest[:i]
 }
 
+// PendingNonce extracts the creation nonce encoded by PendingName. The nonce
+// is the UnixNano of the moment the provisional tmux was created, which bounds
+// how old an adoptable session may be. ok is false for non-pending names.
+func PendingNonce(name string) (int64, bool) {
+	if !IsPending(name) {
+		return 0, false
+	}
+	i := strings.Index(name, pendingInfix)
+	n, err := strconv.ParseInt(name[i+len(pendingInfix):], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 // ResumeArgs builds the tmux argv (after the "tmux" binary) that attaches to
 // session name if it exists, else creates it in cwd running the agent command.
 func ResumeArgs(name, cwd, agentName string, agentArgs []string) []string {
