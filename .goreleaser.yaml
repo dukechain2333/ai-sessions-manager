@@ -86,6 +86,30 @@ homebrew_casks:
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sm"]
           end
 
+  # Beta channel: prerelease tags publish under the separate cask "sm-beta"
+  # (the stable "sm" cask above skips prereleases), so beta testers opt in
+  # with `brew install --cask dukechain2333/tap/sm-beta` and stable users
+  # never see betas. Same binary name — uninstall one before the other.
+  - name: sm-beta
+    ids:
+      - default
+    repository:
+      owner: dukechain2333
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    skip_upload: '{{ if not .Prerelease }}true{{ else if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
+    homepage: https://github.com/dukechain2333/ai-sessions-manager
+    description: TUI to browse and resume Claude Code sessions (beta channel)
+    commit_author:
+      name: goreleaser-bot
+      email: goreleaser@users.noreply.github.com
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sm"]
+          end
+
 checksum:
   name_template: checksums.txt
 

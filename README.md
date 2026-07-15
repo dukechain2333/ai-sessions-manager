@@ -119,6 +119,25 @@ sudo dpkg -i ai-sessions-manager_*_linux_amd64.deb
 sudo rpm -i ai-sessions-manager_*_linux_amd64.rpm
 ```
 
+### Beta releases
+
+Prerelease versions (`v*-beta.*`) never reach the stable channels above.
+To opt in:
+
+```sh
+# Homebrew — the beta ships as its own cask (uninstall the stable one first):
+brew uninstall sm 2>/dev/null; brew install --cask dukechain2333/tap/sm-beta
+
+# Debian / Ubuntu — install the .deb straight from the release page:
+curl -sLO https://github.com/dukechain2333/ai-sessions-manager/releases/download/v0.5.0-beta.2/ai-sessions-manager_0.5.0-beta.2_linux_amd64.deb
+sudo apt install ./ai-sessions-manager_0.5.0-beta.2_linux_amd64.deb
+```
+
+The package versions itself `0.5.0~beta.N`, which Debian sorts *before*
+`0.5.0` — when the stable release lands in the APT repo, a normal
+`apt upgrade` replaces the beta automatically. On Homebrew, switch back with
+`brew uninstall --cask sm-beta && brew install dukechain2333/tap/sm`.
+
 ### Manual download
 
 Grab a `sm_<version>_<os>_<arch>.tar.gz` from the
