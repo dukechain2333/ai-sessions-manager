@@ -93,6 +93,11 @@ homebrew_casks:
   - name: sm-beta
     ids:
       - default
+    # The archive's binary is "sm"; without this goreleaser derives the
+    # cask's binary stanza from the cask name and installs break on a
+    # missing "sm-beta" file.
+    binaries:
+      - sm
     repository:
       owner: dukechain2333
       name: homebrew-tap
