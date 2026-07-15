@@ -160,7 +160,46 @@ sm starts, open_in == "window", $TMUX empty:
   pop genuine OS windows even over SSH. Other terminals attach plain and
   get in-terminal tmux windows.
 
-## 6. Testing
+## 6. iTerm2: real OS windows via custom control sequences
+
+Live testing showed the `-CC` approach cannot satisfy the actual requirement:
+control mode natively renders *every* tmux window — including sm's own — so
+typing `sm` itself pops a window, and the invoking tab becomes a protocol
+gateway. The user wants sm to stay put in the invoking terminal and *only*
+launches to open real windows. That requires a component on the local Mac;
+iTerm2's supported mechanism is a **custom control sequence** handled by an
+AutoLaunch Python-API script.
+
+Design (explicit opt-in via `"iterm2": { "ssh": "<host>" }` in config):
+
+- When `open_in: "window"`, `iterm2.ssh` is non-empty, and `LC_TERMINAL` is
+  `iTerm2`: sm does NOT auto-wrap into tmux (section 5's wrap is skipped and
+  the window-mode tmux preconditions in `launchErr` don't apply). Resume/new
+  instead write an invisible `OSC 1337 ; Custom=id=sm:<base64 JSON>` sequence
+  to the tty (stderr, same pattern as the bell). Inside a plain tmux attach
+  the sequence rides tmux's passthrough envelope, and sm best-effort enables
+  `allow-passthrough` on its own pane at startup.
+- The JSON payload is a `Launch`: `{host, dir, name, argv, tmux, attach}`.
+  Tracked launches carry the usual `sm-<agent>-<id8>` (or pending) name and
+  `tmux: true`; the remote agent then runs inside a session-form tmux created
+  by the new window's ssh — the existing discovery/●/`x`/adoption pipeline
+  applies unchanged. Jump-to-live emits `{attach: true, name}`.
+- A one-time **AutoLaunch script** (`scripts/iterm2/sm_open_window.py`,
+  installed on the Mac by `scripts/install-iterm2.sh`) listens for the
+  sequence, validates the payload against strict patterns (host charset,
+  `sm-` name shape, agent argv allowlist — terminal output is untrusted
+  input), opens a native iTerm2 window running
+  `ssh -t <host> "cd <dir> && exec tmux new-session -A -s <name> -c <dir> <argv…>"`,
+  and keeps a name→window map so a repeat launch focuses the existing window
+  instead of duplicating it.
+- Known limitation: sm cannot detect whether the script is installed — an
+  unconfigured Mac silently ignores the sequence. The README documents the
+  one-command install and a troubleshooting checklist. The `-CC` flag and
+  the plain-attach warning dialog are removed (superseded by this design).
+- All other terminals, or iTerm2 without `iterm2.ssh`: sections 2–5 behavior
+  (tmux windows, auto-wrap) unchanged.
+
+## 7. Testing
 
 - **config:** parse `open_in`; invalid value falls back; `DefaultFileJSON` ↔
   `Default()` pin test updated.
