@@ -956,3 +956,46 @@ func TestKillProjectScopedToActiveView(t *testing.T) {
 		t.Error("the mixed list's project kill should cover both agents")
 	}
 }
+
+func TestWindowModeOutsideTmuxErrors(t *testing.T) {
+	origIn, origLook := insideTmux, tmuxLookPath
+	insideTmux = func() bool { return false }
+	tmuxLookPath = func() bool { return true }
+	defer func() { insideTmux, tmuxLookPath = origIn, origLook }()
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	m = m2.(Model)
+	if m.dialog != dialogError || !strings.Contains(m.errText, "inside tmux") {
+		t.Errorf("dialog=%v errText=%q, want error mentioning inside tmux", m.dialog, m.errText)
+	}
+}
+
+func TestWindowModeNeedsTmuxOnPath(t *testing.T) {
+	origIn, origLook := insideTmux, tmuxLookPath
+	insideTmux = func() bool { return true }
+	tmuxLookPath = func() bool { return false }
+	defer func() { insideTmux, tmuxLookPath = origIn, origLook }()
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	m = m2.(Model)
+	if m.dialog != dialogError || !strings.Contains(m.errText, "tmux on PATH") {
+		t.Errorf("dialog=%v errText=%q, want error mentioning tmux on PATH", m.dialog, m.errText)
+	}
+}
+
+func TestNewCarriesOpenInFromConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInWindow {
+		t.Errorf("openIn = %q, want window", m.openIn)
+	}
+}

@@ -80,6 +80,7 @@ type Model struct {
 	tmuxEnabled bool
 	tmux        tmux.Runner
 	tmuxLive    map[string]bool
+	openIn      string // config.OpenInCurrent or config.OpenInWindow
 	st          styles
 
 	list        listPane
@@ -164,6 +165,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		pendingDelete: -1,
 		providers:     provs,
 		tmuxEnabled:   cfg.TmuxEnabled,
+		openIn:        cfg.OpenIn,
 		tmux:          tmux.Exec{},
 		trashFn: func(s store.Session) (string, error) {
 			p := store.ProviderFor(provs, s.Agent)
@@ -210,12 +212,38 @@ var tmuxLookPath = func() bool {
 	return err == nil
 }
 
+// insideTmux reports whether sm itself runs inside a tmux client — the
+// precondition for open_in "window", which targets the attached session.
+// Overridable in tests.
+var insideTmux = func() bool {
+	return os.Getenv("TMUX") != ""
+}
+
 // binLookPath reports an error when an agent binary (claude/codex) is not on
 // PATH. Overridable in tests so the suite does not depend on those binaries
 // being installed on the runner.
 var binLookPath = func(bin string) error {
 	_, err := exec.LookPath(bin)
 	return err
+}
+
+// launchErr reports why launching p cannot proceed right now ("" = it can):
+// the agent binary is missing, or open_in "window" lacks its tmux
+// preconditions. Checked at launch time, not startup, so a config problem
+// only bites the action that needs it.
+func (m Model) launchErr(p store.Provider) string {
+	if err := binLookPath(p.Binary()); err != nil {
+		return p.Binary() + " not found on PATH"
+	}
+	if m.openIn == config.OpenInWindow {
+		if !tmuxLookPath() {
+			return `open_in "window" requires tmux on PATH`
+		}
+		if !insideTmux() {
+			return `open_in "window" requires running sm inside tmux`
+		}
+	}
+	return ""
 }
 
 func (m Model) Init() tea.Cmd {
@@ -1090,9 +1118,9 @@ func (m Model) startResume() (tea.Model, tea.Cmd) {
 		m.errText = "no handler for agent " + s.Agent.Label()
 		return m, nil
 	}
-	if err := binLookPath(p.Binary()); err != nil {
+	if msg := m.launchErr(p); msg != "" {
 		m.dialog = dialogError
-		m.errText = p.Binary() + " not found on PATH"
+		m.errText = msg
 		return m, nil
 	}
 	return m, m.runAgentCmd(p, s.CWD, &s)
@@ -1112,9 +1140,9 @@ func (m Model) openNewSession() (tea.Model, tea.Cmd) {
 // launchDirectly starts a new session with provider p in dir, gated on the
 // agent binary being on PATH.
 func (m Model) launchDirectly(p store.Provider, dir string) (Model, tea.Cmd) {
-	if err := binLookPath(p.Binary()); err != nil {
+	if msg := m.launchErr(p); msg != "" {
 		m.dialog = dialogError
-		m.errText = p.Binary() + " not found on PATH"
+		m.errText = msg
 		return m, nil
 	}
 	return m, m.runAgentCmd(p, dir, nil)
@@ -1240,9 +1268,9 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errText = "no handler for agent " + pending.Agent.Label()
 					return m, nil
 				}
-				if err := binLookPath(p.Binary()); err != nil {
+				if msg := m.launchErr(p); msg != "" {
 					m.dialog = dialogError
-					m.errText = p.Binary() + " not found on PATH"
+					m.errText = msg
 					return m, nil
 				}
 				return m, m.runAgentCmd(p, dir, pending)
