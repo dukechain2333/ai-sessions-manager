@@ -461,6 +461,7 @@ func TestFocusedBorderAndLabelColorFollowAgent(t *testing.T) {
 
 type fakeTmux struct {
 	live    map[string]bool
+	windows map[string][2]string // window name → {window id, session name}
 	paths   map[string]string
 	killed  []string
 	renamed [][2]string
@@ -484,6 +485,14 @@ func (f *fakeTmux) Rename(from, to string) error {
 	f.live[to] = true
 	f.renamed = append(f.renamed, [2]string{from, to})
 	return nil
+}
+
+func (f *fakeTmux) Window(name string) (string, string, bool) {
+	w, ok := f.windows[name]
+	if !ok {
+		return "", "", false
+	}
+	return w[0], w[1], true
 }
 
 func TestAdoptRenamesNewestMatch(t *testing.T) {

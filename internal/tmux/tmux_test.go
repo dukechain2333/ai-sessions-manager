@@ -91,3 +91,20 @@ func TestParseList(t *testing.T) {
 		t.Errorf("parseList size = %d, want 2", len(got))
 	}
 }
+
+func TestParseWindows(t *testing.T) {
+	out := "@1\tmain\tsm-claude-s1\n@2\tmain\tvim\n@3\twork\tsm-codex-pending-9\n\n"
+	got := parseWindows(out)
+	if w := got["sm-claude-s1"]; w != [2]string{"@1", "main"} {
+		t.Errorf("sm-claude-s1 = %v, want {@1 main}", w)
+	}
+	if w := got["sm-codex-pending-9"]; w != [2]string{"@3", "work"} {
+		t.Errorf("sm-codex-pending-9 = %v, want {@3 work}", w)
+	}
+	if _, ok := got["vim"]; ok {
+		t.Error("parseWindows should drop non-sm window names")
+	}
+	if len(got) != 2 {
+		t.Errorf("parseWindows size = %d, want 2", len(got))
+	}
+}

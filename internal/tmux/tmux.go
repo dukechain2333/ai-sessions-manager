@@ -96,7 +96,9 @@ func WindowArgs(name, cwd, agentName string, agentArgs []string) []string {
 }
 
 // Runner is the injectable tmux boundary. The real implementation is Exec;
-// tests inject a fake.
+// tests inject a fake. Names may denote tmux *sessions* (open_in "current")
+// or tmux *windows* (open_in "window"); List discovers both, and the other
+// operations resolve a name session-first, then window.
 type Runner interface {
 	// List returns the set of live sm-prefixed session names. A missing tmux
 	// server yields an empty set, not an error.
@@ -106,34 +108,83 @@ type Runner interface {
 	Path(name string) (string, error)
 	Kill(name string) error
 	Rename(from, to string) error
+	// Window resolves an sm-prefixed *window* name to its tmux window id
+	// ("@N") and owning session name. ok is false when no such window is
+	// live — the name is session-form, pending-session-form, or dead.
+	Window(name string) (id, session string, ok bool)
 }
 
 // Exec is the real Runner; it shells out to tmux.
 type Exec struct{}
 
 func (Exec) List() (map[string]bool, error) {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
-	if err != nil {
-		// No server running (or no sessions) is an empty set, not an error.
-		return map[string]bool{}, nil
+	set := map[string]bool{}
+	if out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output(); err == nil {
+		for name := range parseList(string(out)) {
+			set[name] = true
+		}
 	}
-	return parseList(string(out)), nil
+	for name := range listWindows() {
+		set[name] = true
+	}
+	// No server running (or no sessions) is an empty set, not an error.
+	return set, nil
 }
 
-func (Exec) Path(name string) (string, error) {
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", name, "#{pane_current_path}").Output()
+func (Exec) Window(name string) (string, string, bool) {
+	w, ok := listWindows()[name]
+	if !ok {
+		return "", "", false
+	}
+	return w[0], w[1], true
+}
+
+func (e Exec) Kill(name string) error {
+	if !hasSession(name) {
+		if id, _, ok := e.Window(name); ok {
+			return exec.Command("tmux", "kill-window", "-t", id).Run()
+		}
+	}
+	return exec.Command("tmux", "kill-session", "-t", name).Run()
+}
+
+func (e Exec) Rename(from, to string) error {
+	if !hasSession(from) {
+		if id, _, ok := e.Window(from); ok {
+			return exec.Command("tmux", "rename-window", "-t", id, to).Run()
+		}
+	}
+	return exec.Command("tmux", "rename-session", "-t", from, to).Run()
+}
+
+func (e Exec) Path(name string) (string, error) {
+	target := name
+	if !hasSession(name) {
+		if id, _, ok := e.Window(name); ok {
+			target = id
+		}
+	}
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", target, "#{pane_current_path}").Output()
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (Exec) Kill(name string) error {
-	return exec.Command("tmux", "kill-session", "-t", name).Run()
+// hasSession reports whether a tmux *session* with exactly this name is live
+// ("=" pins tmux's default prefix matching to an exact match).
+func hasSession(name string) bool {
+	return exec.Command("tmux", "has-session", "-t", "="+name).Run() == nil
 }
 
-func (Exec) Rename(from, to string) error {
-	return exec.Command("tmux", "rename-session", "-t", from, to).Run()
+// listWindows returns every live sm-prefixed window, keyed by window name.
+func listWindows() map[string][2]string {
+	out, err := exec.Command("tmux", "list-windows", "-a", "-F",
+		"#{window_id}\t#{session_name}\t#{window_name}").Output()
+	if err != nil {
+		return map[string][2]string{}
+	}
+	return parseWindows(string(out))
 }
 
 // parseList keeps only sm-prefixed names from tmux list-sessions output.
@@ -146,4 +197,21 @@ func parseList(out string) map[string]bool {
 		}
 	}
 	return set
+}
+
+// parseWindows maps sm-prefixed window names to {window id, session name}.
+// Input rows are "id\tsession\tname". Duplicate names keep the first row —
+// callers always target the id, so a duplicate can hide but never mis-target.
+func parseWindows(out string) map[string][2]string {
+	m := map[string][2]string{}
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 3)
+		if len(parts) != 3 || !strings.HasPrefix(parts[2], Prefix) {
+			continue
+		}
+		if _, dup := m[parts[2]]; !dup {
+			m[parts[2]] = [2]string{parts[0], parts[1]}
+		}
+	}
+	return m
 }
