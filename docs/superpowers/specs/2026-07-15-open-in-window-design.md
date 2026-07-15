@@ -67,6 +67,13 @@ error dialog style:
 2. `$TMUX` set — sm must itself be running inside tmux. Error text:
    `open_in "window" requires running sm inside tmux`.
 
+The startup auto-wrap (section 5) makes precondition 2 normally impossible to
+violate — it survives as a defense-in-depth fallback (e.g. the self-exec
+failed). Precondition 1 additionally downgrades at startup: `ui.New` with
+`open_in: "window"` and no tmux on PATH shows the error dialog once and falls
+back to `"current"` for the run, mirroring the existing
+tmux-enabled-but-missing pattern.
+
 Window mode must NOT use `tea.ExecProcess` (that suspends the TUI). It uses a
 non-suspending runner: plain `exec.Command` — `tmux new-window` returns
 immediately and switches focus to the new window (tmux default). After launch,
@@ -94,13 +101,13 @@ the discovered name space to windows leaves the upper layers almost untouched.
   *windows* participate in the same flow, with the rename going through
   `rename-window`.
 - **`enter` on a session with a live tracked tmux:** jump to it regardless of
-  `open_in` — session form attaches via ExecProcess (today's behavior); window
-  form switches via `select-window`. If sm is itself running *outside* tmux
-  when the live tmux is window-form, `select-window` alone would change
-  nothing visible — instead ExecProcess-attach to the owning tmux session with
-  that window selected (`tmux attach -t <session> \; select-window -t %N`).
-  `open_in` only governs the form of *new* launches, which also makes a
-  same-id dual-form conflict impossible.
+  `open_in`. Window form switches via `select-window` (+`switch-client` when
+  sm runs inside tmux, or an ExecProcess attach with that window selected
+  when it runs outside). Session form: inside tmux, `switch-client -t =name`
+  — a nested `new-session -A` attach would be refused by tmux and swallowed
+  silently by the normal-agent-exit handling; outside tmux it attaches via
+  `new-session -A` as always. `open_in` only governs the form of *new*
+  launches, which also makes a same-id dual-form conflict impossible.
 - **`x`:** window form kills via `kill-window`; the project-header bulk kill
   covers both forms (it iterates the same name set).
 
@@ -115,7 +122,107 @@ the discovered name space to windows leaves the upper layers almost untouched.
   combination, not a bug.
 - Malformed `open_in` value → default `"current"`.
 
-## 5. Testing
+## 5. Startup auto-wrap: sm lives in its own tmux session
+
+Requiring the user to manually start tmux before sm defeats the point of
+`open_in: "window"`. Instead, sm started *outside* tmux with that config
+replaces itself with a tmux client attached to sm's own session:
+
+```
+sm starts, open_in == "window", $TMUX empty:
+  tmux missing from PATH        → ui.New error dialog + downgrade to "current"
+  session "sm" does not exist   → exec tmux new-session -s sm -n sm -c <cwd> <sm argv>
+  session exists, sm window live→ exec tmux select-window ; attach   (reattach)
+  session exists, sm exited     → exec tmux new-window (fresh sm) ; attach
+```
+
+- The wrap is a `syscall.Exec` self-replacement (no parent process left);
+  sm's binary comes from `os.Executable()`, its original args are passed
+  through, and `-c <cwd>` pins the window to the invoking directory so
+  relative flag paths keep resolving.
+- sm's own session and window are both named `sm` — deliberately NOT
+  `sm-`-prefixed, so agent tracking (which discovers by that prefix) never
+  sees them; reattachment probes by exact match (`has-session -t =sm`).
+- The third branch is why a bare `new-session -A` is not enough: quitting sm
+  kills its window while agent windows keep the session alive, and a naive
+  re-attach would land the user in an agent window with no sm running.
+- Natural consequence: sm and every agent window it opens live in the one
+  `sm` session — after an SSH drop, running `sm` restores the whole
+  workspace.
+- A second concurrent `sm` from another terminal attaches to the same
+  session (mirrored clients) — standard tmux behavior, no special handling.
+- Already inside tmux → no wrap (unchanged); `tmux.enabled` does not gate
+  the wrap (the trigger is `open_in` alone).
+- **iTerm2 → real OS windows:** when the wrap detects iTerm2 (via the
+  `LC_TERMINAL=iTerm2` env iTerm2 forwards over ssh; `tmux.CCFlag`), it
+  attaches with `tmux -CC` — iTerm2's control-mode integration renders
+  every tmux window as a native window/tab, so `open_in: "window"` launches
+  pop genuine OS windows even over SSH. Other terminals attach plain and
+  get in-terminal tmux windows.
+
+## 6. iTerm2: real OS windows via custom control sequences
+
+Live testing showed the `-CC` approach cannot satisfy the actual requirement:
+control mode natively renders *every* tmux window — including sm's own — so
+typing `sm` itself pops a window, and the invoking tab becomes a protocol
+gateway. The user wants sm to stay put in the invoking terminal and *only*
+launches to open real windows. That requires a component on the local Mac;
+iTerm2's supported mechanism is a **custom control sequence** handled by an
+AutoLaunch Python-API script.
+
+Config shape (revised after live testing): the iTerm2 options nest under
+`open_in`, which accepts either the plain mode string or an object —
+
+```json
+"open_in": { "mode": "window", "iterm2": { "ssh": "generalserver" } }
+```
+
+`"open_in": "window"` (bare string) stays accepted as shorthand. The default
+file ships `mode: "current"` with an empty `iterm2.ssh`.
+
+**Local (non-SSH) users need zero extra config**: when sm is not running
+over SSH (`$SSH_CONNECTION` empty), the payload carries no host and the
+bridge types the command straight into a local shell window — no sshd
+required (rejected alternative: ssh-to-self at 127.0.0.1, which breaks out
+of the box because macOS Remote Login defaults to off). Over SSH,
+`iterm2.ssh` is required for the mechanism; without it sm falls back to the
+tmux-window path.
+
+Shell compatibility: every generated command (remote and local) is plain
+POSIX — no zsh-isms (`=name` targets are hard-quoted) — verified against
+both zsh and bash login shells. iTerm2 is the only supported terminal for
+this mechanism, by design.
+
+Design (opt-in via config as above):
+
+- When `open_in: "window"`, `iterm2.ssh` is non-empty, and `LC_TERMINAL` is
+  `iTerm2`: sm does NOT auto-wrap into tmux (section 5's wrap is skipped and
+  the window-mode tmux preconditions in `launchErr` don't apply). Resume/new
+  instead write an invisible `OSC 1337 ; Custom=id=sm:<base64 JSON>` sequence
+  to the tty (stderr, same pattern as the bell). Inside a plain tmux attach
+  the sequence rides tmux's passthrough envelope, and sm best-effort enables
+  `allow-passthrough` on its own pane at startup.
+- The JSON payload is a `Launch`: `{host, dir, name, argv, tmux, attach}`.
+  Tracked launches carry the usual `sm-<agent>-<id8>` (or pending) name and
+  `tmux: true`; the remote agent then runs inside a session-form tmux created
+  by the new window's ssh — the existing discovery/●/`x`/adoption pipeline
+  applies unchanged. Jump-to-live emits `{attach: true, name}`.
+- A one-time **AutoLaunch script** (`scripts/iterm2/sm_open_window.py`,
+  installed on the Mac by `scripts/install-iterm2.sh`) listens for the
+  sequence, validates the payload against strict patterns (host charset,
+  `sm-` name shape, agent argv allowlist — terminal output is untrusted
+  input), opens a native iTerm2 window running
+  `ssh -t <host> "cd <dir> && exec tmux new-session -A -s <name> -c <dir> <argv…>"`,
+  and keeps a name→window map so a repeat launch focuses the existing window
+  instead of duplicating it.
+- Known limitation: sm cannot detect whether the script is installed — an
+  unconfigured Mac silently ignores the sequence. The README documents the
+  one-command install and a troubleshooting checklist. The `-CC` flag and
+  the plain-attach warning dialog are removed (superseded by this design).
+- All other terminals, or iTerm2 without `iterm2.ssh`: sections 2–5 behavior
+  (tmux windows, auto-wrap) unchanged.
+
+## 7. Testing
 
 - **config:** parse `open_in`; invalid value falls back; `DefaultFileJSON` ↔
   `Default()` pin test updated.

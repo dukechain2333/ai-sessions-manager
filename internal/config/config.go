@@ -11,10 +11,17 @@ import (
 	"regexp"
 )
 
+// OpenIn values: where resume/new-session launches the agent.
+const (
+	OpenInCurrent = "current" // suspend sm, run in the current terminal (default)
+	OpenInWindow  = "window"  // open a new tmux window; sm stays on screen
+)
+
 // DefaultFileJSON is the pretty-printed default config written on first run.
 // TestDefaultFileJSONParsesToDefault pins it to Default() so it cannot drift.
 const DefaultFileJSON = `{
   "view": "list",
+  "open_in": { "mode": "current", "iterm2": { "ssh": "" } },
   "tmux": { "enabled": false },
   "colors": {
     "claude": { "light": "#C15F3C", "dark": "#D97757" },
@@ -32,6 +39,8 @@ type Config struct {
 	Claude      AgentColors
 	Codex       AgentColors
 	View        string // startup view mode: "list" (mixed) or "tabs" (per-agent)
+	OpenIn      string // where launches open: "current" (this terminal) or "window" (new tmux window)
+	ITerm2SSH   string // ssh destination for iTerm2 native-window launches ("" = disabled)
 }
 
 // Default is the built-in configuration used when no file (or no key) is set.
@@ -41,6 +50,8 @@ func Default() Config {
 		Claude:      AgentColors{Light: "#C15F3C", Dark: "#D97757"},
 		Codex:       AgentColors{Light: "#0A7C66", Dark: "#10A37F"},
 		View:        "list",
+		OpenIn:      OpenInCurrent,
+		ITerm2SSH:   "",
 	}
 }
 
@@ -86,13 +97,24 @@ type fileColors struct {
 
 type fileConfig struct {
 	View *string `json:"view"`
-	Tmux *struct {
+	// open_in is either the bare mode string ("current"/"window") or an
+	// object {mode, iterm2:{ssh}}; parseOpenIn handles both.
+	OpenIn json.RawMessage `json:"open_in"`
+	Tmux   *struct {
 		Enabled bool `json:"enabled"`
 	} `json:"tmux"`
 	Colors *struct {
 		Claude *fileColors `json:"claude"`
 		Codex  *fileColors `json:"codex"`
 	} `json:"colors"`
+}
+
+// fileOpenIn is open_in's object form.
+type fileOpenIn struct {
+	Mode   *string `json:"mode"`
+	ITerm2 *struct {
+		SSH *string `json:"ssh"`
+	} `json:"iterm2"`
 }
 
 var hexRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -123,7 +145,34 @@ func Load(path string) (Config, error) {
 	if f.View != nil && (*f.View == "list" || *f.View == "tabs") {
 		cfg.View = *f.View
 	}
+	parseOpenIn(&cfg, f.OpenIn)
 	return cfg, nil
+}
+
+// parseOpenIn applies open_in's two accepted shapes: the bare mode string
+// ("current"/"window") as shorthand, or {mode, iterm2:{ssh}}. Unknown modes
+// and malformed values keep the defaults, matching the other keys.
+func parseOpenIn(cfg *Config, raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if s == OpenInCurrent || s == OpenInWindow {
+			cfg.OpenIn = s
+		}
+		return
+	}
+	var o fileOpenIn
+	if err := json.Unmarshal(raw, &o); err != nil {
+		return
+	}
+	if o.Mode != nil && (*o.Mode == OpenInCurrent || *o.Mode == OpenInWindow) {
+		cfg.OpenIn = *o.Mode
+	}
+	if o.ITerm2 != nil && o.ITerm2.SSH != nil {
+		cfg.ITerm2SSH = *o.ITerm2.SSH
+	}
 }
 
 // applyColors overrides dst with any present, valid hex fields in src.

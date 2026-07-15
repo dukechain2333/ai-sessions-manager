@@ -81,45 +81,178 @@ func NewArgs(name, cwd, agentName string, agentArgs []string) []string {
 	return append(args, agentArgs...)
 }
 
+// WindowArgs builds the tmux argv (after the "tmux" binary) that opens a new
+// window in the caller's current tmux session, running the agent command in
+// cwd. A non-empty name tags the window for sm's tracking — -n also disables
+// tmux's automatic-rename for that window, so the name stays stable until
+// adoption renames it. An empty name leaves the window untracked.
+func WindowArgs(name, cwd, agentName string, agentArgs []string) []string {
+	args := []string{"new-window", "-c", cwd}
+	if name != "" {
+		args = append(args, "-n", name)
+	}
+	args = append(args, agentName)
+	return append(args, agentArgs...)
+}
+
+// SelfSession / SelfWindow name sm's own tmux home used by the open_in
+// "window" startup wrap. Deliberately NOT "sm-" prefixed: agent tracking
+// discovers by that prefix, and sm's own tmux must stay invisible to
+// ●/x/adoption. Reattachment probes by exact match instead.
+const (
+	SelfSession = "sm"
+	SelfWindow  = "sm"
+)
+
+// SelfWrapArgs builds the tmux argv (after the "tmux" binary) that lands the
+// user inside sm's own tmux session, (re)starting sm as needed. selfCmd is
+// sm's own binary and args; cwd pins the window so relative flag paths keep
+// resolving. Three server states (probed by SelfState): no session — create
+// it running sm; session with a live sm window — select it and attach (the
+// detached-workspace reattach); session whose sm window has exited — spawn a
+// fresh sm window (new-window makes it current) and attach. The last branch
+// is why a bare `new-session -A` is not enough: quitting sm kills its window
+// while agent windows keep the session alive. The first branch still carries
+// -A so two sm's racing past SelfState both land attached instead of the
+// loser dying on "duplicate session". An empty cwd (deleted directory) drops
+// -c rather than handing tmux an empty path.
+func SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID string) []string {
+	switch {
+	case !sessionExists:
+		args := []string{"new-session", "-A", "-s", SelfSession, "-n", SelfWindow}
+		if cwd != "" {
+			args = append(args, "-c", cwd)
+		}
+		return append(args, selfCmd...)
+	case smWindowID != "":
+		return []string{"select-window", "-t", smWindowID, ";", "attach-session", "-t", "=" + SelfSession}
+	default:
+		args := []string{"new-window", "-t", "=" + SelfSession + ":", "-n", SelfWindow}
+		if cwd != "" {
+			args = append(args, "-c", cwd)
+		}
+		args = append(args, selfCmd...)
+		return append(args, ";", "attach-session", "-t", "="+SelfSession)
+	}
+}
+
+// SelfState probes the tmux server for sm's own session and its live sm
+// window id ("" when absent). A missing server is (false, "").
+func SelfState() (sessionExists bool, smWindowID string) {
+	if exec.Command("tmux", "has-session", "-t", "="+SelfSession).Run() != nil {
+		return false, ""
+	}
+	out, err := exec.Command("tmux", "list-windows", "-t", "="+SelfSession, "-F",
+		"#{window_id}\t#{window_name}").Output()
+	if err != nil {
+		return true, ""
+	}
+	return true, parseSelfWindow(string(out))
+}
+
+// parseSelfWindow finds the SelfWindow-named window id in list-windows
+// "id\tname" output, or "".
+func parseSelfWindow(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(parts) == 2 && parts[1] == SelfWindow {
+			return parts[0]
+		}
+	}
+	return ""
+}
+
 // Runner is the injectable tmux boundary. The real implementation is Exec;
-// tests inject a fake.
+// tests inject a fake. Names may denote tmux *sessions* (open_in "current")
+// or tmux *windows* (open_in "window"); List discovers both, and the other
+// operations resolve a name session-first, then window.
 type Runner interface {
-	// List returns the set of live sm-prefixed session names. A missing tmux
-	// server yields an empty set, not an error.
+	// List returns the set of live sm-prefixed session and window names. A
+	// missing tmux server yields an empty set, not an error.
 	List() (map[string]bool, error)
-	// Path returns a session's pane_current_path (used to place provisional
-	// new-session tmux during adoption).
+	// Path returns the pane_current_path of a session or window (used to
+	// place provisional new-session tmux during adoption). For the window
+	// form, the path is resolved via the window's active pane.
 	Path(name string) (string, error)
 	Kill(name string) error
 	Rename(from, to string) error
+	// Window resolves an sm-prefixed *window* name to its tmux window id
+	// ("@N") and owning session name. ok is false when no such window is
+	// live — the name is session-form, pending-session-form, or dead.
+	Window(name string) (id, session string, ok bool)
 }
 
 // Exec is the real Runner; it shells out to tmux.
 type Exec struct{}
 
 func (Exec) List() (map[string]bool, error) {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
-	if err != nil {
-		// No server running (or no sessions) is an empty set, not an error.
-		return map[string]bool{}, nil
+	set := map[string]bool{}
+	if out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output(); err == nil {
+		for name := range parseList(string(out)) {
+			set[name] = true
+		}
 	}
-	return parseList(string(out)), nil
+	for name := range listWindows() {
+		set[name] = true
+	}
+	// No server running (or no sessions) is an empty set, not an error.
+	return set, nil
 }
 
-func (Exec) Path(name string) (string, error) {
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", name, "#{pane_current_path}").Output()
+func (Exec) Window(name string) (string, string, bool) {
+	w, ok := listWindows()[name]
+	if !ok {
+		return "", "", false
+	}
+	return w[0], w[1], true
+}
+
+func (e Exec) Kill(name string) error {
+	if !hasSession(name) {
+		if id, _, ok := e.Window(name); ok {
+			return exec.Command("tmux", "kill-window", "-t", id).Run()
+		}
+	}
+	return exec.Command("tmux", "kill-session", "-t", "="+name).Run()
+}
+
+func (e Exec) Rename(from, to string) error {
+	if !hasSession(from) {
+		if id, _, ok := e.Window(from); ok {
+			return exec.Command("tmux", "rename-window", "-t", id, to).Run()
+		}
+	}
+	return exec.Command("tmux", "rename-session", "-t", "="+from, to).Run()
+}
+
+func (e Exec) Path(name string) (string, error) {
+	target := "=" + name
+	if !hasSession(name) {
+		if id, _, ok := e.Window(name); ok {
+			target = id
+		}
+	}
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", target, "#{pane_current_path}").Output()
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (Exec) Kill(name string) error {
-	return exec.Command("tmux", "kill-session", "-t", name).Run()
+// hasSession reports whether a tmux *session* with exactly this name is live
+// ("=" pins tmux's default prefix matching to an exact match).
+func hasSession(name string) bool {
+	return exec.Command("tmux", "has-session", "-t", "="+name).Run() == nil
 }
 
-func (Exec) Rename(from, to string) error {
-	return exec.Command("tmux", "rename-session", "-t", from, to).Run()
+// listWindows returns every live sm-prefixed window, keyed by window name.
+func listWindows() map[string][2]string {
+	out, err := exec.Command("tmux", "list-windows", "-a", "-F",
+		"#{window_id}\t#{session_name}\t#{window_name}").Output()
+	if err != nil {
+		return map[string][2]string{}
+	}
+	return parseWindows(string(out))
 }
 
 // parseList keeps only sm-prefixed names from tmux list-sessions output.
@@ -132,4 +265,21 @@ func parseList(out string) map[string]bool {
 		}
 	}
 	return set
+}
+
+// parseWindows maps sm-prefixed window names to {window id, session name}.
+// Input rows are "id\tsession\tname". Duplicate names keep the first row —
+// callers always target the id, so a duplicate can hide but never mis-target.
+func parseWindows(out string) map[string][2]string {
+	m := map[string][2]string{}
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 3)
+		if len(parts) != 3 || !strings.HasPrefix(parts[2], Prefix) {
+			continue
+		}
+		if _, dup := m[parts[2]]; !dup {
+			m[parts[2]] = [2]string{parts[0], parts[1]}
+		}
+	}
+	return m
 }

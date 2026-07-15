@@ -1000,3 +1000,783 @@ git commit -m "docs: document open_in (current terminal vs new tmux window)"
 - **Spec coverage:** config key + validation (Task 1); launch matrix all four cells (Task 5 tests: tracked/untracked window resume, pending window new; existing tests pin the two `current` cells); window preconditions and exact error copy (Task 4); List/Kill/Rename/Path dual-form + window ids for duplicate-name safety (Task 3); adoption via unchanged `adoptPending` (name-based — Task 3's `Rename`/`Path` handle the window form; no new adoption code needed); live-tmux jump incl. the sm-outside-tmux attach edge and the session-form-in-window-mode pin (Task 6); non-suspending runner + failure surfacing (Task 5); README (Task 7).
 - **Deliberate scope note:** `killProjectCmd` and `killOneCmd` need no changes — they call `Runner.Kill`/`Path` by name, which Task 3 makes form-agnostic.
 - **Type consistency:** `Window(name) (id, session string, ok bool)` is used identically in Task 3 (Exec + fake), and Task 6 (`m.tmux.Window`). `runSilent` signature matches `runCmd`'s shape everywhere.
+
+---
+
+## Amendment (2026-07-15, post-review): startup auto-wrap
+
+User feedback after live testing: requiring sm to already run inside tmux is
+too awkward. Approved design change (spec section 5): with
+`open_in: "window"`, sm started outside tmux replaces itself with a tmux
+client attached to sm's own session (named `sm`), creating the session or a
+fresh sm window as needed; a live detached workspace is reattached.
+
+### Task 8: tmux — self-wrap argv builders and server probe
+
+**Files:**
+- Modify: `internal/tmux/tmux.go`
+- Test: `internal/tmux/tmux_test.go`
+
+**Interfaces:**
+- Consumes: nothing new.
+- Produces: `tmux.SelfSession = "sm"`, `tmux.SelfWindow = "sm"` (consts);
+  `tmux.SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID string) []string`;
+  `tmux.SelfState() (sessionExists bool, smWindowID string)` (shells out);
+  `parseSelfWindow(out string) string` (unexported, tested). Task 9's main.go
+  calls `SelfState` + `SelfWrapArgs`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/tmux/tmux_test.go`:
+
+```go
+func TestSelfWrapArgs(t *testing.T) {
+	self := []string{"/usr/local/bin/sm", "--config", "/x/c.json"}
+	got := SelfWrapArgs(self, "/work", false, "")
+	want := []string{"new-session", "-s", "sm", "-n", "sm", "-c", "/work",
+		"/usr/local/bin/sm", "--config", "/x/c.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("fresh session = %v", got)
+	}
+	got = SelfWrapArgs(self, "/work", true, "@3")
+	want = []string{"select-window", "-t", "@3", ";", "attach-session", "-t", "=sm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("reattach = %v", got)
+	}
+	got = SelfWrapArgs(self, "/work", true, "")
+	want = []string{"new-window", "-t", "=sm:", "-n", "sm", "-c", "/work",
+		"/usr/local/bin/sm", "--config", "/x/c.json", ";", "attach-session", "-t", "=sm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("respawn = %v", got)
+	}
+}
+
+func TestParseSelfWindow(t *testing.T) {
+	out := "@1\tvim\n@2\tsm\n"
+	if got := parseSelfWindow(out); got != "@2" {
+		t.Errorf("parseSelfWindow = %q, want @2", got)
+	}
+	if got := parseSelfWindow("@1\tother\n\n"); got != "" {
+		t.Errorf("no sm window should yield empty, got %q", got)
+	}
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `go test ./internal/tmux/ -run 'TestSelfWrapArgs|TestParseSelfWindow' -v`
+Expected: FAIL — `undefined: SelfWrapArgs`, `undefined: parseSelfWindow`.
+
+- [ ] **Step 3: Implement**
+
+Add to `internal/tmux/tmux.go` (after `WindowArgs`):
+
+```go
+// SelfSession / SelfWindow name sm's own tmux home used by the open_in
+// "window" startup wrap. Deliberately NOT "sm-" prefixed: agent tracking
+// discovers by that prefix, and sm's own tmux must stay invisible to
+// ●/x/adoption. Reattachment probes by exact match instead.
+const (
+	SelfSession = "sm"
+	SelfWindow  = "sm"
+)
+
+// SelfWrapArgs builds the tmux argv (after the "tmux" binary) that lands the
+// user inside sm's own tmux session, (re)starting sm as needed. selfCmd is
+// sm's own binary and args; cwd pins the window so relative flag paths keep
+// resolving. Three server states (probed by SelfState): no session — create
+// it running sm; session with a live sm window — select it and attach (the
+// detached-workspace reattach); session whose sm window has exited — spawn a
+// fresh sm window (new-window makes it current) and attach. The last branch
+// is why a bare `new-session -A` is not enough: quitting sm kills its window
+// while agent windows keep the session alive.
+func SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID string) []string {
+	switch {
+	case !sessionExists:
+		return append([]string{"new-session", "-s", SelfSession, "-n", SelfWindow, "-c", cwd}, selfCmd...)
+	case smWindowID != "":
+		return []string{"select-window", "-t", smWindowID, ";", "attach-session", "-t", "=" + SelfSession}
+	default:
+		args := append([]string{"new-window", "-t", "=" + SelfSession + ":", "-n", SelfWindow, "-c", cwd}, selfCmd...)
+		return append(args, ";", "attach-session", "-t", "="+SelfSession)
+	}
+}
+
+// SelfState probes the tmux server for sm's own session and its live sm
+// window id ("" when absent). A missing server is (false, "").
+func SelfState() (sessionExists bool, smWindowID string) {
+	if exec.Command("tmux", "has-session", "-t", "="+SelfSession).Run() != nil {
+		return false, ""
+	}
+	out, err := exec.Command("tmux", "list-windows", "-t", "="+SelfSession, "-F",
+		"#{window_id}\t#{window_name}").Output()
+	if err != nil {
+		return true, ""
+	}
+	return true, parseSelfWindow(string(out))
+}
+
+// parseSelfWindow finds the SelfWindow-named window id in list-windows
+// "id\tname" output, or "".
+func parseSelfWindow(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(parts) == 2 && parts[1] == SelfWindow {
+			return parts[0]
+		}
+	}
+	return ""
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `go test ./internal/tmux/ -v` then `go test ./...`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/tmux/tmux.go internal/tmux/tmux_test.go
+git commit -m "feat(tmux): self-wrap argv builders for open_in window startup"
+```
+
+---
+
+### Task 9: startup wiring — main.go self-exec, ui fallback dialog, README
+
+**Files:**
+- Modify: `cmd/sm/main.go`
+- Modify: `internal/ui/model.go` (New: tmux-missing downgrade)
+- Modify: `README.md` (open_in bullet)
+- Test: `internal/ui/model_test.go`
+
+**Interfaces:**
+- Consumes: `tmux.SelfState`, `tmux.SelfWrapArgs`, `tmux.SelfSession` (Task 8);
+  `config.OpenInWindow/OpenInCurrent`.
+- Produces: no new exported surface.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `internal/ui/model_test.go`:
+
+```go
+func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
+	orig := tmuxLookPath
+	tmuxLookPath = func() bool { return false }
+	defer func() { tmuxLookPath = orig }()
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInCurrent {
+		t.Errorf("openIn = %q, want fallback to current", m.openIn)
+	}
+	if m.dialog != dialogError || !strings.Contains(m.errText, "tmux on PATH") {
+		t.Errorf("expected startup error dialog, got dialog=%v err=%q", m.dialog, m.errText)
+	}
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `go test ./internal/ui/ -run TestWindowModeWithoutTmuxFallsBackAtStartup -v`
+Expected: FAIL — openIn stays `"window"`, no dialog.
+
+- [ ] **Step 3: Implement the ui downgrade**
+
+In `internal/ui/model.go`, in `New`, directly after the existing
+`if ret.tmuxEnabled && !tmuxLookPath() { … }` block:
+
+```go
+	if ret.openIn == config.OpenInWindow && !tmuxLookPath() {
+		ret.openIn = config.OpenInCurrent
+		ret.dialog = dialogError
+		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
+	}
+```
+
+- [ ] **Step 4: Implement the main.go self-exec wrap**
+
+In `cmd/sm/main.go`, after the `cfg, cfgErr := config.Load(path)` error
+handling and before `tea.NewProgram`:
+
+```go
+	// open_in "window" wants sm living inside tmux — the windows it opens
+	// land in the attached session. Started outside tmux, sm replaces itself
+	// with a tmux client on its own session (creating the session or a fresh
+	// sm window as needed; a live detached workspace is reattached). Any
+	// failure falls through to a normal run: ui.New shows the tmux-missing
+	// dialog and downgrades, and the in-app launch check still guards $TMUX.
+	if cfg.OpenIn == config.OpenInWindow && os.Getenv("TMUX") == "" {
+		if tmuxPath, err := exec.LookPath("tmux"); err == nil {
+			if self, err := os.Executable(); err == nil {
+				cwd, _ := os.Getwd()
+				exists, winID := tmux.SelfState()
+				selfCmd := append([]string{self}, os.Args[1:]...)
+				argv := append([]string{"tmux"}, tmux.SelfWrapArgs(selfCmd, cwd, exists, winID)...)
+				_ = syscall.Exec(tmuxPath, argv, os.Environ())
+			}
+		}
+	}
+```
+
+Add imports: `"os/exec"`, `"syscall"`, and
+`"github.com/dukechain2333/ai-sessions-manager/internal/tmux"`.
+
+- [ ] **Step 5: Update README**
+
+In the `open_in` bullet added by Task 7, replace the sentence
+`Requires running `sm` inside tmux (and `tmux` on `PATH`); `sm` shows an error otherwise.`
+with:
+
+```markdown
+  Started outside tmux, `sm` automatically re-launches itself inside its own
+  tmux session (named `sm`) and reattaches it if one is already running — an
+  SSH drop later, `sm` brings the whole workspace (sm plus every agent
+  window) back. Needs `tmux` on `PATH`; without it `sm` shows a notice and
+  falls back to `"current"` for the run.
+```
+
+- [ ] **Step 6: Run the full suite and verify the wrap manually**
+
+Run: `go test ./...` — expected: PASS.
+Run: `gofmt -l cmd internal` — expected: empty.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add cmd/sm/main.go internal/ui/model.go internal/ui/model_test.go README.md
+git commit -m "feat: auto-wrap sm into its own tmux session when open_in is window"
+```
+
+---
+
+## Amendment 2 (2026-07-15): iTerm2 native windows via custom control sequences
+
+Live testing rejected `-CC` (it pops sm's own window too). Approved design:
+spec section 6. sm stays plain in the invoking terminal; window-mode launches
+emit an invisible iTerm2 custom control sequence; a local AutoLaunch script
+opens a native window ssh-ing back. Explicit opt-in: `"iterm2": {"ssh": "…"}`.
+
+### Task 10: config — `iterm2.ssh` key
+
+**Files:**
+- Modify: `internal/config/config.go`
+- Test: `internal/config/config_test.go`
+
+**Interfaces:**
+- Produces: `Config.ITerm2SSH string` (default `""` = disabled). Task 12 reads it.
+
+- [ ] **Step 1: Failing test** — append to `internal/config/config_test.go`:
+
+```go
+func TestLoadITerm2SSH(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{"iterm2": {"ssh": "myhost"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil || cfg.ITerm2SSH != "myhost" {
+		t.Fatalf(`iterm2.ssh: cfg.ITerm2SSH=%q err=%v`, cfg.ITerm2SSH, err)
+	}
+	if def := Default(); def.ITerm2SSH != "" {
+		t.Fatalf(`Default().ITerm2SSH = %q, want ""`, def.ITerm2SSH)
+	}
+}
+```
+
+- [ ] **Step 2:** `go test ./internal/config/ -run TestLoadITerm2SSH -v` → FAIL (undefined field).
+
+- [ ] **Step 3: Implement** in `internal/config/config.go`:
+  - `Config` gains (after `OpenIn`): `ITerm2SSH string // ssh destination for iTerm2 native-window launches ("" = disabled)`
+  - `Default()` gains `ITerm2SSH: "",`
+  - `DefaultFileJSON`: after the `"open_in"` line add `  "iterm2": { "ssh": "" },`
+  - `fileConfig` gains:
+    ```go
+    	ITerm2 *struct {
+    		SSH *string `json:"ssh"`
+    	} `json:"iterm2"`
+    ```
+  - `Load` after the OpenIn block:
+    ```go
+    	if f.ITerm2 != nil && f.ITerm2.SSH != nil {
+    		cfg.ITerm2SSH = *f.ITerm2.SSH
+    	}
+    ```
+
+- [ ] **Step 4:** `go test ./internal/config/ -v` → PASS incl. the DefaultFileJSON pin test.
+
+- [ ] **Step 5: Commit** `feat(config): iterm2.ssh key for native-window launches`
+
+---
+
+### Task 11: new package — `internal/iterm2` sequence builder
+
+**Files:**
+- Create: `internal/iterm2/iterm2.go`
+- Test: `internal/iterm2/iterm2_test.go`
+
+**Interfaces:**
+- Produces: `iterm2.Launch{Host, Dir, Name string; Argv []string; Tmux, Attach bool}` and `iterm2.Sequence(l Launch, insideTmux bool) string`. Task 12 calls them; Task 13's Python script parses the payload.
+
+- [ ] **Step 1: Failing test** — create `internal/iterm2/iterm2_test.go`:
+
+```go
+package iterm2
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func decode(t *testing.T, seq string) Launch {
+	t.Helper()
+	const pre = "\x1b]1337;Custom=id=sm:"
+	if !strings.HasPrefix(seq, pre) || !strings.HasSuffix(seq, "\a") {
+		t.Fatalf("sequence framing wrong: %q", seq)
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(seq, pre), "\a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var l Launch
+	if err := json.Unmarshal(raw, &l); err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+func TestSequenceRoundTrips(t *testing.T) {
+	in := Launch{Host: "myhost", Dir: "/x/alpha", Name: "sm-claude-s1",
+		Argv: []string{"claude", "--resume", "s1"}, Tmux: true}
+	got := decode(t, Sequence(in, false))
+	if got.Host != in.Host || got.Dir != in.Dir || got.Name != in.Name ||
+		!got.Tmux || got.Attach || len(got.Argv) != 3 || got.Argv[0] != "claude" {
+		t.Errorf("round trip = %+v", got)
+	}
+}
+
+func TestSequencePassthroughEnvelope(t *testing.T) {
+	plain := Sequence(Launch{Host: "h", Attach: true, Name: "sm-claude-s1"}, false)
+	wrapped := Sequence(Launch{Host: "h", Attach: true, Name: "sm-claude-s1"}, true)
+	if !strings.HasPrefix(wrapped, "\x1bPtmux;") || !strings.HasSuffix(wrapped, "\x1b\\") {
+		t.Fatalf("passthrough framing wrong: %q", wrapped)
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(wrapped, "\x1bPtmux;"), "\x1b\\")
+	if strings.ReplaceAll(body, "\x1b\x1b", "\x1b") != plain {
+		t.Errorf("ESC doubling wrong: %q vs %q", body, plain)
+	}
+}
+```
+
+- [ ] **Step 2:** `go test ./internal/iterm2/ -v` → FAIL (package missing).
+
+- [ ] **Step 3: Implement** — create `internal/iterm2/iterm2.go`:
+
+```go
+// Package iterm2 builds the OSC 1337 custom control sequences that ask a
+// companion AutoLaunch script inside the user's local iTerm2 to open a
+// native window ssh-ing back into this host. sm emits them to the tty; a
+// terminal without the script simply ignores them.
+package iterm2
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
+)
+
+// Identity is the custom-sequence id the AutoLaunch script filters on.
+const Identity = "sm"
+
+// Launch describes one native window the local script should open. Tracked
+// launches carry the tmux session name and Tmux=true so the remote agent
+// lands in the usual session-form tmux; Attach=true jumps to a live one.
+type Launch struct {
+	Host   string   `json:"host"`
+	Dir    string   `json:"dir,omitempty"`
+	Name   string   `json:"name,omitempty"`
+	Argv   []string `json:"argv,omitempty"`
+	Tmux   bool     `json:"tmux,omitempty"`
+	Attach bool     `json:"attach,omitempty"`
+}
+
+// Sequence renders the escape sequence for l. insideTmux wraps it in tmux's
+// passthrough envelope (ESC Ptmux; … ESC \ with inner ESCs doubled) so it
+// survives a plain tmux attach; the pane needs allow-passthrough on, which
+// sm best-effort enables at startup.
+func Sequence(l Launch, insideTmux bool) string {
+	b, err := json.Marshal(l)
+	if err != nil { // all fields are marshalable; defensive only
+		b = []byte("{}")
+	}
+	seq := "\x1b]1337;Custom=id=" + Identity + ":" + base64.StdEncoding.EncodeToString(b) + "\a"
+	if insideTmux {
+		return "\x1bPtmux;" + strings.ReplaceAll(seq, "\x1b", "\x1b\x1b") + "\x1b\\"
+	}
+	return seq
+}
+```
+
+- [ ] **Step 4:** `go test ./internal/iterm2/ -v` then `go test ./...` → PASS.
+- [ ] **Step 5: Commit** `feat(iterm2): custom control sequence builder`
+
+---
+
+### Task 12: ui — emit sequences; retire -CC and the plain-attach warning
+
+**Files:**
+- Modify: `internal/ui/model.go`, `cmd/sm/main.go`, `internal/tmux/tmux.go`
+- Test: `internal/ui/model_test.go`, `internal/tmux/tmux_test.go`
+
+**Interfaces:**
+- Consumes: `config.Config.ITerm2SSH` (Task 10), `iterm2.Sequence`/`iterm2.Launch` (Task 11), existing `iTerm2Env`, `insideTmux`.
+- Produces: `Model.iterm2Host string`; `Model.emitSeq func(string) tea.Cmd` injectable; `(m Model) iterm2Windows() bool`.
+
+- [ ] **Step 1: Failing tests** — append to `internal/ui/model_test.go` (helper + three tests):
+
+```go
+// newITerm2Model is a window-mode model with the iTerm2 mechanism active:
+// iterm2.ssh configured, LC_TERMINAL detected, outside tmux, and both
+// runners trapped — iTerm2 launches must not run anything, only emit.
+func newITerm2Model(t *testing.T) (Model, *[]string) {
+	t.Helper()
+	origIn, origIT := insideTmux, iTerm2Env
+	insideTmux = func() bool { return false }
+	iTerm2Env = func() bool { return true }
+	t.Cleanup(func() { insideTmux, iTerm2Env = origIn, origIT })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	m.iterm2Host = "myhost"
+	seqs := &[]string{}
+	m.emitSeq = func(seq string) tea.Cmd { *seqs = append(*seqs, seq); return nil }
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("iTerm2 mode must not runCmd: %s %v", name, args)
+		return nil
+	}
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("iTerm2 mode must not runSilent: %s %v", name, args)
+		return nil
+	}
+	m.now = func() time.Time { return time.Unix(0, 1234) }
+	return m, seqs
+}
+
+func decodeLaunch(t *testing.T, seq string) iterm2.Launch {
+	t.Helper()
+	const pre = "\x1b]1337;Custom=id=sm:"
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(seq, pre), "\a"))
+	if err != nil {
+		t.Fatalf("cannot decode %q: %v", seq, err)
+	}
+	var l iterm2.Launch
+	if err := json.Unmarshal(raw, &l); err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+func TestResumeITerm2EmitsTrackedLaunch(t *testing.T) {
+	m, seqs := newITerm2Model(t)
+	m.tmuxEnabled = true
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %v", *seqs)
+	}
+	l := decodeLaunch(t, (*seqs)[0])
+	if l.Host != "myhost" || l.Dir != dir || l.Name != "sm-claude-s1" || !l.Tmux ||
+		l.Attach || len(l.Argv) < 2 || l.Argv[0] != "claude" {
+		t.Errorf("launch = %+v", l)
+	}
+}
+
+func TestEnterLiveITerm2EmitsAttach(t *testing.T) {
+	m, seqs := newITerm2Model(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %v", *seqs)
+	}
+	l := decodeLaunch(t, (*seqs)[0])
+	if !l.Attach || l.Name != "sm-claude-s1" || l.Host != "myhost" {
+		t.Errorf("attach launch = %+v", l)
+	}
+}
+
+func TestITerm2SkipsWindowTmuxPreconditions(t *testing.T) {
+	origLook := tmuxLookPath
+	tmuxLookPath = func() bool { return true } // irrelevant; insideTmux=false is the check
+	defer func() { tmuxLookPath = origLook }()
+	m, seqs := newITerm2Model(t) // outside tmux — would error without iTerm2 mechanism
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	m = m2.(Model)
+	if m.dialog == dialogError {
+		t.Fatalf("iTerm2 mode must skip inside-tmux precondition, got %q", m.errText)
+	}
+	if len(*seqs) != 1 {
+		t.Errorf("expected an emitted sequence, got %v", *seqs)
+	}
+}
+```
+
+Add imports `"encoding/base64"`, `"encoding/json"`, and the iterm2 package to model_test.go's import block. DELETE `TestWindowModePlainClientOniTerm2Warns` (superseded) and `TestCCFlag` in `internal/tmux/tmux_test.go`.
+
+- [ ] **Step 2:** run the three new tests → FAIL (missing fields).
+
+- [ ] **Step 3: Implement** in `internal/ui/model.go`:
+  - Struct fields (after `openIn`): `iterm2Host string` — and next to `runSilent`: `emitSeq func(string) tea.Cmd`.
+  - `New()` literal: `iterm2Host:   cfg.ITerm2SSH,` and `emitSeq:      emitEscape,`.
+  - DELETE the plain-attach warning block in `New()` (the one setting `errText` about "control mode") and the `plainTmuxClient` var.
+  - In `New()`, after the openIn-downgrade block, best-effort passthrough (so sequences survive a plain tmux attach):
+    ```go
+    	if ret.openIn == config.OpenInWindow && ret.iterm2Host != "" && iTerm2Env() && insideTmux() {
+    		_ = exec.Command("tmux", "set-option", "-p", "allow-passthrough", "on").Run()
+    	}
+    ```
+  - Add:
+    ```go
+    // emitEscape writes a control sequence to stderr — the tty, not Bubble
+    // Tea's stdout frame — same reasoning as ringBell.
+    func emitEscape(seq string) tea.Cmd {
+    	return func() tea.Msg {
+    		fmt.Fprint(os.Stderr, seq)
+    		return nil
+    	}
+    }
+
+    // iterm2Windows reports whether window-mode launches go through the
+    // local iTerm2 AutoLaunch script instead of tmux windows: explicit
+    // config opt-in plus a detected iTerm2.
+    func (m Model) iterm2Windows() bool {
+    	return m.openIn == config.OpenInWindow && m.iterm2Host != "" && iTerm2Env()
+    }
+    ```
+  - `launchErr`: change the window-mode precondition gate to `if m.openIn == config.OpenInWindow && !m.iterm2Windows() {` (iTerm2 mode needs neither tmux on PATH nor $TMUX).
+  - `runAgentCmd` resume branch — inside the `if m.openIn == config.OpenInWindow {` block, before the runSilent path:
+    ```go
+    		if m.iterm2Windows() {
+    			l := iterm2.Launch{Host: m.iterm2Host, Dir: cwd, Argv: append([]string{name}, args...)}
+    			if m.tmuxEnabled {
+    				l.Name, l.Tmux = sess, true
+    			}
+    			return m.emitSeq(iterm2.Sequence(l, insideTmux()))
+    		}
+    ```
+  - `runAgentCmd` new-session branch — same shape with `tmux.PendingName(string(p.Agent()), m.now().UnixNano())` as the tracked name.
+  - `attachLiveCmd` — first line:
+    ```go
+    	if m.iterm2Windows() {
+    		return m.emitSeq(iterm2.Sequence(iterm2.Launch{Host: m.iterm2Host, Name: sess, Attach: true}, insideTmux()))
+    	}
+    ```
+  - Import the iterm2 package.
+  - `cmd/sm/main.go`: wrap gate becomes
+    ```go
+    	if cfg.OpenIn == config.OpenInWindow && os.Getenv("TMUX") == "" &&
+    		!(cfg.ITerm2SSH != "" && os.Getenv("LC_TERMINAL") == "iTerm2") {
+    ```
+    and the argv drops CCFlag: `argv := append([]string{"tmux"}, tmux.SelfWrapArgs(selfCmd, cwd, exists, winID)...)`.
+  - `internal/tmux/tmux.go`: DELETE `CCFlag`.
+
+- [ ] **Step 4:** `go test ./...` → PASS; `gofmt -l cmd internal` → empty.
+- [ ] **Step 5: Commit** `feat(ui): emit iTerm2 custom sequences for native-window launches; retire -CC`
+
+---
+
+### Task 13: local script, installer, README
+
+**Files:**
+- Create: `scripts/iterm2/sm_open_window.py`
+- Create: `scripts/install-iterm2.sh`
+- Modify: `README.md`
+
+- [ ] **Step 1: Create `scripts/iterm2/sm_open_window.py`:**
+
+```python
+#!/usr/bin/env python3
+"""sm → iTerm2 bridge.
+
+Listens for sm's custom control sequences (OSC 1337 Custom=id=sm:<base64>)
+and opens a native iTerm2 window that ssh-es back into the host to run the
+agent. Terminal output is untrusted input: every payload field is validated
+against a strict pattern before anything runs, and the only command shape
+ever executed is `ssh -t <host> <cd+tmux+agent>`.
+
+Install: ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/ and enable
+Settings → General → Magic → "Enable Python API".
+"""
+import base64
+import json
+import re
+import shlex
+
+import iterm2
+
+HOST_RE = re.compile(r"^[A-Za-z0-9._@-]{1,128}$")
+NAME_RE = re.compile(r"^sm(-[a-z0-9]+)+$")
+AGENTS = ("claude", "codex")
+ARG_RE = re.compile(r"^[A-Za-z0-9._/=@-]{1,256}$")
+
+windows = {}
+
+
+def remote_command(spec):
+    """Build the validated remote command, or None to reject the payload."""
+    host = spec.get("host", "")
+    name = spec.get("name", "")
+    dir_ = spec.get("dir", "")
+    argv = spec.get("argv") or []
+    if not HOST_RE.match(host):
+        return None, None, None
+    if spec.get("attach"):
+        if not NAME_RE.match(name):
+            return None, None, None
+        return host, name, "exec tmux attach-session -t " + shlex.quote("=" + name)
+    if not argv or argv[0] not in AGENTS or not all(ARG_RE.match(a) for a in argv):
+        return None, None, None
+    inner = " ".join(shlex.quote(a) for a in argv)
+    if spec.get("tmux"):
+        if not NAME_RE.match(name):
+            return None, None, None
+        cmd = "cd {d} && exec tmux new-session -A -s {n} -c {d} {i}".format(
+            d=shlex.quote(dir_), n=shlex.quote(name), i=inner)
+    else:
+        cmd = "cd {d} && exec {i}".format(d=shlex.quote(dir_), i=inner)
+    return host, name or inner, cmd
+
+
+async def handle(connection, payload):
+    spec = json.loads(base64.b64decode(payload))
+    host, key, cmd = remote_command(spec)
+    if not cmd:
+        return
+    old = windows.get(key)
+    if old is not None:
+        try:
+            await old.async_activate()
+            return
+        except Exception:
+            windows.pop(key, None)
+    ssh = "/usr/bin/env ssh -t {h} {c}".format(h=shlex.quote(host), c=shlex.quote(cmd))
+    win = await iterm2.Window.async_create(connection, command=ssh)
+    if win is not None:
+        windows[key] = win
+
+
+async def main(connection):
+    async with iterm2.CustomControlSequenceMonitor(
+            connection, "sm", r"^(.+)$") as mon:
+        while True:
+            match = await mon.async_get()
+            try:
+                await handle(connection, match.group(1))
+            except Exception:
+                pass  # a bad payload must never kill the listener
+
+
+iterm2.run_forever(main)
+```
+
+- [ ] **Step 2: Create `scripts/install-iterm2.sh`:**
+
+```sh
+#!/bin/sh
+# One-command installer for sm's iTerm2 native-window bridge (run on the Mac):
+#   curl -fsSL https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/scripts/install-iterm2.sh | sh
+set -e
+DIR="$HOME/Library/Application Support/iTerm2/Scripts/AutoLaunch"
+URL="https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/scripts/iterm2/sm_open_window.py"
+mkdir -p "$DIR"
+curl -fsSL "$URL" -o "$DIR/sm_open_window.py"
+echo "Installed $DIR/sm_open_window.py"
+echo
+echo "Two manual steps in iTerm2:"
+echo "  1. Settings > General > Magic > check 'Enable Python API'"
+echo "  2. Scripts > AutoLaunch > sm_open_window.py (or restart iTerm2)."
+echo "     First run offers to download the iTerm2 Python runtime - accept."
+echo
+echo "Then on the remote host, set in ~/.config/sm/config.json:"
+echo '  "open_in": "window",'
+echo '  "iterm2": { "ssh": "<how this Mac sshes there, e.g. myserver>" }'
+```
+
+`chmod +x scripts/install-iterm2.sh`.
+
+- [ ] **Step 3: README** — in the `open_in` bullet, replace the iTerm2 paragraph (added in Task 9's amendment) with a pointer, and add a dedicated section after the Configuration section (before `### tmux integration`):
+
+Replace the `**iTerm2 users get real OS windows:** …` sentence block with:
+
+```markdown
+  **iTerm2 users can get real OS windows** — see
+  [iTerm2 native windows](#iterm2-native-windows-macos).
+```
+
+New section:
+
+```markdown
+### iTerm2 native windows (macOS)
+
+With one small companion script, `open_in: "window"` opens every resume/new
+session as a **genuine iTerm2 window** — `sm` itself stays exactly where you
+ran it, even over SSH.
+
+How it works: pressing `enter` makes `sm` write an invisible [custom control
+sequence](https://iterm2.com/python-api/customcontrol.html) to your
+terminal. An AutoLaunch script inside your local iTerm2 picks it up and
+opens a native window that runs
+`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent> --resume <id>"`,
+so the agent lands in the same tracked tmux session `sm` already knows how
+to mark (●), kill (`x`), and re-enter. No tmux needed around `sm` itself.
+
+**Install (on the Mac, one command):**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/scripts/install-iterm2.sh | sh
+```
+
+Then, in iTerm2: *Settings → General → Magic → Enable Python API*, and start
+the script under *Scripts → AutoLaunch → sm_open_window.py* (auto-starts on
+the next iTerm2 launch; the first run offers to install iTerm2's Python
+runtime — accept it).
+
+**Configure (on the remote host)** in `~/.config/sm/config.json`:
+
+```json
+{
+  "open_in": "window",
+  "iterm2": { "ssh": "myserver" }
+}
+```
+
+`iterm2.ssh` is whatever you type after `ssh` on the Mac to reach the host
+(alias from `~/.ssh/config`, hostname, or IP) — the new window dials a fresh
+connection, so key-based login should already work.
+
+**Troubleshooting** — pressing `enter` does nothing:
+- The AutoLaunch script isn't running (iTerm2 *Scripts → Manage → Console*
+  shows it) or the Python API checkbox is off.
+- `iterm2.ssh` missing from config, or `$LC_TERMINAL` not reaching the host
+  (check `echo $LC_TERMINAL` there; your ssh config must not strip `LC_*`).
+- Running `sm` inside a tmux attach: `sm` auto-enables pane passthrough, but
+  a tmux older than 3.3 lacks `allow-passthrough` — run `sm` outside tmux.
+
+Security note: the script treats terminal output as untrusted — payloads are
+validated against strict patterns and the only thing it will ever run is
+`ssh -t <host>` with a `cd`+`tmux`+`claude|codex` command line.
+```
+
+- [ ] **Step 4:** `go test ./...` (sanity) → PASS. `sh -n scripts/install-iterm2.sh` → clean. `python3 -m py_compile scripts/iterm2/sm_open_window.py` → clean (compile only; the iterm2 module exists only on the Mac).
+- [ ] **Step 5: Commit** `feat(iterm2): AutoLaunch bridge script, one-command installer, README`

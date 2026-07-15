@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
+	"github.com/dukechain2333/ai-sessions-manager/internal/iterm2"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
@@ -55,6 +57,11 @@ type (
 	}
 	agentExitMsg struct{ err error }
 
+	// silentDoneMsg reports a fire-and-forget command (tmux new-window /
+	// select-window) finishing. Unlike agentExitMsg there is no ExecProcess —
+	// the TUI never suspended.
+	silentDoneMsg struct{ err error }
+
 	tmuxTickMsg struct{}
 	tmuxListMsg struct{ set map[string]bool }
 )
@@ -80,6 +87,8 @@ type Model struct {
 	tmuxEnabled bool
 	tmux        tmux.Runner
 	tmuxLive    map[string]bool
+	openIn      string // config.OpenInCurrent or config.OpenInWindow
+	iterm2Host  string
 	st          styles
 
 	list        listPane
@@ -110,9 +119,11 @@ type Model struct {
 	ready         bool
 
 	// injected for tests
-	trashFn func(store.Session) (string, error)
-	runCmd  func(name, dir string, args ...string) tea.Cmd
-	bell    tea.Cmd
+	trashFn   func(store.Session) (string, error)
+	runCmd    func(name, dir string, args ...string) tea.Cmd
+	runSilent func(name, dir string, args ...string) tea.Cmd
+	emitSeq   func(string) tea.Cmd
+	bell      tea.Cmd
 
 	// mouse double-click tracking; now is injected for tests
 	lastClickZone zone
@@ -164,6 +175,8 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		pendingDelete: -1,
 		providers:     provs,
 		tmuxEnabled:   cfg.TmuxEnabled,
+		openIn:        cfg.OpenIn,
+		iterm2Host:    cfg.ITerm2SSH,
 		tmux:          tmux.Exec{},
 		trashFn: func(s store.Session) (string, error) {
 			p := store.ProviderFor(provs, s.Agent)
@@ -173,6 +186,8 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 			return p.Trash(s)
 		},
 		runCmd:       execCmd,
+		runSilent:    execSilent,
+		emitSeq:      emitEscape,
 		bell:         ringBell,
 		lastClickRow: -1,
 		now:          time.Now,
@@ -187,6 +202,22 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		ret.dialog = dialogError
 		ret.errText = "tmux integration is enabled but tmux was not found on PATH"
 	}
+	// iTerm2 window mode is exempt: it needs no local tmux client — the
+	// launches ssh back and tmux (if tracking is on) runs in that new
+	// connection; tracking degradation is handled by the tmuxEnabled block
+	// above.
+	if ret.openIn == config.OpenInWindow && !tmuxLookPath() && !((ret.iterm2Host != "" || !overSSH()) && iTerm2Env()) {
+		ret.openIn = config.OpenInCurrent
+		ret.dialog = dialogError
+		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
+	}
+	// Best-effort: if sm ends up attached inside tmux while iTerm2 window
+	// mode is configured (e.g. a plain, non-wrapped attach), let the emitted
+	// control sequences pass through the pane to the terminal instead of
+	// being swallowed by tmux.
+	if ret.openIn == config.OpenInWindow && (ret.iterm2Host != "" || !overSSH()) && iTerm2Env() && insideTmux() {
+		_ = exec.Command("tmux", "set-option", "-p", "allow-passthrough", "on").Run()
+	}
 	return ret
 }
 
@@ -194,6 +225,25 @@ func execCmd(name, dir string, args ...string) tea.Cmd {
 	c := exec.Command(name, args...)
 	c.Dir = dir
 	return tea.ExecProcess(c, func(err error) tea.Msg { return agentExitMsg{err} })
+}
+
+// execSilent runs a quick command without suspending the TUI the way
+// execCmd's ExecProcess does — for tmux new-window and friends, which
+// return immediately while the agent keeps running in its window.
+func execSilent(name, dir string, args ...string) tea.Cmd {
+	c := exec.Command(name, args...)
+	c.Dir = dir
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	return func() tea.Msg {
+		err := c.Run()
+		if err != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				err = fmt.Errorf("%v: %s", err, msg)
+			}
+		}
+		return silentDoneMsg{err: err}
+	}
 }
 
 // ringBell writes the terminal BEL to stderr — not stdout, which is Bubble
@@ -204,10 +254,62 @@ func ringBell() tea.Msg {
 	return nil
 }
 
+// emitEscape writes a control sequence to stderr — the tty, not Bubble
+// Tea's stdout frame — same reasoning as ringBell.
+func emitEscape(seq string) tea.Cmd {
+	return func() tea.Msg {
+		fmt.Fprint(os.Stderr, seq)
+		return nil
+	}
+}
+
+// iterm2Windows reports whether window-mode launches go through the
+// local iTerm2 AutoLaunch script instead of tmux windows: explicit
+// config opt-in plus a detected iTerm2.
+func (m Model) iterm2Windows() bool {
+	if m.openIn != config.OpenInWindow || !iTerm2Env() {
+		return false
+	}
+	// Local runs need no destination — the bridge executes directly; over
+	// ssh the new window must dial back, so iterm2.ssh is required.
+	return !overSSH() || m.iterm2Host != ""
+}
+
+// iterm2SSHHost is the payload host: the configured dial-back destination
+// over ssh, empty for local runs (the bridge executes directly).
+func (m Model) iterm2SSHHost() string {
+	if overSSH() {
+		return m.iterm2Host
+	}
+	return ""
+}
+
 // tmuxLookPath reports whether tmux is on PATH; overridable in tests.
 var tmuxLookPath = func() bool {
 	_, err := exec.LookPath("tmux")
 	return err == nil
+}
+
+// insideTmux reports whether sm itself runs inside a tmux client — the
+// precondition for open_in "window", which targets the attached session.
+// Overridable in tests.
+var insideTmux = func() bool {
+	return os.Getenv("TMUX") != ""
+}
+
+// iTerm2Env reports whether the terminal is iTerm2, recognized by the
+// LC_TERMINAL it forwards over ssh. Overridable in tests.
+var iTerm2Env = func() bool {
+	return os.Getenv("LC_TERMINAL") == "iTerm2"
+}
+
+// overSSH reports whether sm runs on the far side of an ssh connection —
+// then iTerm2 launches must dial back (iterm2.ssh required); locally the
+// bridge runs commands directly. Checks all three sshd markers so an rc
+// file scrubbing one of them cannot flip a remote sm into (broken) local
+// mode. Overridable in tests.
+var overSSH = func() bool {
+	return os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_TTY") != ""
 }
 
 // binLookPath reports an error when an agent binary (claude/codex) is not on
@@ -216,6 +318,37 @@ var tmuxLookPath = func() bool {
 var binLookPath = func(bin string) error {
 	_, err := exec.LookPath(bin)
 	return err
+}
+
+// binDir resolves the directory holding an agent binary using sm's own
+// (interactive-shell) PATH — the iTerm2 bridge prepends it remotely, where
+// sshd's bare PATH would otherwise miss it. "" when unresolvable.
+// Overridable in tests.
+var binDir = func(bin string) string {
+	p, err := exec.LookPath(bin)
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(p)
+}
+
+// launchErr reports why launching p cannot proceed right now ("" = it can):
+// the agent binary is missing, or open_in "window" lacks its tmux
+// preconditions. Checked at launch time, not startup, so a config problem
+// only bites the action that needs it.
+func (m Model) launchErr(p store.Provider) string {
+	if err := binLookPath(p.Binary()); err != nil {
+		return p.Binary() + " not found on PATH"
+	}
+	if m.openIn == config.OpenInWindow && !m.iterm2Windows() {
+		if !tmuxLookPath() {
+			return `open_in "window" requires tmux on PATH`
+		}
+		if !insideTmux() {
+			return `open_in "window" requires running sm inside tmux`
+		}
+	}
+	return ""
 }
 
 func (m Model) Init() tea.Cmd {
@@ -803,6 +936,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.scanCmd()
 
+	case silentDoneMsg:
+		if msg.err != nil {
+			m.dialog = dialogError
+			m.errText = "tmux window failed: " + msg.err.Error()
+		}
+		if m.tmuxEnabled {
+			return m, tea.Batch(m.scanCmd(), m.refreshTmuxCmd())
+		}
+		return m, m.scanCmd()
+
 	case tmuxTickMsg:
 		if !m.tmuxEnabled {
 			return m, nil
@@ -1053,24 +1196,86 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// runAgentCmd launches an agent, wrapping it in tmux when integration is on.
-// resume != nil resumes that session; resume == nil starts a new session with
-// p in cwd.
+// runAgentCmd launches an agent. resume != nil resumes that session;
+// resume == nil starts a new session with p in cwd. open_in decides where it
+// opens (current terminal vs new tmux window); tmux.enabled decides whether
+// the launch carries an sm- name and is therefore tracked. A live tracked
+// tmux always wins: enter jumps to it instead of creating a second one.
 func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) tea.Cmd {
 	if resume != nil {
 		name, args := p.ResumeCommand(*resume)
+		sess := tmux.Name(string(resume.Agent), tmux.Short(resume.ID))
+		if m.tmuxEnabled && m.tmuxLive[sess] {
+			return m.attachLiveCmd(sess, cwd, name, args)
+		}
+		if m.openIn == config.OpenInWindow {
+			if m.iterm2Windows() {
+				l := iterm2.Launch{Host: m.iterm2SSHHost(), Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
+				if m.tmuxEnabled {
+					l.Name, l.Tmux = sess, true
+				}
+				return m.emitSeq(iterm2.Sequence(l, insideTmux()))
+			}
+			win := ""
+			if m.tmuxEnabled {
+				win = sess
+			}
+			return m.runSilent("tmux", cwd, tmux.WindowArgs(win, cwd, name, args)...)
+		}
 		if m.tmuxEnabled {
-			sess := tmux.Name(string(resume.Agent), tmux.Short(resume.ID))
 			return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, name, args)...)
 		}
 		return m.runCmd(name, cwd, args...)
 	}
 	name, args := p.NewCommand()
+	if m.openIn == config.OpenInWindow {
+		if m.iterm2Windows() {
+			l := iterm2.Launch{Host: m.iterm2SSHHost(), Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
+			if m.tmuxEnabled {
+				l.Name, l.Tmux = tmux.PendingName(string(p.Agent()), m.now().UnixNano()), true
+			}
+			return m.emitSeq(iterm2.Sequence(l, insideTmux()))
+		}
+		win := ""
+		if m.tmuxEnabled {
+			win = tmux.PendingName(string(p.Agent()), m.now().UnixNano())
+		}
+		return m.runSilent("tmux", cwd, tmux.WindowArgs(win, cwd, name, args)...)
+	}
 	if m.tmuxEnabled {
 		pend := tmux.PendingName(string(p.Agent()), m.now().UnixNano())
 		return m.runCmd("tmux", cwd, tmux.NewArgs(pend, cwd, name, args)...)
 	}
 	return m.runCmd(name, cwd, args...)
+}
+
+// attachLiveCmd jumps to the live tmux backing sess. Window form: select the
+// window and switch the client to its owning session (a same-session switch
+// is a no-op); when sm itself runs outside tmux, attach the terminal to that
+// session instead. The ";" argv element is tmux's command separator, so both
+// steps ride one invocation. Session form: inside tmux, switch the client to
+// the live session — new-session -A would refuse to nest and, because
+// agentExitMsg swallows ExitError as a normal agent exit, the refusal dies
+// silently; outside tmux it attaches via new-session -A as before.
+func (m Model) attachLiveCmd(sess, cwd, agentName string, agentArgs []string) tea.Cmd {
+	if m.iterm2Windows() {
+		// Only the session form can be attach-session'd by the remote end
+		// of a fresh ssh. A window-form live tmux (legacy of the
+		// tmux-window mechanism) falls through to the local jump below.
+		if _, _, ok := m.tmux.Window(sess); !ok {
+			return m.emitSeq(iterm2.Sequence(iterm2.Launch{Host: m.iterm2SSHHost(), Name: sess, Attach: true}, insideTmux()))
+		}
+	}
+	if id, owner, ok := m.tmux.Window(sess); ok {
+		if insideTmux() {
+			return m.runSilent("tmux", cwd, "select-window", "-t", id, ";", "switch-client", "-t", owner)
+		}
+		return m.runCmd("tmux", cwd, "select-window", "-t", id, ";", "attach-session", "-t", owner)
+	}
+	if insideTmux() {
+		return m.runSilent("tmux", cwd, "switch-client", "-t", "="+sess)
+	}
+	return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, agentName, agentArgs)...)
 }
 
 func (m Model) startResume() (tea.Model, tea.Cmd) {
@@ -1090,9 +1295,9 @@ func (m Model) startResume() (tea.Model, tea.Cmd) {
 		m.errText = "no handler for agent " + s.Agent.Label()
 		return m, nil
 	}
-	if err := binLookPath(p.Binary()); err != nil {
+	if msg := m.launchErr(p); msg != "" {
 		m.dialog = dialogError
-		m.errText = p.Binary() + " not found on PATH"
+		m.errText = msg
 		return m, nil
 	}
 	return m, m.runAgentCmd(p, s.CWD, &s)
@@ -1112,9 +1317,9 @@ func (m Model) openNewSession() (tea.Model, tea.Cmd) {
 // launchDirectly starts a new session with provider p in dir, gated on the
 // agent binary being on PATH.
 func (m Model) launchDirectly(p store.Provider, dir string) (Model, tea.Cmd) {
-	if err := binLookPath(p.Binary()); err != nil {
+	if msg := m.launchErr(p); msg != "" {
 		m.dialog = dialogError
-		m.errText = p.Binary() + " not found on PATH"
+		m.errText = msg
 		return m, nil
 	}
 	return m, m.runAgentCmd(p, dir, nil)
@@ -1240,9 +1445,9 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errText = "no handler for agent " + pending.Agent.Label()
 					return m, nil
 				}
-				if err := binLookPath(p.Binary()); err != nil {
+				if msg := m.launchErr(p); msg != "" {
 					m.dialog = dialogError
-					m.errText = p.Binary() + " not found on PATH"
+					m.errText = msg
 					return m, nil
 				}
 				return m, m.runAgentCmd(p, dir, pending)

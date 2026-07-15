@@ -65,6 +65,19 @@ func TestNewArgs(t *testing.T) {
 	}
 }
 
+func TestWindowArgs(t *testing.T) {
+	got := WindowArgs("sm-claude-s1", "/x/alpha", "claude", []string{"--resume", "s1"})
+	want := []string{"new-window", "-c", "/x/alpha", "-n", "sm-claude-s1", "claude", "--resume", "s1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("WindowArgs named = %v", got)
+	}
+	got = WindowArgs("", "/x/beta", "codex", nil)
+	want = []string{"new-window", "-c", "/x/beta", "codex"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("WindowArgs unnamed = %v", got)
+	}
+}
+
 func TestParseList(t *testing.T) {
 	out := "sm-claude-s1\nother-session\nsm-codex-pending-9\n\n"
 	got := parseList(out)
@@ -76,5 +89,59 @@ func TestParseList(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Errorf("parseList size = %d, want 2", len(got))
+	}
+}
+
+func TestParseWindows(t *testing.T) {
+	out := "@1\tmain\tsm-claude-s1\n@2\tmain\tvim\n@3\twork\tsm-codex-pending-9\n\n"
+	got := parseWindows(out)
+	if w := got["sm-claude-s1"]; w != [2]string{"@1", "main"} {
+		t.Errorf("sm-claude-s1 = %v, want {@1 main}", w)
+	}
+	if w := got["sm-codex-pending-9"]; w != [2]string{"@3", "work"} {
+		t.Errorf("sm-codex-pending-9 = %v, want {@3 work}", w)
+	}
+	if _, ok := got["vim"]; ok {
+		t.Error("parseWindows should drop non-sm window names")
+	}
+	if len(got) != 2 {
+		t.Errorf("parseWindows size = %d, want 2", len(got))
+	}
+}
+
+func TestSelfWrapArgs(t *testing.T) {
+	self := []string{"/usr/local/bin/sm", "--config", "/x/c.json"}
+	got := SelfWrapArgs(self, "/work", false, "")
+	want := []string{"new-session", "-A", "-s", "sm", "-n", "sm", "-c", "/work",
+		"/usr/local/bin/sm", "--config", "/x/c.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("fresh session = %v", got)
+	}
+	got = SelfWrapArgs(self, "", false, "")
+	want = []string{"new-session", "-A", "-s", "sm", "-n", "sm",
+		"/usr/local/bin/sm", "--config", "/x/c.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("empty cwd must drop -c, got %v", got)
+	}
+	got = SelfWrapArgs(self, "/work", true, "@3")
+	want = []string{"select-window", "-t", "@3", ";", "attach-session", "-t", "=sm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("reattach = %v", got)
+	}
+	got = SelfWrapArgs(self, "/work", true, "")
+	want = []string{"new-window", "-t", "=sm:", "-n", "sm", "-c", "/work",
+		"/usr/local/bin/sm", "--config", "/x/c.json", ";", "attach-session", "-t", "=sm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("respawn = %v", got)
+	}
+}
+
+func TestParseSelfWindow(t *testing.T) {
+	out := "@1\tvim\n@2\tsm\n"
+	if got := parseSelfWindow(out); got != "@2" {
+		t.Errorf("parseSelfWindow = %q, want @2", got)
+	}
+	if got := parseSelfWindow("@1\tother\n\n"); got != "" {
+		t.Errorf("no sm window should yield empty, got %q", got)
 	}
 }

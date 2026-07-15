@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -12,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
+	"github.com/dukechain2333/ai-sessions-manager/internal/iterm2"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
 )
@@ -461,6 +464,7 @@ func TestFocusedBorderAndLabelColorFollowAgent(t *testing.T) {
 
 type fakeTmux struct {
 	live    map[string]bool
+	windows map[string][2]string // window name → {window id, session name}
 	paths   map[string]string
 	killed  []string
 	renamed [][2]string
@@ -484,6 +488,14 @@ func (f *fakeTmux) Rename(from, to string) error {
 	f.live[to] = true
 	f.renamed = append(f.renamed, [2]string{from, to})
 	return nil
+}
+
+func (f *fakeTmux) Window(name string) (string, string, bool) {
+	w, ok := f.windows[name]
+	if !ok {
+		return "", "", false
+	}
+	return w[0], w[1], true
 }
 
 func TestAdoptRenamesNewestMatch(t *testing.T) {
@@ -945,5 +957,431 @@ func TestKillProjectScopedToActiveView(t *testing.T) {
 	m.killProjectCmd("alpha", m.list.Agent())()
 	if ft.live[codexName] {
 		t.Error("the mixed list's project kill should cover both agents")
+	}
+}
+
+func TestWindowModeOutsideTmuxErrors(t *testing.T) {
+	origIn, origLook := insideTmux, tmuxLookPath
+	insideTmux = func() bool { return false }
+	tmuxLookPath = func() bool { return true }
+	defer func() { insideTmux, tmuxLookPath = origIn, origLook }()
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	m = m2.(Model)
+	if m.dialog != dialogError || !strings.Contains(m.errText, "inside tmux") {
+		t.Errorf("dialog=%v errText=%q, want error mentioning inside tmux", m.dialog, m.errText)
+	}
+}
+
+func TestWindowModeNeedsTmuxOnPath(t *testing.T) {
+	origIn, origLook := insideTmux, tmuxLookPath
+	insideTmux = func() bool { return true }
+	tmuxLookPath = func() bool { return false }
+	defer func() { insideTmux, tmuxLookPath = origIn, origLook }()
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	m = m2.(Model)
+	if m.dialog != dialogError || !strings.Contains(m.errText, "tmux on PATH") {
+		t.Errorf("dialog=%v errText=%q, want error mentioning tmux on PATH", m.dialog, m.errText)
+	}
+}
+
+func TestNewCarriesOpenInFromConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInWindow {
+		t.Errorf("openIn = %q, want window", m.openIn)
+	}
+}
+
+// newWindowModel is newTestModel in open_in "window" mode: tmux preconditions
+// stubbed true, runSilent captured, runCmd trapped (window mode must never
+// suspend the TUI via ExecProcess).
+func newWindowModel(t *testing.T) (Model, *[]string) {
+	t.Helper()
+	origIn, origLook := insideTmux, tmuxLookPath
+	insideTmux = func() bool { return true }
+	tmuxLookPath = func() bool { return true }
+	t.Cleanup(func() { insideTmux, tmuxLookPath = origIn, origLook })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	captured := &[]string{}
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("window mode must not suspend via runCmd: %s %s %v", name, dir, args)
+		return nil
+	}
+	m.now = func() time.Time { return time.Unix(0, 1234) }
+	return m, captured
+}
+
+func TestResumeWindowModeTracked(t *testing.T) {
+	m, cap := newWindowModel(t)
+	m.tmuxEnabled = true
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "new-window -c "+dir+" -n sm-claude-s1 claude --resume s1") {
+		t.Errorf("tracked window resume argv = %v", *cap)
+	}
+}
+
+func TestResumeWindowModeUntracked(t *testing.T) {
+	m, cap := newWindowModel(t) // tmuxEnabled stays false
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "new-window -c "+dir+" claude --resume s1") {
+		t.Errorf("untracked window resume argv = %v", *cap)
+	}
+	if strings.Contains(joined, "-n sm-") {
+		t.Error("untracked window must not carry an sm- name")
+	}
+}
+
+func TestNewSessionWindowModePending(t *testing.T) {
+	m, cap := newWindowModel(t)
+	m.tmuxEnabled = true
+	m.launchNewSession("/x/alpha") // single provider (claude-only test model)
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "new-window -c /x/alpha -n sm-claude-pending-1234 claude") {
+		t.Errorf("pending window new argv = %v", *cap)
+	}
+}
+
+func TestNewSessionWindowModeUntracked(t *testing.T) {
+	m, cap := newWindowModel(t) // tmuxEnabled stays false
+	m.launchNewSession("/x/alpha")
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "new-window -c /x/alpha claude") {
+		t.Errorf("untracked window new argv = %v", *cap)
+	}
+	if strings.Contains(joined, "-n sm-") {
+		t.Error("untracked window must not carry an sm- name")
+	}
+}
+
+func TestSilentFailureShowsErrorAndRefreshes(t *testing.T) {
+	m := newTestModel()
+	m2, cmd := m.Update(silentDoneMsg{err: errors.New("boom")})
+	m = m2.(Model)
+	if m.dialog != dialogError || !strings.Contains(m.errText, "boom") {
+		t.Errorf("dialog=%v errText=%q, want error containing boom", m.dialog, m.errText)
+	}
+	if cmd == nil {
+		t.Error("expected a non-nil rescan/refresh cmd after a failed silentDoneMsg")
+	}
+	m = newTestModel()
+	m2, cmd = m.Update(silentDoneMsg{})
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Errorf("clean exit should not raise a dialog, got %v", m.dialog)
+	}
+	if cmd == nil {
+		t.Error("expected a non-nil rescan/refresh cmd after a clean silentDoneMsg")
+	}
+}
+
+func TestEnterLiveWindowJumpsInsideTmux(t *testing.T) {
+	m, cap := newWindowModel(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{windows: map[string][2]string{"sm-claude-s1": {"@7", "main"}}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "select-window -t @7 ; switch-client -t main") {
+		t.Errorf("live window jump argv = %v", *cap)
+	}
+}
+
+// Jumping to a live window must work regardless of open_in — here the config
+// says "current", sm runs outside tmux, and enter still lands in the window
+// by attaching the terminal to its owning session.
+func TestEnterLiveWindowAttachesOutsideTmux(t *testing.T) {
+	origIn := insideTmux
+	insideTmux = func() bool { return false }
+	defer func() { insideTmux = origIn }()
+	m := newTestModel() // openIn stays "current"
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{windows: map[string][2]string{"sm-claude-s1": {"@7", "main"}}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*captured, " ")
+	if !strings.Contains(joined, "select-window -t @7 ; attach-session -t main") {
+		t.Errorf("outside-tmux window jump argv = %v", *captured)
+	}
+}
+
+// A live session-form tmux must attach (new-session -A) even in window mode:
+// creating a window with the same sm- name would fork the id across two
+// tmux entities.
+// A live session-form tmux, with sm inside tmux (the normal state now that
+// open_in "window" auto-wraps sm), must switch the client — new-session -A
+// would refuse to nest and die silently.
+func TestEnterLiveSessionFormSwitchesClientInsideTmux(t *testing.T) {
+	m, cap := newWindowModel(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}} // no windows
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*cap, " ")
+	if !strings.Contains(joined, "switch-client -t =sm-claude-s1") {
+		t.Errorf("live session-form inside tmux argv = %v", *cap)
+	}
+}
+
+// Outside tmux the session form still attaches via new-session -A, exactly
+// as before the auto-wrap existed.
+func TestEnterLiveSessionFormAttachesOutsideTmux(t *testing.T) {
+	origIn := insideTmux
+	insideTmux = func() bool { return false }
+	defer func() { insideTmux = origIn }()
+	m := newTestModel() // open_in "current": the jump is mode-independent
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	joined := strings.Join(*captured, " ")
+	if !strings.Contains(joined, "new-session -A -s sm-claude-s1") {
+		t.Errorf("live session-form outside tmux argv = %v", *captured)
+	}
+}
+
+func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
+	orig := tmuxLookPath
+	tmuxLookPath = func() bool { return false }
+	defer func() { tmuxLookPath = orig }()
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInCurrent {
+		t.Errorf("openIn = %q, want fallback to current", m.openIn)
+	}
+	if m.dialog != dialogError || !strings.Contains(m.errText, "tmux on PATH") {
+		t.Errorf("expected startup error dialog, got dialog=%v err=%q", m.dialog, m.errText)
+	}
+}
+
+// The startup tmux-on-PATH downgrade must not disable the iTerm2 mechanism:
+// iTerm2 window mode runs sm plain, with no local tmux client involved.
+func TestITerm2WindowModeSurvivesMissingTmuxAtStartup(t *testing.T) {
+	origLook, origIT := tmuxLookPath, iTerm2Env
+	tmuxLookPath = func() bool { return false }
+	iTerm2Env = func() bool { return true }
+	defer func() { tmuxLookPath, iTerm2Env = origLook, origIT }()
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	cfg.ITerm2SSH = "myhost"
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInWindow {
+		t.Errorf("openIn = %q, want window preserved", m.openIn)
+	}
+	if !m.iterm2Windows() {
+		t.Error("iterm2Windows() must stay active without local tmux")
+	}
+}
+
+// Running sm inside a PLAIN (non -CC) tmux attach on iTerm2 silently gives
+// in-terminal tmux windows where the user expects native ones — the client's
+// control mode was fixed at attach time and cannot be upgraded. sm must say
+// so instead of looking broken.
+// newITerm2Model is a window-mode model with the iTerm2 mechanism active:
+// iterm2.ssh configured, LC_TERMINAL detected, outside tmux, and both
+// runners trapped — iTerm2 launches must not run anything, only emit.
+func newITerm2Model(t *testing.T) (Model, *[]string) {
+	t.Helper()
+	origIn, origIT := insideTmux, iTerm2Env
+	insideTmux = func() bool { return false }
+	iTerm2Env = func() bool { return true }
+	t.Cleanup(func() { insideTmux, iTerm2Env = origIn, origIT })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	m.iterm2Host = "myhost"
+	seqs := &[]string{}
+	m.emitSeq = func(seq string) tea.Cmd { *seqs = append(*seqs, seq); return nil }
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("iTerm2 mode must not runCmd: %s %v", name, args)
+		return nil
+	}
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("iTerm2 mode must not runSilent: %s %v", name, args)
+		return nil
+	}
+	m.now = func() time.Time { return time.Unix(0, 1234) }
+	return m, seqs
+}
+
+func decodeLaunch(t *testing.T, seq string) iterm2.Launch {
+	t.Helper()
+	const pre = "\x1b]1337;Custom=id=sm:"
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(seq, pre), "\a"))
+	if err != nil {
+		t.Fatalf("cannot decode %q: %v", seq, err)
+	}
+	var l iterm2.Launch
+	if err := json.Unmarshal(raw, &l); err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+func TestResumeITerm2EmitsTrackedLaunch(t *testing.T) {
+	m, seqs := newITerm2Model(t)
+	m.tmuxEnabled = true
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %v", *seqs)
+	}
+	l := decodeLaunch(t, (*seqs)[0])
+	if l.Host != "myhost" || l.Dir != dir || l.Name != "sm-claude-s1" || !l.Tmux ||
+		l.Attach || len(l.Argv) < 2 || l.Argv[0] != "claude" {
+		t.Errorf("launch = %+v", l)
+	}
+}
+
+func TestEnterLiveITerm2EmitsAttach(t *testing.T) {
+	m, seqs := newITerm2Model(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %v", *seqs)
+	}
+	l := decodeLaunch(t, (*seqs)[0])
+	if !l.Attach || l.Name != "sm-claude-s1" || l.Host != "myhost" {
+		t.Errorf("attach launch = %+v", l)
+	}
+}
+
+func TestITerm2SkipsWindowTmuxPreconditions(t *testing.T) {
+	origLook := tmuxLookPath
+	tmuxLookPath = func() bool { return true } // irrelevant; insideTmux=false is the check
+	defer func() { tmuxLookPath = origLook }()
+	m, seqs := newITerm2Model(t) // outside tmux — would error without iTerm2 mechanism
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	m = m2.(Model)
+	if m.dialog == dialogError {
+		t.Fatalf("iTerm2 mode must skip inside-tmux precondition, got %q", m.errText)
+	}
+	if len(*seqs) != 1 {
+		t.Errorf("expected an emitted sequence, got %v", *seqs)
+	}
+}
+
+// A live *window-form* tmux (legacy of the tmux-window mechanism) cannot be
+// attach-session'd remotely; the iTerm2 mechanism must fall back to the
+// local jump instead of emitting a broken Attach payload.
+func TestEnterLiveWindowFormITerm2FallsBackToLocalJump(t *testing.T) {
+	m, seqs := newITerm2Model(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{windows: map[string][2]string{"sm-claude-s1": {"@7", "sm"}}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	captured := &[]string{}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd { // replace the trap
+		*captured = append([]string{name, dir}, args...)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 0 {
+		t.Errorf("window-form live must not emit iTerm2 payloads, got %v", *seqs)
+	}
+	joined := strings.Join(*captured, " ")
+	if !strings.Contains(joined, "select-window -t @7 ; attach-session -t sm") {
+		t.Errorf("expected local window jump, got %v", *captured)
+	}
+}
+
+// A local (non-SSH) iTerm2 user needs zero config beyond mode "window": the
+// payload carries no host and the bridge runs the command locally.
+func TestITerm2LocalModeNeedsNoHost(t *testing.T) {
+	origIn, origIT, origSSH := insideTmux, iTerm2Env, overSSH
+	insideTmux = func() bool { return false }
+	iTerm2Env = func() bool { return true }
+	overSSH = func() bool { return false }
+	t.Cleanup(func() { insideTmux, iTerm2Env, overSSH = origIn, origIT, origSSH })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow // iterm2Host stays ""
+	m.tmuxEnabled = true
+	seqs := &[]string{}
+	m.emitSeq = func(seq string) tea.Cmd { *seqs = append(*seqs, seq); return nil }
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("local iTerm2 mode must emit, not runSilent: %s %v", name, args)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %d", len(*seqs))
+	}
+	l := decodeLaunch(t, (*seqs)[0])
+	if l.Host != "" || l.Name != "sm-claude-s1" || !l.Tmux {
+		t.Errorf("local launch = %+v, want empty host", l)
+	}
+}
+
+// Over SSH the host is mandatory: without iterm2.ssh the mechanism stays
+// off and window mode falls back to the tmux path.
+func TestITerm2OverSSHRequiresHost(t *testing.T) {
+	origIT, origSSH := iTerm2Env, overSSH
+	iTerm2Env = func() bool { return true }
+	overSSH = func() bool { return true }
+	t.Cleanup(func() { iTerm2Env, overSSH = origIT, origSSH })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	if m.iterm2Windows() {
+		t.Error("no host over SSH must disable the iTerm2 mechanism")
 	}
 }
