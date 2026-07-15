@@ -961,10 +961,11 @@ func TestKillProjectScopedToActiveView(t *testing.T) {
 }
 
 func TestWindowModeOutsideTmuxErrors(t *testing.T) {
-	origIn, origLook := insideTmux, tmuxLookPath
+	origIn, origLook, origIT := insideTmux, tmuxLookPath, iTerm2Env
 	insideTmux = func() bool { return false }
 	tmuxLookPath = func() bool { return true }
-	defer func() { insideTmux, tmuxLookPath = origIn, origLook }()
+	iTerm2Env = func() bool { return false } // pin: local iTerm2 mode would skip these checks
+	defer func() { insideTmux, tmuxLookPath, iTerm2Env = origIn, origLook, origIT }()
 	m := newTestModel()
 	m.openIn = config.OpenInWindow
 	dir := t.TempDir()
@@ -978,10 +979,11 @@ func TestWindowModeOutsideTmuxErrors(t *testing.T) {
 }
 
 func TestWindowModeNeedsTmuxOnPath(t *testing.T) {
-	origIn, origLook := insideTmux, tmuxLookPath
+	origIn, origLook, origIT := insideTmux, tmuxLookPath, iTerm2Env
 	insideTmux = func() bool { return true }
 	tmuxLookPath = func() bool { return false }
-	defer func() { insideTmux, tmuxLookPath = origIn, origLook }()
+	iTerm2Env = func() bool { return false } // pin: local iTerm2 mode would skip these checks
+	defer func() { insideTmux, tmuxLookPath, iTerm2Env = origIn, origLook, origIT }()
 	m := newTestModel()
 	m.openIn = config.OpenInWindow
 	dir := t.TempDir()
@@ -1008,10 +1010,13 @@ func TestNewCarriesOpenInFromConfig(t *testing.T) {
 // suspend the TUI via ExecProcess).
 func newWindowModel(t *testing.T) (Model, *[]string) {
 	t.Helper()
-	origIn, origLook := insideTmux, tmuxLookPath
+	origIn, origLook, origIT := insideTmux, tmuxLookPath, iTerm2Env
 	insideTmux = func() bool { return true }
 	tmuxLookPath = func() bool { return true }
-	t.Cleanup(func() { insideTmux, tmuxLookPath = origIn, origLook })
+	// Pin non-iTerm2: with a real LC_TERMINAL and no ssh, local iTerm2 mode
+	// would hijack these tmux-window-path tests.
+	iTerm2Env = func() bool { return false }
+	t.Cleanup(func() { insideTmux, tmuxLookPath, iTerm2Env = origIn, origLook, origIT })
 	m := newTestModel()
 	m.openIn = config.OpenInWindow
 	captured := &[]string{}
@@ -1186,9 +1191,10 @@ func TestEnterLiveSessionFormAttachesOutsideTmux(t *testing.T) {
 }
 
 func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
-	orig := tmuxLookPath
+	orig, origIT := tmuxLookPath, iTerm2Env
 	tmuxLookPath = func() bool { return false }
-	defer func() { tmuxLookPath = orig }()
+	iTerm2Env = func() bool { return false } // pin: a real LC_TERMINAL would exempt the downgrade
+	defer func() { tmuxLookPath, iTerm2Env = orig, origIT }()
 	cfg := config.Default()
 	cfg.OpenIn = config.OpenInWindow
 	m := New("/nope", "/nope", cfg)
@@ -1228,10 +1234,13 @@ func TestITerm2WindowModeSurvivesMissingTmuxAtStartup(t *testing.T) {
 // runners trapped — iTerm2 launches must not run anything, only emit.
 func newITerm2Model(t *testing.T) (Model, *[]string) {
 	t.Helper()
-	origIn, origIT := insideTmux, iTerm2Env
+	origIn, origIT, origSSH := insideTmux, iTerm2Env, overSSH
 	insideTmux = func() bool { return false }
 	iTerm2Env = func() bool { return true }
-	t.Cleanup(func() { insideTmux, iTerm2Env = origIn, origIT })
+	// Pin the over-ssh path: payload hosts depend on it, and the real env
+	// differs between an ssh-connected dev box and a CI runner.
+	overSSH = func() bool { return true }
+	t.Cleanup(func() { insideTmux, iTerm2Env, overSSH = origIn, origIT, origSSH })
 	m := newTestModel()
 	m.openIn = config.OpenInWindow
 	m.iterm2Host = "myhost"
