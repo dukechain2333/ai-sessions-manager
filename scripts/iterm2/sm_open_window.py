@@ -49,7 +49,10 @@ def remote_command(spec):
             d=shlex.quote(dir_), n=shlex.quote(name), i=inner)
     else:
         cmd = "cd {d} && exec {i}".format(d=shlex.quote(dir_), i=inner)
-    return host, name or inner, cmd
+    # Dedupe key: tracked launches have a unique tmux name; untracked ones
+    # must include dir, or every untracked "new session" (bare agent argv)
+    # would collide on one window across all projects.
+    return host, name or (dir_ + " " + inner), cmd
 
 
 async def handle(connection, payload):
