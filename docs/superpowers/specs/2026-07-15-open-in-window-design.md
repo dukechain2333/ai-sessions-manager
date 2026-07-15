@@ -170,7 +170,30 @@ launches to open real windows. That requires a component on the local Mac;
 iTerm2's supported mechanism is a **custom control sequence** handled by an
 AutoLaunch Python-API script.
 
-Design (explicit opt-in via `"iterm2": { "ssh": "<host>" }` in config):
+Config shape (revised after live testing): the iTerm2 options nest under
+`open_in`, which accepts either the plain mode string or an object —
+
+```json
+"open_in": { "mode": "window", "iterm2": { "ssh": "generalserver" } }
+```
+
+`"open_in": "window"` (bare string) stays accepted as shorthand. The default
+file ships `mode: "current"` with an empty `iterm2.ssh`.
+
+**Local (non-SSH) users need zero extra config**: when sm is not running
+over SSH (`$SSH_CONNECTION` empty), the payload carries no host and the
+bridge types the command straight into a local shell window — no sshd
+required (rejected alternative: ssh-to-self at 127.0.0.1, which breaks out
+of the box because macOS Remote Login defaults to off). Over SSH,
+`iterm2.ssh` is required for the mechanism; without it sm falls back to the
+tmux-window path.
+
+Shell compatibility: every generated command (remote and local) is plain
+POSIX — no zsh-isms (`=name` targets are hard-quoted) — verified against
+both zsh and bash login shells. iTerm2 is the only supported terminal for
+this mechanism, by design.
+
+Design (opt-in via config as above):
 
 - When `open_in: "window"`, `iterm2.ssh` is non-empty, and `LC_TERMINAL` is
   `iTerm2`: sm does NOT auto-wrap into tmux (section 5's wrap is skipped and
