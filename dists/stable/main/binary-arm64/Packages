@@ -1,13 +1,13 @@
 Package: ai-sessions-manager
-Version: 0.4.2
+Version: 0.5.0
 Architecture: arm64
 Maintainer: William Qian <william.z.qian@gmail.com>
-Installed-Size: 4109
-Filename: pool/main/ai-sessions-manager_0.4.2_linux_arm64.deb
-Size: 1477842
-MD5sum: 17cc6157a53cc79aa8fab25cd2de609a
-SHA1: 037a92fb21255fcc56087a10502d944572daf832
-SHA256: b5c11a3f1a3365c0d9e46ed2174d92cede5331a1ef6f0c79222b5d018f094943
+Installed-Size: 4813
+Filename: pool/main/ai-sessions-manager_0.5.0_linux_arm64.deb
+Size: 1689244
+MD5sum: ed4887d50828cdcb60671b2850b69347
+SHA1: 13cc1c27d435ac154973ff051ced80f3e3540567
+SHA256: 4419457c70a25b4c51684c37627e39341f0c56e6fd422df13f1612e943752b55
 Priority: optional
 Homepage: https://github.com/dukechain2333/ai-sessions-manager
 Description: sm — a terminal UI to browse and resume Claude Code sessions across directories, grouped by project.
