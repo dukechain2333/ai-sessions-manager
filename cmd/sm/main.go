@@ -17,7 +17,7 @@ import (
 	"github.com/dukechain2333/ai-sessions-manager/internal/ui"
 )
 
-var version = "0.5.0-beta.3"
+var version = "0.5.0"
 
 func main() {
 	// `sm ssh <destination>`: the desktop-side window-bridge helper, an
