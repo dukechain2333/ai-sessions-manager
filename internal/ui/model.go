@@ -42,6 +42,8 @@ const (
 	dialogPickAgent
 	dialogKillProject
 	dialogError
+	dialogInfo     // neutral notice (e.g. "settings saved"); any key closes
+	dialogSettings // the , settings form (settings.go)
 )
 
 type (
@@ -1254,6 +1256,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "e":
 			m.list.ToggleEmpty()
 			return m, m.loadTranscriptCmd()
+		case ",":
+			m.openSettings()
+			return m, nil
 		case "g":
 			m.list.ToggleGroup()
 			return m, m.loadTranscriptCmd()
@@ -1477,6 +1482,14 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errText = ""
 		return m, nil
 
+	case dialogInfo:
+		m.dialog = dialogNone
+		m.errText = ""
+		return m, nil
+
+	case dialogSettings:
+		return m.handleSettingsKey(msg)
+
 	case dialogDelete:
 		switch msg.String() {
 		case "y", "enter":
@@ -1615,6 +1628,13 @@ func (m Model) dialogView() string {
 		return m.st.DialogBox.Render(
 			m.st.ErrorText.Render("Error") + "\n\n" + m.errText + "\n\n" +
 				m.st.Help.Render("press any key"))
+
+	case dialogInfo:
+		return m.st.DialogBox.Render(
+			m.errText + "\n\n" + m.st.Help.Render("press any key"))
+
+	case dialogSettings:
+		return m.settingsView()
 
 	case dialogDelete:
 		title := ""
