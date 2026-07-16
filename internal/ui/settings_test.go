@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -202,5 +203,48 @@ func TestSettingsEditSeedsCurrentValue(t *testing.T) {
 	sm = m3.(Model)
 	if got := sm.setInput.Value(); got != "generalserver" {
 		t.Errorf("editor must seed with the current value, got %q", got)
+	}
+}
+
+func TestSettingsSaveWritesAndConfirms(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.configPath = "/cfg/config.json"
+	var gotPath string
+	var gotCfg config.Config
+	sm.saveConfig = func(p string, c config.Config) error { gotPath, gotCfg = p, c; return nil }
+	sm.setForm.View = "tabs"
+	m2, _ := sm.handleDialogKey(runeKey("s"))
+	sm = m2.(Model)
+	if gotPath != "/cfg/config.json" {
+		t.Errorf("saved to %q, want /cfg/config.json", gotPath)
+	}
+	if gotCfg.View != "tabs" {
+		t.Errorf("saved config = %+v, want the edited form", gotCfg)
+	}
+	if sm.dialog != dialogInfo {
+		t.Errorf("save should show the info dialog, got %v", sm.dialog)
+	}
+	if !strings.Contains(sm.errText, "restart sm") {
+		t.Errorf("confirmation should mention restarting, got %q", sm.errText)
+	}
+	if sm.cfg.View != "tabs" {
+		t.Error("m.cfg must track the saved form so reopening shows saved values")
+	}
+}
+
+func TestSettingsSaveFailureKeepsForm(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.saveConfig = func(string, config.Config) error { return errors.New("disk full") }
+	sm.setForm.View = "tabs"
+	m2, _ := sm.handleDialogKey(runeKey("s"))
+	sm = m2.(Model)
+	if sm.dialog != dialogSettings {
+		t.Errorf("failed save must keep the dialog open, got %v", sm.dialog)
+	}
+	if !strings.Contains(sm.setErr, "disk full") {
+		t.Errorf("save error must surface inline, got %q", sm.setErr)
+	}
+	if sm.setForm.View != "tabs" {
+		t.Error("failed save must preserve the form for a retry")
 	}
 }

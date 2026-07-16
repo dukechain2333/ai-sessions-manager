@@ -118,6 +118,16 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dialog = dialogNone
 		m.setErr = ""
 		return m, nil
+	case "s":
+		if err := m.saveConfig(m.configPath, m.setForm); err != nil {
+			m.setErr = "save failed: " + err.Error()
+			return m, nil
+		}
+		m.cfg = m.setForm
+		m.dialog = dialogInfo
+		m.errText = "Saved — restart sm to apply"
+		m.setErr = ""
+		return m, nil
 	case "enter", " ", "left", "right", "h", "l":
 		return m.activateSettingRow(rows[m.setCursor], msg.String())
 	}
