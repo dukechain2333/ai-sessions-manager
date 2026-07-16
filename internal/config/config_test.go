@@ -229,3 +229,60 @@ func TestLoadOpenInObjectForm(t *testing.T) {
 		t.Fatalf("string shorthand: OpenIn=%q ITerm2SSH=%q err=%v", cfg.OpenIn, cfg.ITerm2SSH, err)
 	}
 }
+
+func TestSaveRoundTrip(t *testing.T) {
+	cfg := Config{
+		TmuxEnabled: true,
+		Claude:      AgentColors{Light: "#111111", Dark: "#222222"},
+		Codex:       AgentColors{Light: "#333333", Dark: "#444444"},
+		View:        "tabs",
+		OpenIn:      OpenInWindow,
+		ITerm2SSH:   "generalserver",
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after Save: %v", err)
+	}
+	if got != cfg {
+		t.Errorf("round trip mismatch:\n got %+v\nwant %+v", got, cfg)
+	}
+}
+
+func TestSaveDefaultRoundTripsToDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Save(path, Default()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after Save: %v", err)
+	}
+	if got != Default() {
+		t.Errorf("Save(Default()) did not round-trip:\n got %+v\nwant %+v", got, Default())
+	}
+}
+
+func TestSaveCreatesParentDirs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deep", "nested", "config.json")
+	if err := Save(path, Default()); err != nil {
+		t.Fatalf("Save into missing dirs: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("file not written: %v", err)
+	}
+}
+
+func TestValidHex(t *testing.T) {
+	for s, want := range map[string]bool{
+		"#C15F3C": true, "#abcdef": true,
+		"C15F3C": false, "#C15F3": false, "#C15F3CZ": false, "": false, "#GGGGGG": false,
+	} {
+		if got := ValidHex(s); got != want {
+			t.Errorf("ValidHex(%q) = %v, want %v", s, got, want)
+		}
+	}
+}
