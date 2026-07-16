@@ -130,3 +130,77 @@ func TestSettingsBoolToggles(t *testing.T) {
 		t.Error("enter should toggle tmux back off")
 	}
 }
+
+func TestSettingsTextEditCommits(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.setCursor = 2 // iterm2 ssh
+	m2, _ := sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	if !sm.setEditing {
+		t.Fatal("enter on a text row should start editing")
+	}
+	sm.setInput.SetValue("myhost")
+	m2, _ = sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	if sm.setEditing {
+		t.Error("enter should commit and leave edit mode")
+	}
+	if sm.setForm.ITerm2SSH != "myhost" {
+		t.Errorf("committed value = %q, want myhost", sm.setForm.ITerm2SSH)
+	}
+	if sm.dialog != dialogSettings {
+		t.Errorf("dialog must stay open after a commit, got %v", sm.dialog)
+	}
+}
+
+func TestSettingsInvalidHexRejected(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.setCursor = 4 // claude light
+	m2, _ := sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	sm.setInput.SetValue("nothex")
+	m2, _ = sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	if !sm.setEditing {
+		t.Error("invalid hex must keep the row in edit mode")
+	}
+	if sm.setErr == "" {
+		t.Error("invalid hex must set an inline error")
+	}
+	if sm.setForm.Claude.Light != "#C15F3C" {
+		t.Errorf("invalid hex must not be committed, got %q", sm.setForm.Claude.Light)
+	}
+}
+
+func TestSettingsEscCancelsRowEditNotDialog(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.setCursor = 2
+	m2, _ := sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	sm.setInput.SetValue("abandoned")
+	m2, _ = sm.handleDialogKey(escKey())
+	sm = m2.(Model)
+	if sm.setEditing {
+		t.Error("esc should leave edit mode")
+	}
+	if sm.dialog != dialogSettings {
+		t.Errorf("esc while editing must not close the dialog, got %v", sm.dialog)
+	}
+	if sm.setForm.ITerm2SSH != "" {
+		t.Errorf("abandoned edit must not be committed, got %q", sm.setForm.ITerm2SSH)
+	}
+}
+
+func TestSettingsEditSeedsCurrentValue(t *testing.T) {
+	cfg := config.Default()
+	cfg.ITerm2SSH = "generalserver"
+	m := New("/nope", "/nope", "", cfg)
+	m2, _ := m.Update(scanDoneMsg{sessions: testSessions()})
+	sm := openSettingsDialog(t, m2.(Model))
+	sm.setCursor = 2
+	m3, _ := sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m3.(Model)
+	if got := sm.setInput.Value(); got != "generalserver" {
+		t.Errorf("editor must seed with the current value, got %q", got)
+	}
+}

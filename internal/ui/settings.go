@@ -79,6 +79,30 @@ func (m *Model) openSettings() {
 // handleSettingsKey is dialogSettings' key handler (Tasks 4–6 extend it).
 func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	rows := settingsRows()
+	if m.setEditing {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.setEditing = false
+			m.setErr = ""
+			m.setInput.Blur()
+			return m, nil
+		case tea.KeyEnter:
+			row := rows[m.setCursor]
+			v := strings.TrimSpace(m.setInput.Value())
+			if row.kind == settingHex && !config.ValidHex(v) {
+				m.setErr = "colors must be #RRGGBB"
+				return m, nil
+			}
+			row.set(&m.setForm, v)
+			m.setEditing = false
+			m.setErr = ""
+			m.setInput.Blur()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.setInput, cmd = m.setInput.Update(msg)
+		return m, cmd
+	}
 	switch msg.String() {
 	case "j", "down":
 		if m.setCursor < len(rows)-1 {
@@ -122,6 +146,15 @@ func (m Model) activateSettingRow(row settingRow, key string) (tea.Model, tea.Cm
 		if key == "enter" || key == " " {
 			row.set(&m.setForm, strconv.FormatBool(row.get(&m.setForm) != "true"))
 		}
+	case settingText, settingHex:
+		if key != "enter" {
+			return m, nil
+		}
+		m.setInput.SetValue(row.get(&m.setForm))
+		m.setInput.CursorEnd()
+		m.setInput.Focus()
+		m.setEditing = true
+		m.setErr = ""
 	}
 	return m, nil
 }
