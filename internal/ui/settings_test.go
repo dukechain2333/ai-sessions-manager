@@ -248,3 +248,10 @@ func TestSettingsSaveFailureKeepsForm(t *testing.T) {
 		t.Error("failed save must preserve the form for a retry")
 	}
 }
+
+func TestHelpBarHasSettingsEntry(t *testing.T) {
+	m := newTestModel()
+	if !strings.Contains(helpLineFor(m.helpItems()), ", settings") {
+		t.Error("help bar must advertise the settings key")
+	}
+}

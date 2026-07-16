@@ -49,6 +49,7 @@ var helpBar = []helpItem{
 	{"space fold", runeKey(" ")},
 	{"e empty", runeKey("e")},
 	{"r rescan", runeKey("r")},
+	{", settings", runeKey(",")},
 	{"q quit", runeKey("q")},
 }
 
