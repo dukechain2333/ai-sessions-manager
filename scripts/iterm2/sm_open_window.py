@@ -50,6 +50,11 @@ def remote_command(spec):
         return host, host + "|" + name, "exec tmux attach-session -t '=" + name + "'"
     if not argv or argv[0] not in AGENTS or not all(ARG_RE.match(a) for a in argv):
         return None, None, None
+    # dir is free-form (any real path is legal) so it is quoted rather than
+    # pattern-matched — but the line is typed into a live shell, where raw
+    # control bytes could drive the line editor even inside quotes.
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in dir_):
+        return None, None, None
     inner = " ".join(shlex.quote(a) for a in argv)
     # The remote end of a fresh ssh runs with sshd's bare PATH, and tmux
     # panes it creates inherit that PATH — the agent would be "command not

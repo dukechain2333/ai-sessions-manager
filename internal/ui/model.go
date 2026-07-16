@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -15,7 +17,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/dukechain2333/ai-sessions-manager/internal/bridge"
 	"github.com/dukechain2333/ai-sessions-manager/internal/config"
+	"github.com/dukechain2333/ai-sessions-manager/internal/ghostty"
 	"github.com/dukechain2333/ai-sessions-manager/internal/iterm2"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
@@ -89,6 +93,7 @@ type Model struct {
 	tmuxLive    map[string]bool
 	openIn      string // config.OpenInCurrent or config.OpenInWindow
 	iterm2Host  string
+	bridgePath  string // sm ssh reverse-tunnel socket ("" = no bridge)
 	st          styles
 
 	list        listPane
@@ -119,11 +124,13 @@ type Model struct {
 	ready         bool
 
 	// injected for tests
-	trashFn   func(store.Session) (string, error)
-	runCmd    func(name, dir string, args ...string) tea.Cmd
-	runSilent func(name, dir string, args ...string) tea.Cmd
-	emitSeq   func(string) tea.Cmd
-	bell      tea.Cmd
+	trashFn     func(store.Session) (string, error)
+	runCmd      func(name, dir string, args ...string) tea.Cmd
+	runSilent   func(name, dir string, args ...string) tea.Cmd
+	emitSeq     func(string) tea.Cmd
+	sendLaunch  func(sock string, l iterm2.Launch) tea.Cmd
+	ghosttyOpen func(l iterm2.Launch) tea.Cmd
+	bell        tea.Cmd
 
 	// mouse double-click tracking; now is injected for tests
 	lastClickZone zone
@@ -177,6 +184,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		tmuxEnabled:   cfg.TmuxEnabled,
 		openIn:        cfg.OpenIn,
 		iterm2Host:    cfg.ITerm2SSH,
+		bridgePath:    bridgeSock(),
 		tmux:          tmux.Exec{},
 		trashFn: func(s store.Session) (string, error) {
 			p := store.ProviderFor(provs, s.Agent)
@@ -188,6 +196,8 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		runCmd:       execCmd,
 		runSilent:    execSilent,
 		emitSeq:      emitEscape,
+		sendLaunch:   sendLaunchCmd,
+		ghosttyOpen:  ghosttyOpenCmd,
 		bell:         ringBell,
 		lastClickRow: -1,
 		now:          time.Now,
@@ -202,11 +212,12 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 		ret.dialog = dialogError
 		ret.errText = "tmux integration is enabled but tmux was not found on PATH"
 	}
-	// iTerm2 window mode is exempt: it needs no local tmux client — the
-	// launches ssh back and tmux (if tracking is on) runs in that new
+	// Native window launchers (iTerm2 escape bridge, sm ssh bridge, local
+	// Ghostty) are exempt: they need no local tmux client — the launches
+	// open client-side and tmux (if tracking is on) runs in that new
 	// connection; tracking degradation is handled by the tmuxEnabled block
 	// above.
-	if ret.openIn == config.OpenInWindow && !tmuxLookPath() && !((ret.iterm2Host != "" || !overSSH()) && iTerm2Env()) {
+	if ret.openIn == config.OpenInWindow && !tmuxLookPath() && !ret.nativeWindows() {
 		ret.openIn = config.OpenInCurrent
 		ret.dialog = dialogError
 		ret.errText = `open_in "window" requires tmux on PATH — using "current" for this run`
@@ -215,7 +226,7 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 	// mode is configured (e.g. a plain, non-wrapped attach), let the emitted
 	// control sequences pass through the pane to the terminal instead of
 	// being swallowed by tmux.
-	if ret.openIn == config.OpenInWindow && (ret.iterm2Host != "" || !overSSH()) && iTerm2Env() && insideTmux() {
+	if ret.iterm2Windows() && insideTmux() {
 		_ = exec.Command("tmux", "set-option", "-p", "allow-passthrough", "on").Run()
 	}
 	return ret
@@ -263,6 +274,65 @@ func emitEscape(seq string) tea.Cmd {
 	}
 }
 
+// bridgeWindows reports whether window-mode launches ride the sm ssh
+// reverse-tunnel bridge: the enclosing connection advertised its socket.
+func (m Model) bridgeWindows() bool {
+	return m.openIn == config.OpenInWindow && m.bridgePath != ""
+}
+
+// ghosttyWindows reports whether window-mode launches open native Ghostty
+// windows on this same machine. Over ssh a forwarded TERM_PROGRAM must not
+// count — windows can only open client-side, which is the bridge's job.
+func (m Model) ghosttyWindows() bool {
+	return m.openIn == config.OpenInWindow && !overSSH() && ghosttyEnv()
+}
+
+// nativeWindows reports whether window-mode launches open real OS terminal
+// windows (any launcher) instead of tmux windows.
+func (m Model) nativeWindows() bool {
+	return m.bridgeWindows() || m.ghosttyWindows() || m.iterm2Windows()
+}
+
+// openWindowCmd routes one native-window launch to its launcher. The bridge
+// wins when present — it is the most explicit signal (the user started this
+// connection with sm ssh) — then a local Ghostty, then the iTerm2 escapes.
+func (m Model) openWindowCmd(l iterm2.Launch) tea.Cmd {
+	switch {
+	case m.bridgeWindows():
+		return m.sendLaunch(m.bridgePath, l)
+	case m.ghosttyWindows():
+		return m.ghosttyOpen(l)
+	default:
+		return m.emitSeq(iterm2.Sequence(l, insideTmux()))
+	}
+}
+
+// sendLaunchCmd delivers l to the sm ssh helper; its error (validation,
+// dead tunnel, window failure) surfaces through the usual silent-done path.
+func sendLaunchCmd(sock string, l iterm2.Launch) tea.Cmd {
+	return func() tea.Msg { return silentDoneMsg{err: bridge.Send(sock, l)} }
+}
+
+// localGhostty builds the process-wide local window opener once: it holds
+// the dedupe state that refocuses a still-open window on relaunch.
+var localGhostty = sync.OnceValues(func() (*ghostty.Opener, error) { return ghostty.New() })
+
+// ghosttyOpenCmd opens l in a native Ghostty window on this machine. The
+// empty destination selects bridge.Line's local form — run directly, no ssh
+// and no PATH prepend (a fresh local shell already has the user's PATH).
+func ghosttyOpenCmd(l iterm2.Launch) tea.Cmd {
+	return func() tea.Msg {
+		key, line, err := bridge.Line(l, "", nil)
+		if err == nil {
+			var op *ghostty.Opener
+			if op, err = localGhostty(); err == nil {
+				err = op.Open(key, line)
+			}
+		}
+		return silentDoneMsg{err: err}
+	}
+}
+
 // iterm2Windows reports whether window-mode launches go through the
 // local iTerm2 AutoLaunch script instead of tmux windows: explicit
 // config opt-in plus a detected iTerm2.
@@ -303,6 +373,30 @@ var iTerm2Env = func() bool {
 	return os.Getenv("LC_TERMINAL") == "iTerm2"
 }
 
+// ghosttyEnv reports whether the terminal is Ghostty AND this machine can
+// actually open its windows (Linux needs the ghostty binary on PATH for the
+// +new-window IPC — without it, window mode should fall back to the tmux
+// path instead of erroring at launch time). Only trusted for local
+// launches — ghosttyWindows pairs it with !overSSH(), since Ghostty's
+// ssh-env integration can forward TERM_PROGRAM to a remote shell where no
+// local window could ever open. Overridable in tests.
+var ghosttyEnv = func() bool {
+	if os.Getenv("TERM_PROGRAM") != "ghostty" {
+		return false
+	}
+	if runtime.GOOS == "linux" {
+		_, err := exec.LookPath("ghostty")
+		return err == nil
+	}
+	return true
+}
+
+// bridgeSock is the sm ssh window-bridge socket advertised to this shell
+// ("" = none). Overridable in tests.
+var bridgeSock = func() string {
+	return bridge.Socket()
+}
+
 // overSSH reports whether sm runs on the far side of an ssh connection —
 // then iTerm2 launches must dial back (iterm2.ssh required); locally the
 // bridge runs commands directly. Checks all three sshd markers so an rc
@@ -340,7 +434,7 @@ func (m Model) launchErr(p store.Provider) string {
 	if err := binLookPath(p.Binary()); err != nil {
 		return p.Binary() + " not found on PATH"
 	}
-	if m.openIn == config.OpenInWindow && !m.iterm2Windows() {
+	if m.openIn == config.OpenInWindow && !m.nativeWindows() {
 		if !tmuxLookPath() {
 			return `open_in "window" requires tmux on PATH`
 		}
@@ -1209,12 +1303,12 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 			return m.attachLiveCmd(sess, cwd, name, args)
 		}
 		if m.openIn == config.OpenInWindow {
-			if m.iterm2Windows() {
+			if m.nativeWindows() {
 				l := iterm2.Launch{Host: m.iterm2SSHHost(), Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
 				if m.tmuxEnabled {
 					l.Name, l.Tmux = sess, true
 				}
-				return m.emitSeq(iterm2.Sequence(l, insideTmux()))
+				return m.openWindowCmd(l)
 			}
 			win := ""
 			if m.tmuxEnabled {
@@ -1229,12 +1323,12 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 	}
 	name, args := p.NewCommand()
 	if m.openIn == config.OpenInWindow {
-		if m.iterm2Windows() {
+		if m.nativeWindows() {
 			l := iterm2.Launch{Host: m.iterm2SSHHost(), Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
 			if m.tmuxEnabled {
 				l.Name, l.Tmux = tmux.PendingName(string(p.Agent()), m.now().UnixNano()), true
 			}
-			return m.emitSeq(iterm2.Sequence(l, insideTmux()))
+			return m.openWindowCmd(l)
 		}
 		win := ""
 		if m.tmuxEnabled {
@@ -1258,12 +1352,12 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 // agentExitMsg swallows ExitError as a normal agent exit, the refusal dies
 // silently; outside tmux it attaches via new-session -A as before.
 func (m Model) attachLiveCmd(sess, cwd, agentName string, agentArgs []string) tea.Cmd {
-	if m.iterm2Windows() {
+	if m.nativeWindows() {
 		// Only the session form can be attach-session'd by the remote end
 		// of a fresh ssh. A window-form live tmux (legacy of the
 		// tmux-window mechanism) falls through to the local jump below.
 		if _, _, ok := m.tmux.Window(sess); !ok {
-			return m.emitSeq(iterm2.Sequence(iterm2.Launch{Host: m.iterm2SSHHost(), Name: sess, Attach: true}, insideTmux()))
+			return m.openWindowCmd(iterm2.Launch{Host: m.iterm2SSHHost(), Name: sess, Attach: true})
 		}
 	}
 	if id, owner, ok := m.tmux.Window(sess); ok {

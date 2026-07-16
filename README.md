@@ -52,6 +52,11 @@ browsable, foldable list and resumes any of them for you.
 - **Optional [tmux integration](#tmux-integration)** — resume into a
   detachable tmux session, with live markers and a kill key — and a
   [`config.json`](#configuration) for the toggle and per-agent colors.
+- **Open launches in real OS windows** — with `open_in: "window"`, resume
+  and new sessions open native [iTerm2](#iterm2-native-windows-macos) or
+  [Ghostty](#ghostty-native-windows-macos--linux) windows while `sm` stays
+  put; works locally and over SSH (Ghostty via the bundled `sm ssh`
+  wrapper).
 - Cross-platform single static binary (macOS & Linux, Intel & Apple Silicon),
   no runtime dependencies.
 
@@ -272,7 +277,8 @@ notice.
   - `mode: "current"` (default) suspends `sm` and runs the agent in this
     terminal — exactly the classic behavior.
   - `mode: "window"` opens each launch in a **new window** and `sm` stays on
-    screen. In [iTerm2](#iterm2-native-windows-macos) that is a genuine OS
+    screen. In [iTerm2](#iterm2-native-windows-macos) and
+    [Ghostty](#ghostty-native-windows-macos--linux) that is a genuine OS
     window (locally and over SSH); in any other terminal it is a new tmux
     window: `sm` auto-relaunches itself inside its own tmux session (named
     `sm`) and reattaches it if one is already running — an SSH drop later,
@@ -379,6 +385,78 @@ are validated against strict patterns (host charset, `sm-` session-name
 shape, `claude`/`codex` argv allowlist, safe `PATH` directory) and the only
 shapes it will ever run are that `cd`+`tmux`+agent command line, locally or
 via `ssh -t --`.
+
+### Ghostty native windows (macOS & Linux)
+
+`open_in: "window"` opens genuine Ghostty windows too — same behavior as
+the iTerm2 mechanism (sm stays put, launches land in tracked tmux sessions,
+re-launching focuses the still-open window on macOS), but the plumbing
+differs because Ghostty has no script that can react to escape sequences.
+
+**Local use (sm and Ghostty on the same machine):** nothing to install.
+Set the mode and you're done:
+
+```json
+{ "open_in": "window" }
+```
+
+`sm` drives Ghostty directly — on macOS through Ghostty's AppleScript
+support (Ghostty **1.3+**; the first launch pops the standard macOS
+Automation permission dialog, click Allow), on Linux through
+`ghostty +new-window` (Ghostty **1.2+**, GTK build with D-Bus; no window
+refocus dedupe there, the IPC returns no window handle).
+
+**Over SSH (sm on a server, Ghostty on your Mac or Linux desktop):**
+install `sm` on the desktop too (macOS: the [Homebrew cask](#homebrew-macos--linux);
+Linux: any install method), then connect with
+
+```sh
+sm ssh myserver          # instead of: ssh myserver
+```
+
+`sm ssh` is plain ssh plus a **window bridge**: it adds a reverse-forwarded
+unix socket (random path, mode 0600) and advertises it to the remote shell
+as `$LC_SM_BRIDGE`. A window-mode `sm` on the server sends each launch down
+that socket, and the helper on your desktop opens a Ghostty window that
+dials back with `ssh -t -- myserver "cd <dir> && tmux new-session -A -s
+sm-<agent>-<id8> <agent command>"`. Extra arguments are passed through to
+ssh and reused by the windows (`sm ssh -p 2222 myserver` works). On the
+server side the config only needs
+
+```json
+{ "open_in": "window" }
+```
+
+— no host to configure: new windows always dial the destination you typed
+after `sm ssh`, never anything the server asks for. Requirements:
+
+- key-based (non-interactive) login, since each window opens a fresh
+  connection;
+- the server's sshd must accept `LC_*` environment variables — the stock
+  Debian/Ubuntu `AcceptEnv LANG LC_*` default is enough (the same rule the
+  iTerm2 mechanism relies on for `LC_TERMINAL`);
+- `tmux` on the server if you also want tracking (`tmux.enabled`).
+
+**Troubleshooting:**
+- "window bridge not reachable — reconnect with `sm ssh`": the shell still
+  carries a stale `$LC_SM_BRIDGE` (typical inside a long-lived server-side
+  tmux attached from a new connection). Launch from a shell of the current
+  `sm ssh` session, or `tmux set-environment -g LC_SM_BRIDGE <new value>`.
+- `echo $LC_SM_BRIDGE` empty on the server → sshd rejected the variable;
+  add `AcceptEnv LC_*` to `/etc/ssh/sshd_config`.
+- `sm ssh` says it is connecting **without** the window bridge → the local
+  terminal isn't Ghostty (it checks `$TERM_PROGRAM`), or on Linux the
+  `ghostty` binary isn't on `PATH`.
+- macOS: if you once denied the Automation prompt, re-enable it under
+  *System Settings → Privacy & Security → Automation → Ghostty*.
+- Debug log: `SM_BRIDGE_DEBUG=1 sm ssh myserver` prints every payload the
+  helper accepts or rejects.
+
+The same security rules as the iTerm2 bridge apply — payloads coming out
+of the tunnel are untrusted and validated against the same allowlists —
+plus one tightening unique to `sm ssh`: the destination embedded in new
+windows is always the one from your own command line; a host name arriving
+in a payload is ignored outright.
 
 ### tmux integration
 

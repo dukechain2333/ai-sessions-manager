@@ -26,6 +26,11 @@ import (
 // TestResumeErrorsWhenBinaryMissing, which overrides binLookPath itself.
 func TestMain(m *testing.M) {
 	binLookPath = func(string) error { return nil }
+	// Pin the native-window environment probes too: the suite must behave
+	// the same whether or not the runner sits inside Ghostty or an sm ssh
+	// bridge. Tests for those launchers override these explicitly.
+	ghosttyEnv = func() bool { return false }
+	bridgeSock = func() string { return "" }
 	os.Exit(m.Run())
 }
 
@@ -1392,5 +1397,181 @@ func TestITerm2OverSSHRequiresHost(t *testing.T) {
 	m.openIn = config.OpenInWindow
 	if m.iterm2Windows() {
 		t.Error("no host over SSH must disable the iTerm2 mechanism")
+	}
+}
+
+// newBridgeModel is a window-mode model over ssh with an sm ssh bridge
+// socket advertised. Every other launcher is trapped: bridge launches must
+// go through sendLaunch only.
+func newBridgeModel(t *testing.T) (Model, *[]iterm2.Launch, *[]string) {
+	t.Helper()
+	origIn, origIT, origSSH := insideTmux, iTerm2Env, overSSH
+	insideTmux = func() bool { return false }
+	iTerm2Env = func() bool { return false }
+	overSSH = func() bool { return true }
+	t.Cleanup(func() { insideTmux, iTerm2Env, overSSH = origIn, origIT, origSSH })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	m.bridgePath = "/tmp/sm-bridge-test.sock"
+	launches, socks := &[]iterm2.Launch{}, &[]string{}
+	m.sendLaunch = func(sock string, l iterm2.Launch) tea.Cmd {
+		*socks = append(*socks, sock)
+		*launches = append(*launches, l)
+		return nil
+	}
+	m.emitSeq = func(seq string) tea.Cmd {
+		t.Errorf("bridge mode must not emit escapes: %q", seq)
+		return nil
+	}
+	m.runCmd = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("bridge mode must not runCmd: %s %v", name, args)
+		return nil
+	}
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("bridge mode must not runSilent: %s %v", name, args)
+		return nil
+	}
+	m.now = func() time.Time { return time.Unix(0, 1234) }
+	return m, launches, socks
+}
+
+func TestResumeBridgeSendsTrackedLaunch(t *testing.T) {
+	m, launches, socks := newBridgeModel(t)
+	m.tmuxEnabled = true
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*launches) != 1 {
+		t.Fatalf("want 1 launch, got %v", *launches)
+	}
+	l := (*launches)[0]
+	if l.Dir != dir || l.Name != "sm-claude-s1" || !l.Tmux || l.Attach ||
+		len(l.Argv) < 2 || l.Argv[0] != "claude" {
+		t.Errorf("launch = %+v", l)
+	}
+	if (*socks)[0] != "/tmp/sm-bridge-test.sock" {
+		t.Errorf("sock = %q", (*socks)[0])
+	}
+}
+
+func TestEnterLiveBridgeSendsAttach(t *testing.T) {
+	m, launches, _ := newBridgeModel(t)
+	m.tmuxEnabled = true
+	m.tmux = &fakeTmux{live: map[string]bool{"sm-claude-s1": true}}
+	m.tmuxLive = map[string]bool{"sm-claude-s1": true}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*launches) != 1 {
+		t.Fatalf("want 1 launch, got %v", *launches)
+	}
+	if l := (*launches)[0]; !l.Attach || l.Name != "sm-claude-s1" {
+		t.Errorf("attach launch = %+v", l)
+	}
+}
+
+// When both an sm ssh bridge and iTerm2 are present, the bridge wins: the
+// user explicitly started this connection with sm ssh.
+func TestBridgePreferredOverITerm2(t *testing.T) {
+	m, launches, _ := newBridgeModel(t)
+	origIT := iTerm2Env
+	iTerm2Env = func() bool { return true }
+	t.Cleanup(func() { iTerm2Env = origIT })
+	m.iterm2Host = "myhost"
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume() // emitSeq is trapped: an escape here fails the test
+	if len(*launches) != 1 {
+		t.Fatalf("want 1 bridge launch, got %v", *launches)
+	}
+}
+
+// The bridge needs no tmux client on the sm side: launches open client-side
+// and any tracking tmux runs inside the window's own ssh connection.
+func TestBridgeSkipsWindowTmuxPreconditions(t *testing.T) {
+	origLook := tmuxLookPath
+	tmuxLookPath = func() bool { return false }
+	t.Cleanup(func() { tmuxLookPath = origLook })
+	m, launches, _ := newBridgeModel(t)
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m2, _ := m.startResume()
+	if m = m2.(Model); m.dialog == dialogError {
+		t.Fatalf("bridge mode must skip tmux preconditions, got %q", m.errText)
+	}
+	if len(*launches) != 1 {
+		t.Errorf("expected a bridge launch, got %v", *launches)
+	}
+}
+
+func TestNewNoDowngradeWithBridge(t *testing.T) {
+	origLook, origIT, origBr := tmuxLookPath, iTerm2Env, bridgeSock
+	tmuxLookPath = func() bool { return false }
+	iTerm2Env = func() bool { return false }
+	bridgeSock = func() string { return "/tmp/sm-bridge-test.sock" }
+	t.Cleanup(func() { tmuxLookPath, iTerm2Env, bridgeSock = origLook, origIT, origBr })
+	cfg := config.Default()
+	cfg.OpenIn = config.OpenInWindow
+	m := New("/nope", "/nope", cfg)
+	if m.openIn != config.OpenInWindow || m.dialog == dialogError {
+		t.Errorf("bridge must survive missing tmux: openIn=%q dialog=%v %q", m.openIn, m.dialog, m.errText)
+	}
+	if !m.bridgeWindows() {
+		t.Error("bridgeWindows() must be active")
+	}
+}
+
+// A local window-mode sm inside Ghostty opens windows itself — no ssh, no
+// escapes, host always empty.
+func TestGhosttyLocalOpensWindow(t *testing.T) {
+	origIn, origGh, origSSH := insideTmux, ghosttyEnv, overSSH
+	insideTmux = func() bool { return false }
+	ghosttyEnv = func() bool { return true }
+	overSSH = func() bool { return false }
+	t.Cleanup(func() { insideTmux, ghosttyEnv, overSSH = origIn, origGh, origSSH })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	m.tmuxEnabled = true
+	launches := &[]iterm2.Launch{}
+	m.ghosttyOpen = func(l iterm2.Launch) tea.Cmd {
+		*launches = append(*launches, l)
+		return nil
+	}
+	m.emitSeq = func(seq string) tea.Cmd {
+		t.Errorf("ghostty mode must not emit escapes: %q", seq)
+		return nil
+	}
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("ghostty mode must not runSilent: %s %v", name, args)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*launches) != 1 {
+		t.Fatalf("want 1 launch, got %v", *launches)
+	}
+	if l := (*launches)[0]; l.Host != "" || l.Name != "sm-claude-s1" || !l.Tmux {
+		t.Errorf("launch = %+v, want empty host", l)
+	}
+}
+
+// A forwarded TERM_PROGRAM (Ghostty's ssh-env integration) must not count:
+// windows can only open client-side, which is the bridge's job.
+func TestGhosttyOverSSHStaysOff(t *testing.T) {
+	origGh, origSSH, origIT := ghosttyEnv, overSSH, iTerm2Env
+	ghosttyEnv = func() bool { return true }
+	overSSH = func() bool { return true }
+	iTerm2Env = func() bool { return false }
+	t.Cleanup(func() { ghosttyEnv, overSSH, iTerm2Env = origGh, origSSH, origIT })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	if m.nativeWindows() {
+		t.Error("forwarded TERM_PROGRAM over ssh must not enable native windows")
 	}
 }
