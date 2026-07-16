@@ -5,11 +5,6 @@ A single-binary terminal UI that finds your local AI coding-agent sessions —
 previews the transcript, and drops you back into any conversation with one
 keypress, in the directory the session originally lived in.
 
-Each agent stores its sessions as `.jsonl` files (Claude Code under
-`~/.claude/projects/`, Codex under `~/.codex/sessions/`). Once you work across
-many directories they become impossible to track. `sm` gathers them into one
-browsable, foldable list and resumes any of them for you.
-
 ```
 ✻ sm · AI Sessions   52 sessions
  > filter…
@@ -28,70 +23,39 @@ browsable, foldable list and resumes any of them for you.
 
 ## Features
 
-- **One list, every project** — scans `~/.claude/projects/*/*.jsonl` and sorts
-  by recency.
-- **Grouped by project**, with foldable headers so long projects can be tucked
-  away (`▾` open, `▸` folded).
-- **Live transcript preview** of the highlighted session.
-- **Fuzzy filter** across title, project, and first prompt.
-- **Resume in the right place** — launches `claude --resume <id>` in the
-  session's original directory (the one Claude filed it under), so resume
-  works even for sessions that later `cd`'d elsewhere.
-- **New session** in any known project directory, and **safe delete** (files
-  are moved to `~/.claude/projects/.trash/`, never `rm`'d).
-- **OpenAI Codex sessions, too** — when `~/.codex` exists, its sessions are
-  scanned alongside Claude Code's. Two view modes, toggled with `v`: the
-  default **list** mode shows one mixed list (rows tagged `claude` /
-  `codex`, with optional per-project agent subheaders on `a`), while **tab**
-  mode shows one agent at a time — the title bar grows `[Claude N]  Codex M`
-  tabs, `a` or a click switches views, and the whole accent theme follows
-  (coral for Claude, teal-green for Codex). Set `"view": "tabs"` in
-  `config.json` to start there.
-- **Full-text search** across every message in every session, on top of the
-  quick fuzzy filter.
-- **Optional [tmux integration](#tmux-integration)** — resume into a
-  detachable tmux session, with live markers and a kill key — and a
-  [`config.json`](#configuration) for the toggle and per-agent colors.
-- **Open launches in real OS windows** — with `open_in: "window"`, resume
-  and new sessions open native [iTerm2](#iterm2-native-windows-macos) or
-  [Ghostty](#ghostty-native-windows-macos--linux) windows while `sm` stays
-  put; works locally and over SSH (Ghostty via the bundled `sm ssh`
-  wrapper).
-- Cross-platform single static binary (macOS & Linux, Intel & Apple Silicon),
-  no runtime dependencies.
+- **One list, every project** — scans `~/.claude/projects` (and
+  `~/.codex/sessions` when present), grouped by project with foldable
+  headers, sorted by recency.
+- **Live transcript preview**, **fuzzy filter**, and **full-text search**
+  across every message in every session.
+- **Resume in the right place** — runs `claude --resume <id>` (or
+  `codex resume <id>`) in the session's original directory, even for
+  sessions that later `cd`'d elsewhere.
+- **New session** in any known project directory; **safe delete** (files
+  move to `.trash/`, never `rm`'d).
+- **Two views** — a mixed list or per-agent tabs (`v` toggles), each agent
+  with its own accent color.
+- **Optional [tmux integration](#tmux-integration)** — launches run in
+  detachable tmux sessions with live `●` markers and a kill key.
+- **[Real OS windows](#opening-launches-in-new-windows)** — with
+  `open_in: "window"`, launches open native iTerm2 or Ghostty windows
+  while `sm` stays put; works locally and over SSH.
+- Single static binary (macOS & Linux, Intel & Apple Silicon), no runtime
+  dependencies.
 
 ## Install
 
-`sm` needs the [Claude Code](https://claude.com/claude-code) CLI (`claude`) on
-your `PATH` to actually resume sessions.
+`sm` needs the [Claude Code](https://claude.com/claude-code) CLI (`claude`)
+on your `PATH` to actually resume sessions.
 
-### Quick install (macOS & Linux)
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/install.sh | sh
-```
-
-Installs the latest release to `~/.local/bin/sm`. Options:
-
-```sh
-# specific version, or a custom install directory
-curl -fsSL .../install.sh | sh -s -- --version v0.3.0 --bin /usr/local/bin
-```
-
-If `~/.local/bin` isn't on your `PATH`, the script prints the line to add.
-
-### Homebrew (macOS & Linux)
+**Homebrew (macOS & Linux)**
 
 ```sh
 brew install dukechain2333/tap/sm
 ```
 
-Upgrades come through `brew upgrade`.
-
-### Debian / Ubuntu (`apt`)
-
-Add the signed APT repository once, then install and upgrade with `apt` like
-any other package (amd64 and arm64 supported):
+**APT repository (Debian / Ubuntu, amd64 & arm64)** — add once, then it
+upgrades like any other package:
 
 ```sh
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -99,32 +63,27 @@ curl -fsSL https://dukechain2333.github.io/ai-sessions-manager/public.key \
   | sudo gpg --dearmor -o /etc/apt/keyrings/ai-sessions-manager.gpg
 echo "deb [signed-by=/etc/apt/keyrings/ai-sessions-manager.gpg] https://dukechain2333.github.io/ai-sessions-manager stable main" \
   | sudo tee /etc/apt/sources.list.d/ai-sessions-manager.list
-sudo apt update
-sudo apt install ai-sessions-manager      # installs the `sm` command
+sudo apt update && sudo apt install ai-sessions-manager
 ```
 
-Upgrades then come through `sudo apt update && sudo apt upgrade`.
+> The package is named `ai-sessions-manager` (the command it installs is
+> `sm`), because `sm` already exists in the Ubuntu archive.
 
-> The package is named `ai-sessions-manager` (the command it installs is `sm`),
-> because `sm` already exists in the Ubuntu archive.
-
-### Debian / Ubuntu (single `.deb`, no repo)
-
-Prefer a one-off install without adding a repo? Grab the `.deb` matching your
-architecture from the
-[latest release](https://github.com/dukechain2333/ai-sessions-manager/releases/latest):
+**Install script** — drops the latest release binary into `~/.local/bin`:
 
 ```sh
-sudo dpkg -i ai-sessions-manager_*_linux_amd64.deb
+curl -fsSL https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/install.sh | sh
+# options: … | sh -s -- --version v0.3.0 --bin /usr/local/bin
 ```
 
-### Fedora / RHEL / openSUSE (`.rpm`)
+**Everything else** — the
+[releases page](https://github.com/dukechain2333/ai-sessions-manager/releases)
+has one-off `.deb` / `.rpm` packages (`sudo apt install ./<file>.deb`,
+`sudo rpm -i <file>.rpm`) and plain `tar.gz` binaries for every platform.
+Or build from source (Go ≥ 1.24): `git clone` this repo and `make install`.
 
-```sh
-sudo rpm -i ai-sessions-manager_*_linux_amd64.rpm
-```
-
-### Beta releases
+<details>
+<summary><b>Beta releases</b></summary>
 
 Prerelease versions (`v*-beta.*`) never reach the stable channels above.
 To opt in:
@@ -134,112 +93,77 @@ To opt in:
 brew uninstall sm 2>/dev/null; brew install --cask dukechain2333/tap/sm-beta
 
 # Debian / Ubuntu — install the .deb straight from the release page:
-curl -sLO https://github.com/dukechain2333/ai-sessions-manager/releases/download/v0.5.0-beta.2/ai-sessions-manager_0.5.0-beta.2_linux_amd64.deb
-sudo apt install ./ai-sessions-manager_0.5.0-beta.2_linux_amd64.deb
+curl -sLO https://github.com/dukechain2333/ai-sessions-manager/releases/download/v0.5.0-beta.3/ai-sessions-manager_0.5.0-beta.3_linux_amd64.deb
+sudo apt install ./ai-sessions-manager_0.5.0-beta.3_linux_amd64.deb
 ```
 
 The package versions itself `0.5.0~beta.N`, which Debian sorts *before*
 `0.5.0` — when the stable release lands in the APT repo, a normal
-`apt upgrade` replaces the beta automatically. On Homebrew, switch back with
-`brew uninstall --cask sm-beta && brew install dukechain2333/tap/sm`.
+`apt upgrade` replaces the beta automatically. On Homebrew, switch back
+with `brew uninstall --cask sm-beta && brew install dukechain2333/tap/sm`.
 
-### Manual download
-
-Grab a `sm_<version>_<os>_<arch>.tar.gz` from the
-[releases page](https://github.com/dukechain2333/ai-sessions-manager/releases),
-extract, and move `sm` onto your `PATH`.
-
-### Build from source
-
-Requires Go ≥ 1.24.
-
-```sh
-git clone https://github.com/dukechain2333/ai-sessions-manager
-cd ai-sessions-manager
-make install          # builds ./sm and copies it to ~/.local/bin/sm
-```
+</details>
 
 ## Usage
 
 ```sh
 sm                      # browse ~/.claude/projects (and ~/.codex/sessions, if present)
-sm --projects-dir DIR   # browse a different Claude Code location
-sm --codex-dir DIR      # browse a different Codex sessions location
+sm --projects-dir DIR   # a different Claude Code location
+sm --codex-dir DIR      # a different Codex sessions location
+sm --config PATH        # a different config.json
+sm ssh HOST             # ssh + Ghostty window bridge, see "Real OS windows"
 sm --version
 ```
 
+### Keys
+
 | Key | Action |
 |---|---|
-| `↑/↓` `j/k` | move the selection over project headers and sessions; at the top or bottom edge it stays put and rings the terminal bell. Reach the filter/search bar with `/`, `s`, or a mouse click. |
-| `enter` | resume the selected session; on a **project header**, fold/unfold it |
+| `↑/↓` `j/k` | move the selection (edges ring the bell; `↑` at the top enters the filter bar) |
+| `enter` | resume the selected session; on a project header, fold/unfold |
 | `space` | fold / unfold the current project group |
 | `g` | toggle grouping by project ⇄ flat recency |
-| `a` | list mode: toggle per-project agent subheaders (`─ Claude ─` / `─ Codex ─`); tab mode: switch the Claude ⇄ Codex view |
-| `v` | toggle view mode: mixed list ⇄ per-agent tabs |
-| `tab` | move focus to the preview pane (to scroll a long transcript) and back |
+| `v` | toggle view: mixed list ⇄ per-agent tabs |
+| `a` | list mode: per-project agent subheaders on/off; tab mode: switch Claude ⇄ Codex |
+| `tab` | focus the preview pane (scroll long transcripts) and back |
 | `/` | fuzzy filter (enter keeps it, esc clears it) |
-| `s` | focus the search bar on the full-text layer |
-| `n` | start a new session in a picked directory (in tab mode, launches the active view's agent; in list mode it asks when both agents are installed) |
+| `s` | full-text search |
+| `n` | new session in a picked directory (asks which agent when both are installed) |
 | `d` | delete the selected session (moved to `.trash/`) |
-| `x` | *(tmux integration on)* kill the selected session's tmux; on a **project header**, kill all of that project's (with a confirm). In a tab view the header dot and the kill cover only the active agent's tmux; the mixed list covers both. |
+| `x` | kill the selected session's tmux; on a project header, all of that project's (with confirm) |
 | `e` | show / hide "empty" sessions (hook-only, no real prompts) |
 | `r` | rescan |
 | `q` | quit |
 
 ### Mouse
 
-The whole UI is clickable — `sm` enables mouse reporting:
-
-| Gesture | Action |
-|---|---|
-| click a session | select it (the preview follows) |
-| double-click a session | resume it |
-| click a project header | fold / unfold that project |
-| scroll wheel | move the selection; over the preview, scroll the transcript |
-| click the preview pane | focus it (like `tab`) |
-| click the filter bar | start filtering (like `/`) |
-| click a help-bar action or dialog button | performs that action (help-bar buttons act as if the list were focused) |
-| click outside a dialog | cancel it |
-
-With mouse reporting on, select text with **Shift+drag** (standard for
-mouse-enabled TUIs).
+Everything is clickable: click selects (double-click resumes), headers
+fold, the scroll wheel moves the selection or scrolls the preview, and
+help-bar actions and dialog buttons are buttons. With mouse reporting on,
+select text with **Shift+drag** (standard for mouse-enabled TUIs).
 
 ### Search
 
-The filter bar has two layers — press `/` to focus it, then **Tab** (or
-click the `>` prompt) to switch. Pressing `s` in the list jumps straight to
-the full-text layer; `↑` at the top of the list also enters the bar, and
-`↓` leaves it.
+The filter bar has two layers — **Tab** switches between them (`/` focuses
+the fuzzy layer directly, `s` the full-text layer):
 
-- **filter…** — the default fuzzy filter over title, project, and first
-  prompt.
+- **filter…** — fuzzy match over title, project, and first prompt.
 - **search…** — full-text search over everything said in every session.
-  Space-separated terms must all appear in a session (AND). Results are
-  ordered by hit count; the preview jumps to the first hit with matches
-  highlighted, and `n` / `N` (preview focused) step through hits.
+  Space-separated terms must all appear (AND). Results are ordered by hit
+  count; the preview jumps to the first hit, and `n` / `N` (preview
+  focused) step through hits.
 
-The first full-text search builds a plain-text index under your user cache
-directory (`sm-index/`); the title bar shows `indexing …` progress. After
-that, searches are fast and only changed sessions are re-indexed.
+The first search builds a plain-text index under your user cache directory
+(`sm-index/`); after that only changed sessions are re-indexed.
 
-### Resuming
+### Resuming, and getting sessions back
 
-Pressing `enter` on a session suspends `sm`, runs `claude --resume <id>` (or,
-for a Codex session, `codex resume <id>`) in the session's original
-directory, and returns you to the list when the agent exits.
+`enter` suspends `sm`, runs the agent in the session's original directory,
+and returns to the list when it exits. The first time Claude opens a
+directory it may ask **"Is this a project you trust?"** — that's Claude
+Code's own gate, not `sm`.
 
-The first time Claude opens a directory it may show its own **"Is this a
-project you trust?"** prompt — that's Claude Code's security gate, not `sm`.
-Choose *"Yes, I trust this folder"* (the default) and Claude remembers it.
-Declining it, or pressing `Ctrl-C`/`/exit`, simply returns you to the list.
-
-With tmux integration enabled (see [Configuration](#configuration)), resume
-instead attaches you to a tmux session, so the work keeps running in the
-background if you detach (`Ctrl-b d`).
-
-### Recovering a deleted session
-
-Deletes are just moves. To restore one:
+Deletes are just moves. To restore a session:
 
 ```sh
 mv ~/.claude/projects/.trash/<project-slug>/<id>.jsonl \
@@ -248,12 +172,10 @@ mv ~/.claude/projects/.trash/<project-slug>/<id>.jsonl \
 
 ## Configuration
 
-On first run `sm` writes a default `config.json` at
-`$XDG_CONFIG_HOME/sm/config.json` (or `~/.config/sm/config.json`) and reads it
-on every launch; point elsewhere with `--config <path>`. Editing is optional —
-the defaults below match `sm`'s built-in behavior — and `sm` never overwrites a
-file you've changed. A malformed file falls back to defaults with a one-time
-notice.
+On first run `sm` writes this default `config.json` to
+`$XDG_CONFIG_HOME/sm/config.json` (usually `~/.config/sm/config.json`);
+point elsewhere with `--config`. Editing is optional, `sm` never overwrites
+your changes, and a malformed file falls back to defaults with a notice.
 
 ```json
 {
@@ -267,239 +189,67 @@ notice.
 }
 ```
 
-- `tmux.enabled` (default `false`) — when `true`, resume and new sessions run
-  inside a tmux session named `sm-<agent>-<id8>`, so work survives detaching
-  (Ctrl-b d). Requires `tmux` on `PATH`; if it is missing, `sm` shows a
-  startup notice and runs without it.
-- `open_in` — where `enter` (resume) and `n` (new session) launch the agent.
-  Accepts the object above or, as shorthand, just the mode string
-  (`"open_in": "window"`).
-  - `mode: "current"` (default) suspends `sm` and runs the agent in this
-    terminal — exactly the classic behavior.
-  - `mode: "window"` opens each launch in a **new window** and `sm` stays on
-    screen. In [iTerm2](#iterm2-native-windows-macos) and
-    [Ghostty](#ghostty-native-windows-macos--linux) that is a genuine OS
-    window (locally and over SSH); in any other terminal it is a new tmux
-    window: `sm` auto-relaunches itself inside its own tmux session (named
-    `sm`) and reattaches it if one is already running — an SSH drop later,
-    `sm` brings the whole workspace back. The tmux path needs `tmux` on
-    `PATH`; without it `sm` shows a notice and falls back to `"current"`.
-  - `iterm2.ssh` — only needed when `sm` runs **over SSH**: whatever you
-    type after `ssh` on the Mac to reach this host. Leave `""` for local
-    use. See below.
-  - Works independently of `tmux.enabled`: with tmux integration on, every
-    launch is tracked (● marker, `x` kill, `enter` re-enters); with it off,
-    windows are untracked.
-- `colors.claude` / `colors.codex` — each takes optional `light` and `dark`
-  `#RRGGBB` accents; omitted or invalid values keep the defaults.
-- `"view"`: `"list"` (default) or `"tabs"` — the view mode `sm` starts in.
-  `v` toggles it live either way.
+| Key | Values | What it does |
+|---|---|---|
+| `view` | `"list"` (default) / `"tabs"` | startup view mode; `v` toggles live |
+| `open_in.mode` | `"current"` (default) / `"window"` | `"current"` suspends `sm` and runs the agent in this terminal; `"window"` opens every launch in a [new window](#opening-launches-in-new-windows) while `sm` stays on screen. Shorthand: `"open_in": "window"` |
+| `open_in.iterm2.ssh` | ssh destination | only for iTerm2 windows when `sm` runs over SSH — whatever you type after `ssh` on the Mac. See below |
+| `tmux.enabled` | `false` (default) / `true` | launches run in tmux sessions named `sm-<agent>-<id8>`, so work survives detaching; adds the `●` markers and `x` kill. Needs `tmux` on `PATH` |
+| `colors.claude` / `colors.codex` | `{"light","dark"}` hex | per-agent accent colors |
 
-### iTerm2 native windows (macOS)
+`open_in` and `tmux.enabled` compose: with tmux on, windowed launches are
+tracked (`●`, `x`, re-enter); with it off, windows are untracked.
 
-With one small companion script, `open_in: "window"` opens every resume/new
-session as a **genuine iTerm2 window** — `sm` itself stays exactly where you
-ran it. Works both for local development on the Mac and over SSH.
+## Opening launches in new windows
 
-How it works: pressing `enter` makes `sm` write an invisible [custom control
-sequence](https://iterm2.com/python-api/customcontrol.html) to your
-terminal — it travels through SSH like any other output. An AutoLaunch
-script inside your local iTerm2 picks it up and opens a native window that
-runs the agent: locally it types the command straight into a fresh shell;
-over SSH it dials back with
-`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent's resume command>"`.
-Either way the agent lands in the same tracked tmux session `sm` already
-knows how to mark (●), kill (`x`), and re-enter — and `sm` itself never
-wraps into tmux. Closing a window is fine: the tmux session keeps running,
-and the next `enter` opens a fresh window into it. Repeating a launch whose
-window is still open just focuses that window.
+With `"open_in": "window"`, resume/new open **real terminal windows** —
+`sm` stays where it is. What kind of window depends on your terminal:
 
-**Step 1 — install the bridge (on the Mac, one command):**
+| Your terminal | Locally | Over SSH | One-time setup |
+|---|---|---|---|
+| **iTerm2** (macOS) | native window | native window on the Mac | [install the AutoLaunch script](docs/native-windows.md#iterm2-macos); over SSH also set `iterm2.ssh` |
+| **Ghostty** (macOS 1.3+, Linux 1.2+) | native window | native window on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
+| anything else | tmux window | tmux window | `tmux` on `PATH` (`sm` auto-wraps itself in a tmux session named `sm`) |
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/dukechain2333/ai-sessions-manager/main/scripts/install-iterm2.sh | sh
-```
-
-(It drops one Python file into
-`~/Library/Application Support/iTerm2/Scripts/AutoLaunch/`. No `curl`
-available? Copy `scripts/iterm2/sm_open_window.py` there by hand or with
-`scp`.)
-
-**Step 2 — two switches in iTerm2 (one-time):**
-
-1. *Settings → General → Magic →* check **Enable Python API**.
-2. Menu bar *Scripts → AutoLaunch → sm_open_window.py* to start it now
-   (it auto-starts with iTerm2 from then on). The very first run offers to
-   download iTerm2's Python runtime — accept it.
-
-You can confirm it is listening under *Scripts → Manage → Console*: pick
-`sm_open_window` and look for `[sm] bridge listening`.
-
-**Step 3 — configure `sm`:**
-
-- **Local Mac use:** nothing but the mode —
-
-  ```json
-  { "open_in": "window" }
-  ```
-
-- **Over SSH** (sm runs on the server, iTerm2 on your Mac): also tell `sm`
-  how your Mac reaches the server —
-
-  ```json
-  { "open_in": { "mode": "window", "iterm2": { "ssh": "myserver" } } }
-  ```
-
-  `iterm2.ssh` is whatever you type after `ssh` on the Mac (an alias from
-  `~/.ssh/config`, a hostname, or an IP). The new window dials a fresh
-  connection, so key-based (non-interactive) login must already work.
-
-Prefer separate windows over tabs? *Settings → General → tmux → Open tmux
-windows as: Native windows* does not apply here (no tmux integration is
-involved); the bridge always opens windows.
-
-**Troubleshooting** — pressing `enter` does nothing, or windows die
-instantly:
-- Open *Scripts → Manage → Console → sm_open_window*. Every keypress logs a
-  `[sm] payload:` and `[sm] running:` line. No lines at all → the sequence
-  never reached iTerm2 (see the next two items). Lines but no window → read
-  the logged error.
-- The script isn't running (restart it under *Scripts → AutoLaunch*) or the
-  Python API checkbox is off.
-- Over SSH: `iterm2.ssh` missing from config, or `$LC_TERMINAL` not
-  reaching the host — check `echo $LC_TERMINAL` prints `iTerm2` there; your
-  ssh setup must forward `LC_*` (macOS ssh does by default).
-- Running `sm` inside a tmux attach: `sm` auto-enables pane passthrough,
-  but a tmux older than 3.3 lacks `allow-passthrough` — run `sm` outside
-  tmux.
-- The window opens but the agent is "command not found": `sm` sends the
-  agent's directory (resolved from its own environment) and the bridge
-  prepends it to `PATH` remotely, so this should not happen — if it does,
-  check that `sm` itself can run the agent (`enter` works with
-  `mode: "current"`).
-- Shells: the generated commands are plain POSIX and are tested against
-  both zsh and bash login shells on the remote side.
-
-Security note: the bridge treats terminal output as untrusted — payloads
-are validated against strict patterns (host charset, `sm-` session-name
-shape, `claude`/`codex` argv allowlist, safe `PATH` directory) and the only
-shapes it will ever run are that `cd`+`tmux`+agent command line, locally or
-via `ssh -t --`.
-
-### Ghostty native windows (macOS & Linux)
-
-`open_in: "window"` opens genuine Ghostty windows too — same behavior as
-the iTerm2 mechanism (sm stays put, launches land in tracked tmux sessions,
-re-launching focuses the still-open window on macOS), but the plumbing
-differs because Ghostty has no script that can react to escape sequences.
-
-**Local use (sm and Ghostty on the same machine):** nothing to install.
-Set the mode and you're done:
+The common minimal configs:
 
 ```json
 { "open_in": "window" }
 ```
 
-`sm` drives Ghostty directly — on macOS through Ghostty's AppleScript
-support (Ghostty **1.3+**; the first launch pops the standard macOS
-Automation permission dialog, click Allow), on Linux through
-`ghostty +new-window` (Ghostty **1.2+**, GTK build with D-Bus; no window
-refocus dedupe there, the IPC returns no window handle).
-
-**Over SSH (sm on a server, Ghostty on your Mac or Linux desktop):**
-install `sm` on the desktop too (macOS: the [Homebrew cask](#homebrew-macos--linux);
-Linux: any install method), then connect with
-
-```sh
-sm ssh myserver          # instead of: ssh myserver
-```
-
-`sm ssh` is plain ssh plus a **window bridge**: it adds a reverse-forwarded
-unix socket (random path, mode 0600) and advertises it to the remote shell
-as `$LC_SM_BRIDGE`. A window-mode `sm` on the server sends each launch down
-that socket, and the helper on your desktop opens a Ghostty window that
-dials back with `ssh -t -- myserver "cd <dir> && tmux new-session -A -s
-sm-<agent>-<id8> <agent command>"`. Extra arguments are passed through to
-ssh and reused by the windows (`sm ssh -p 2222 myserver` works). On the
-server side the config only needs
+works as-is for local iTerm2, local Ghostty, Ghostty over `sm ssh`, and
+the tmux fallback. Only iTerm2-over-SSH needs the dial-back destination:
 
 ```json
-{ "open_in": "window" }
+{ "open_in": { "mode": "window", "iterm2": { "ssh": "myserver" } } }
 ```
 
-— no host to configure: new windows always dial the destination you typed
-after `sm ssh`, never anything the server asks for. Requirements:
+In all native modes the windows run the same tracked tmux sessions as
+everywhere else (`●`, `x`, re-enter), closing a window never kills the
+session, and repeating a launch focuses its still-open window. **The full
+guide — setup steps, how each mechanism works, troubleshooting, and the
+security model — lives in [docs/native-windows.md](docs/native-windows.md).**
 
-- key-based (non-interactive) login, since each window opens a fresh
-  connection;
-- the server's sshd must accept `LC_*` environment variables — the stock
-  Debian/Ubuntu `AcceptEnv LANG LC_*` default is enough (the same rule the
-  iTerm2 mechanism relies on for `LC_TERMINAL`);
-- `tmux` on the server if you also want tracking (`tmux.enabled`).
+## tmux integration
 
-**Troubleshooting:**
-- "window bridge not reachable — reconnect with `sm ssh`": the shell still
-  carries a stale `$LC_SM_BRIDGE` (typical inside a long-lived server-side
-  tmux attached from a new connection). Launch from a shell of the current
-  `sm ssh` session, or `tmux set-environment -g LC_SM_BRIDGE <new value>`.
-- `echo $LC_SM_BRIDGE` empty on the server → sshd rejected the variable;
-  add `AcceptEnv LC_*` to `/etc/ssh/sshd_config`.
-- `sm ssh` says it is connecting **without** the window bridge → the local
-  terminal isn't Ghostty (it checks `$TERM_PROGRAM`), or on Linux the
-  `ghostty` binary isn't on `PATH`.
-- macOS: if you once denied the Automation prompt, re-enable it under
-  *System Settings → Privacy & Security → Automation → Ghostty*.
-- Debug log: `SM_BRIDGE_DEBUG=1 sm ssh myserver` prints every payload the
-  helper accepts or rejects.
-
-The same security rules as the iTerm2 bridge apply — payloads coming out
-of the tunnel are untrusted and validated against the same allowlists —
-plus one tightening unique to `sm ssh`: the destination embedded in new
-windows is always the one from your own command line; a host name arriving
-in a payload is ignored outright.
-
-### tmux integration
-
-- A session with a live tmux shows a `●` marker; a project header shows `●`
-  when any of its sessions has one.
-- `x` kills the selected session's tmux; on a project header it kills all of
-  that project's tmux (after a confirm).
-- Killing a tmux outside `sm` (e.g. `tmux kill-session`) is detected
-  automatically — the marker clears on the next refresh.
-- Known edge: a **new** session's tmux is linked to its list row on the next
-  rescan by matching the newest session in that directory; starting two new
-  sessions in the same directory before returning can label them in either
-  order (both stay killable from the project header).
-- With `open_in: "window"`, tracked launches are tmux *windows* (named
-  `sm-<agent>-<id8>`) instead of detached sessions; ●, `x`, and adoption
-  work the same, and `enter` on a live one switches to its window.
+- A session with a live tmux shows a `●` marker; a project header shows
+  `●` when any of its sessions has one.
+- `x` kills the selected session's tmux; on a project header, all of that
+  project's (after a confirm). Kills done outside `sm` are noticed
+  automatically.
+- Known edge: a **new** session's tmux is linked to its list row on the
+  next rescan by matching the newest session in that directory; starting
+  two new sessions in the same directory before returning can label them
+  in either order (both stay killable from the project header).
 
 ## Uninstall
 
 ```sh
-rm -f ~/.local/bin/sm            # or wherever you installed it
-# packaged installs:
-sudo dpkg -r ai-sessions-manager # deb
-sudo rpm -e ai-sessions-manager  # rpm
 brew uninstall sm                # homebrew
+sudo apt remove ai-sessions-manager  # apt / deb
+sudo rpm -e ai-sessions-manager  # rpm
+rm -f ~/.local/bin/sm            # script / manual installs
 ```
-
-## Releasing
-
-Releases are automated with [GoReleaser](https://goreleaser.com) and GitHub
-Actions. Pushing a version tag builds the binaries, `.deb`/`.rpm` packages,
-archives, and checksums, publishes a GitHub Release, updates the Homebrew cask
-(tap `dukechain2333/homebrew-tap`), and refreshes the APT repo — all from the
-one tag:
-
-```sh
-git tag v0.3.0
-git push origin v0.3.0
-```
-
-The Homebrew tap and its `HOMEBREW_TAP_GITHUB_TOKEN` secret are already
-configured; without the secret a release still succeeds and just skips the
-cask.
 
 ## Development
 
@@ -509,10 +259,17 @@ make vet     # go vet ./...
 make build   # ./sm
 ```
 
-Architecture: `internal/store` is a UI-free reader over the session `.jsonl`
-files (scan, metadata parse, transcript, trash); `internal/ui` is the
-[Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI. Design notes and
-the implementation plan live under `docs/superpowers/`.
+Architecture: `internal/store` is a UI-free reader over the session
+`.jsonl` files; `internal/ui` is the
+[Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI;
+`internal/bridge` + `internal/ghostty` + `scripts/iterm2/` implement the
+[native-window launchers](docs/native-windows.md). Design notes live under
+`docs/`.
+
+Releases are automated: pushing a `v*` tag runs
+[GoReleaser](https://goreleaser.com) — binaries, `.deb`/`.rpm`, the GitHub
+Release, the Homebrew tap, and the APT repo all come from that one tag
+(prerelease tags feed only the [beta channel](#install)).
 
 ## License
 
