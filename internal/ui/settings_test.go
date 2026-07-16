@@ -273,8 +273,14 @@ func TestSettingsSaveDoesNotHotApply(t *testing.T) {
 	origOpenIn := sm.openIn
 	origStyles := sm.st
 
+	// Change every category of setting the runtime could hot-apply: the
+	// bool, the openIn enum, and a color — so each assertion below actually
+	// discriminates (origOpenIn is "current", origStyles use the default
+	// claude light).
 	sm.setForm.TmuxEnabled = true
 	sm.setForm.View = "tabs"
+	sm.setForm.OpenIn = config.OpenInWindow
+	sm.setForm.Claude.Light = "#000001"
 
 	m2, _ := sm.handleDialogKey(runeKey("s"))
 	sm = m2.(Model)
