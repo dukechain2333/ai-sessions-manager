@@ -505,6 +505,20 @@ func TestErrorDialogClickDismisses(t *testing.T) {
 	}
 }
 
+func TestInfoDialogClickDismisses(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogInfo
+	m.errText = "Saved — restart sm to apply"
+	m2, _ := m.Update(click(3, 3)) // anywhere
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Error("any click must dismiss the info dialog")
+	}
+	if m.errText != "" {
+		t.Errorf("dismissing the info dialog must clear errText, got %q", m.errText)
+	}
+}
+
 // shortTempDir returns a real, empty directory with a short, fixed-length
 // name. Unlike t.TempDir(), whose path embeds the full (sub)test name, this
 // keeps the rendered picker dialog's width independent of the caller's test

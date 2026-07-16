@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -246,6 +247,91 @@ func TestSettingsSaveFailureKeepsForm(t *testing.T) {
 	}
 	if sm.setForm.View != "tabs" {
 		t.Error("failed save must preserve the form for a retry")
+	}
+}
+
+func TestSettingsQClosesWithoutSaving(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	saved := false
+	sm.saveConfig = func(string, config.Config) error { saved = true; return nil }
+	sm.setForm.View = "tabs" // dirty the form, then abandon it
+	m2, _ := sm.handleDialogKey(runeKey("q"))
+	sm = m2.(Model)
+	if sm.dialog != dialogNone {
+		t.Errorf("q should close the dialog, got %v", sm.dialog)
+	}
+	if saved {
+		t.Error("q must not write the config")
+	}
+}
+
+func TestSettingsSaveDoesNotHotApply(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.saveConfig = func(string, config.Config) error { return nil }
+
+	origTmuxEnabled := sm.tmuxEnabled
+	origOpenIn := sm.openIn
+	origStyles := sm.st
+
+	sm.setForm.TmuxEnabled = true
+	sm.setForm.View = "tabs"
+
+	m2, _ := sm.handleDialogKey(runeKey("s"))
+	sm = m2.(Model)
+
+	if sm.tmuxEnabled != origTmuxEnabled {
+		t.Errorf("saving must not hot-apply tmuxEnabled: got %v, want %v", sm.tmuxEnabled, origTmuxEnabled)
+	}
+	if sm.openIn != origOpenIn {
+		t.Errorf("saving must not hot-apply openIn: got %q, want %q", sm.openIn, origOpenIn)
+	}
+	if !reflect.DeepEqual(sm.st, origStyles) {
+		t.Error("saving must not hot-apply styles")
+	}
+	if sm.cfg.View != "tabs" {
+		t.Errorf("m.cfg must reflect the saved form, got %+v", sm.cfg)
+	}
+}
+
+func TestSettingsCommitEmptyText(t *testing.T) {
+	cfg := config.Default()
+	cfg.ITerm2SSH = "x"
+	m := New("/nope", "/nope", "", cfg)
+	m2, _ := m.Update(scanDoneMsg{sessions: testSessions()})
+	sm := openSettingsDialog(t, m2.(Model))
+	sm.setCursor = 2 // iterm2 ssh
+	m3, _ := sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m3.(Model)
+	sm.setInput.SetValue("")
+	m3, _ = sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m3.(Model)
+	if sm.setEditing {
+		t.Error("committing an empty value should still exit edit mode")
+	}
+	if sm.setErr != "" {
+		t.Errorf("committing an empty value must not set an error, got %q", sm.setErr)
+	}
+	if sm.setForm.ITerm2SSH != "" {
+		t.Errorf("committed value = %q, want empty string", sm.setForm.ITerm2SSH)
+	}
+}
+
+func TestSettingsCommitValidHex(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.setCursor = 4 // claude light
+	m2, _ := sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	sm.setInput.SetValue("#123ABC")
+	m2, _ = sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	if sm.setForm.Claude.Light != "#123ABC" {
+		t.Errorf("committed value = %q, want #123ABC", sm.setForm.Claude.Light)
+	}
+	if sm.setEditing {
+		t.Error("valid hex commit should exit edit mode")
+	}
+	if sm.setErr != "" {
+		t.Errorf("valid hex commit must not set an error, got %q", sm.setErr)
 	}
 }
 

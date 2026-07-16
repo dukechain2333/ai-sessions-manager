@@ -272,7 +272,7 @@ func (m Model) handleDialogMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	cy := msg.Y - y0 - m.st.DialogBox.GetBorderTopSize() - m.st.DialogBox.GetPaddingTop()
 
 	switch m.dialog {
-	case dialogError:
+	case dialogError, dialogInfo:
 		// "press any key" — any click counts
 		return m.handleDialogKey(tea.KeyMsg{Type: tea.KeyEsc})
 
