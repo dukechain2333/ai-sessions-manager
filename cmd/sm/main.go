@@ -87,7 +87,7 @@ func main() {
 			}
 		}
 	}
-	p := tea.NewProgram(ui.New(*projectsDir, *codexDir, cfg), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(ui.New(*projectsDir, *codexDir, path, cfg), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "sm:", err)
 		os.Exit(1)

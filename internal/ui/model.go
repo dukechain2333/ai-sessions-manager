@@ -96,6 +96,18 @@ type Model struct {
 	bridgePath  string // sm ssh reverse-tunnel socket ("" = no bridge)
 	st          styles
 
+	// settings dialog state; cfg is the startup file config (pre-downgrade —
+	// the tmux/open_in fallbacks below adjust the runtime fields only), so
+	// the form always seeds from what the file said, not degraded state.
+	cfg        config.Config
+	configPath string
+	saveConfig func(string, config.Config) error // injected for tests
+	setForm    config.Config                     // working copy while the dialog is open
+	setCursor  int
+	setEditing bool
+	setErr     string // inline row/save error
+	setInput   textinput.Model
+
 	list        listPane
 	preview     viewport.Model
 	filterInput textinput.Model
@@ -159,7 +171,7 @@ type Model struct {
 	curHit    int
 }
 
-func New(projectsDir, codexDir string, cfg config.Config) Model {
+func New(projectsDir, codexDir, configPath string, cfg config.Config) Model {
 	st := stylesWithColors(cfg.Claude, cfg.Codex)
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
@@ -168,12 +180,18 @@ func New(projectsDir, codexDir string, cfg config.Config) Model {
 	di := textinput.New()
 	di.Placeholder = "…or type a path"
 	di.Prompt = "> "
+	si := textinput.New()
+	si.Prompt = ""
 	provs := []store.Provider{store.NewClaudeProvider(projectsDir)}
 	if cp := store.NewCodexProvider(codexDir); cp.Available() {
 		provs = append(provs, cp)
 	}
 	ret := Model{
 		projectsDir:   projectsDir,
+		cfg:           cfg,
+		configPath:    configPath,
+		saveConfig:    config.Save,
+		setInput:      si,
 		st:            st,
 		list:          listPane{styles: st, groupByProject: true},
 		filterInput:   fi,
