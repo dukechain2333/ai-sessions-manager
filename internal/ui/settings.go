@@ -94,6 +94,34 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dialog = dialogNone
 		m.setErr = ""
 		return m, nil
+	case "enter", " ", "left", "right", "h", "l":
+		return m.activateSettingRow(rows[m.setCursor], msg.String())
+	}
+	return m, nil
+}
+
+// activateSettingRow applies the "change" keys to the row under the cursor:
+// enums cycle (backward on h/←), bools toggle, text rows open the editor
+// (Task 5).
+func (m Model) activateSettingRow(row settingRow, key string) (tea.Model, tea.Cmd) {
+	switch row.kind {
+	case settingEnum:
+		delta := 1
+		if key == "h" || key == "left" {
+			delta = -1
+		}
+		cur := row.get(&m.setForm)
+		idx := 0
+		for i, o := range row.options {
+			if o == cur {
+				idx = i
+			}
+		}
+		row.set(&m.setForm, row.options[(idx+delta+len(row.options))%len(row.options)])
+	case settingBool:
+		if key == "enter" || key == " " {
+			row.set(&m.setForm, strconv.FormatBool(row.get(&m.setForm) != "true"))
+		}
 	}
 	return m, nil
 }

@@ -89,3 +89,44 @@ func TestSettingsViewRendersEveryRow(t *testing.T) {
 		}
 	}
 }
+
+func TestSettingsEnumCycles(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.setCursor = 0 // view: list ⇄ tabs
+	press := func(k string) {
+		m2, _ := sm.handleDialogKey(runeKey(k))
+		sm = m2.(Model)
+	}
+	press("l")
+	if sm.setForm.View != "tabs" {
+		t.Errorf("l should cycle view to tabs, got %q", sm.setForm.View)
+	}
+	press("l") // wraps
+	if sm.setForm.View != "list" {
+		t.Errorf("cycling past the end should wrap to list, got %q", sm.setForm.View)
+	}
+	press("h") // backward wraps too
+	if sm.setForm.View != "tabs" {
+		t.Errorf("h should cycle backward (wrapping), got %q", sm.setForm.View)
+	}
+	m2, _ := sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	if sm.setForm.View != "list" {
+		t.Errorf("enter should cycle forward, got %q", sm.setForm.View)
+	}
+}
+
+func TestSettingsBoolToggles(t *testing.T) {
+	sm := openSettingsDialog(t, newTestModel())
+	sm.setCursor = 3 // tmux enabled
+	m2, _ := sm.handleDialogKey(runeKey(" "))
+	sm = m2.(Model)
+	if !sm.setForm.TmuxEnabled {
+		t.Error("space should toggle tmux on")
+	}
+	m2, _ = sm.handleDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	sm = m2.(Model)
+	if sm.setForm.TmuxEnabled {
+		t.Error("enter should toggle tmux back off")
+	}
+}
