@@ -338,7 +338,7 @@ func TestNonLeftPressesIgnored(t *testing.T) {
 }
 
 func TestHelpBarTextUnchanged(t *testing.T) {
-	want := " ↵ resume  tab focus  n new  d delete  / filter  s search  g group  a agent  v view  space fold  e empty  r rescan  q quit"
+	want := " ↵ resume  tab focus  n new  d delete  / filter  s search  g group  a agent  v view  space fold  e empty  r rescan  , settings  q quit"
 	if helpLineFor(helpBar) != want {
 		t.Fatalf("help bar text changed — it must stay byte-identical\n got: %q\nwant: %q", helpLineFor(helpBar), want)
 	}
@@ -378,7 +378,7 @@ func TestClickHelpBarGapIsNoop(t *testing.T) {
 
 func TestClickHelpQuitReturnsQuit(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(click(lipgloss.Width(m.projectLabelText())+118, 29)) // inside "q quit" [116,121]
+	_, cmd := m.Update(click(lipgloss.Width(m.projectLabelText())+130, 29)) // inside "q quit" [128,133]
 	if cmd == nil {
 		t.Fatal("clicking 'q quit' must return a command")
 	}
@@ -502,6 +502,20 @@ func TestErrorDialogClickDismisses(t *testing.T) {
 	m = m2.(Model)
 	if m.dialog != dialogNone {
 		t.Error("any click must dismiss the error dialog")
+	}
+}
+
+func TestInfoDialogClickDismisses(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogInfo
+	m.errText = "Saved — restart sm to apply"
+	m2, _ := m.Update(click(3, 3)) // anywhere
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Error("any click must dismiss the info dialog")
+	}
+	if m.errText != "" {
+		t.Errorf("dismissing the info dialog must clear errText, got %q", m.errText)
 	}
 }
 

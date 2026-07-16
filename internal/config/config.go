@@ -187,3 +187,66 @@ func applyColors(dst *AgentColors, src *fileColors) {
 		dst.Dark = src.Dark
 	}
 }
+
+// ValidHex reports whether s is a #RRGGBB hex color — the same rule Load
+// applies to color keys.
+func ValidHex(s string) bool {
+	return hexRE.MatchString(s)
+}
+
+// saveFile mirrors DefaultFileJSON's canonical shape. Save always writes
+// the object form of open_in and every known key; the parser knows no
+// other keys, so a full rewrite loses nothing.
+type saveFile struct {
+	View   string     `json:"view"`
+	OpenIn saveOpenIn `json:"open_in"`
+	Tmux   saveTmux   `json:"tmux"`
+	Colors saveColors `json:"colors"`
+}
+
+type saveOpenIn struct {
+	Mode   string     `json:"mode"`
+	ITerm2 saveITerm2 `json:"iterm2"`
+}
+
+type saveITerm2 struct {
+	SSH string `json:"ssh"`
+}
+
+type saveTmux struct {
+	Enabled bool `json:"enabled"`
+}
+
+type saveColors struct {
+	Claude saveAgentColors `json:"claude"`
+	Codex  saveAgentColors `json:"codex"`
+}
+
+type saveAgentColors struct {
+	Light string `json:"light"`
+	Dark  string `json:"dark"`
+}
+
+// Save writes cfg to path in the canonical config.json shape, creating
+// parent directories. It rewrites the whole file; user formatting and
+// shorthand forms are normalized away.
+func Save(path string, cfg Config) error {
+	f := saveFile{
+		View:   cfg.View,
+		OpenIn: saveOpenIn{Mode: cfg.OpenIn, ITerm2: saveITerm2{SSH: cfg.ITerm2SSH}},
+		Tmux:   saveTmux{Enabled: cfg.TmuxEnabled},
+		Colors: saveColors{
+			Claude: saveAgentColors{Light: cfg.Claude.Light, Dark: cfg.Claude.Dark},
+			Codex:  saveAgentColors{Light: cfg.Codex.Light, Dark: cfg.Codex.Dark},
+		},
+	}
+	data, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}

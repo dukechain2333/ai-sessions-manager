@@ -171,14 +171,14 @@ func TestInteriorMoveDoesNotRing(t *testing.T) {
 }
 
 func TestNewBuildsProviders(t *testing.T) {
-	m := New("/nope/claude", "/nope/codex", config.Default())
+	m := New("/nope/claude", "/nope/codex", "", config.Default())
 	if len(m.providers) == 0 {
 		t.Error("expected at least the claude provider")
 	}
 }
 
 func newTestModel() Model {
-	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", config.Default())
+	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", "", config.Default())
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
 	m2, _ = m.Update(scanDoneMsg{sessions: testSessions()})
@@ -258,7 +258,7 @@ func TestTmuxMissingAtStartupDisablesAndWarns(t *testing.T) {
 	defer func() { tmuxLookPath = orig }()
 	cfg := config.Default()
 	cfg.TmuxEnabled = true
-	m := New("/nope", "/nope", cfg)
+	m := New("/nope", "/nope", "", cfg)
 	if m.tmuxEnabled {
 		t.Error("missing tmux should disable integration")
 	}
@@ -717,7 +717,7 @@ func TestAdoptionRunsAgainstEnrichedSessionsOnEnrichDone(t *testing.T) {
 // injected below via scanDoneMsg.
 func newTwoAgentModel(t *testing.T) Model {
 	t.Helper()
-	m := New(t.TempDir(), "/nonexistent-codex-dir", config.Default())
+	m := New(t.TempDir(), "/nonexistent-codex-dir", "", config.Default())
 	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
@@ -833,11 +833,11 @@ func TestTitleTabsNeedTwoProviders(t *testing.T) {
 func TestStartupModeFromConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.View = "tabs"
-	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", cfg)
+	m := New("/nonexistent-projects-dir", "/nonexistent-codex-dir", "", cfg)
 	if m.list.Agent() != store.AgentClaude {
 		t.Errorf("config view=tabs: agent=%q, want the claude tab view", m.list.Agent())
 	}
-	m = New("/nonexistent-projects-dir", t.TempDir(), cfg) // codex registers, claude dir missing
+	m = New("/nonexistent-projects-dir", t.TempDir(), "", cfg) // codex registers, claude dir missing
 	if m.list.Agent() != store.AgentCodex {
 		t.Errorf("claude dir missing: startup tab view = %q, want codex", m.list.Agent())
 	}
@@ -891,7 +891,7 @@ func TestSwitchKeepsFilterApplied(t *testing.T) {
 func TestFirstListVisitAfterTabsStartupSelectsSession(t *testing.T) {
 	cfg := config.Default()
 	cfg.View = "tabs"
-	m := New(t.TempDir(), "/nonexistent-codex-dir", cfg)
+	m := New(t.TempDir(), "/nonexistent-codex-dir", "", cfg)
 	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
@@ -926,7 +926,7 @@ func TestTitleRowTruncatesToWidth(t *testing.T) {
 }
 
 func TestVBeforeScanThenBackSelectsSession(t *testing.T) {
-	m := New(t.TempDir(), "/nonexistent-codex-dir", config.Default())
+	m := New(t.TempDir(), "/nonexistent-codex-dir", "", config.Default())
 	m.providers = append(m.providers, store.NewCodexProvider(t.TempDir()))
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = m2.(Model)
@@ -1004,7 +1004,7 @@ func TestWindowModeNeedsTmuxOnPath(t *testing.T) {
 func TestNewCarriesOpenInFromConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.OpenIn = config.OpenInWindow
-	m := New("/nope", "/nope", cfg)
+	m := New("/nope", "/nope", "", cfg)
 	if m.openIn != config.OpenInWindow {
 		t.Errorf("openIn = %q, want window", m.openIn)
 	}
@@ -1202,7 +1202,7 @@ func TestWindowModeWithoutTmuxFallsBackAtStartup(t *testing.T) {
 	defer func() { tmuxLookPath, iTerm2Env = orig, origIT }()
 	cfg := config.Default()
 	cfg.OpenIn = config.OpenInWindow
-	m := New("/nope", "/nope", cfg)
+	m := New("/nope", "/nope", "", cfg)
 	if m.openIn != config.OpenInCurrent {
 		t.Errorf("openIn = %q, want fallback to current", m.openIn)
 	}
@@ -1221,7 +1221,7 @@ func TestITerm2WindowModeSurvivesMissingTmuxAtStartup(t *testing.T) {
 	cfg := config.Default()
 	cfg.OpenIn = config.OpenInWindow
 	cfg.ITerm2SSH = "myhost"
-	m := New("/nope", "/nope", cfg)
+	m := New("/nope", "/nope", "", cfg)
 	if m.openIn != config.OpenInWindow {
 		t.Errorf("openIn = %q, want window preserved", m.openIn)
 	}
@@ -1516,7 +1516,7 @@ func TestNewNoDowngradeWithBridge(t *testing.T) {
 	t.Cleanup(func() { tmuxLookPath, iTerm2Env, bridgeSock = origLook, origIT, origBr })
 	cfg := config.Default()
 	cfg.OpenIn = config.OpenInWindow
-	m := New("/nope", "/nope", cfg)
+	m := New("/nope", "/nope", "", cfg)
 	if m.openIn != config.OpenInWindow || m.dialog == dialogError {
 		t.Errorf("bridge must survive missing tmux: openIn=%q dialog=%v %q", m.openIn, m.dialog, m.errText)
 	}
@@ -1573,5 +1573,20 @@ func TestGhosttyOverSSHStaysOff(t *testing.T) {
 	m.openIn = config.OpenInWindow
 	if m.nativeWindows() {
 		t.Error("forwarded TERM_PROGRAM over ssh must not enable native windows")
+	}
+}
+
+func TestNewRetainsConfigAndPath(t *testing.T) {
+	cfg := config.Default()
+	cfg.ITerm2SSH = "generalserver"
+	m := New("/nope", "/nope", "/tmp/x/config.json", cfg)
+	if m.configPath != "/tmp/x/config.json" {
+		t.Errorf("configPath = %q, want /tmp/x/config.json", m.configPath)
+	}
+	if m.cfg.ITerm2SSH != "generalserver" {
+		t.Errorf("cfg not retained: %+v", m.cfg)
+	}
+	if m.saveConfig == nil {
+		t.Error("saveConfig hook must default to config.Save")
 	}
 }

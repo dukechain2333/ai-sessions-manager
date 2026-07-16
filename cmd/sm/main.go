@@ -17,7 +17,7 @@ import (
 	"github.com/dukechain2333/ai-sessions-manager/internal/ui"
 )
 
-var version = "0.5.0-beta.3"
+var version = "0.5.0"
 
 func main() {
 	// `sm ssh <destination>`: the desktop-side window-bridge helper, an
@@ -87,7 +87,7 @@ func main() {
 			}
 		}
 	}
-	p := tea.NewProgram(ui.New(*projectsDir, *codexDir, cfg), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(ui.New(*projectsDir, *codexDir, path, cfg), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "sm:", err)
 		os.Exit(1)

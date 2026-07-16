@@ -133,6 +133,7 @@ sm --version
 | `x` | kill the selected session's tmux; on a project header, all of that project's (with confirm) |
 | `e` | show / hide "empty" sessions (hook-only, no real prompts) |
 | `r` | rescan |
+| `,` | settings (edit `config.json` in-app; saved changes apply on restart) |
 | `q` | quit |
 
 ### Mouse
@@ -176,6 +177,10 @@ On first run `sm` writes this default `config.json` to
 `$XDG_CONFIG_HOME/sm/config.json` (usually `~/.config/sm/config.json`);
 point elsewhere with `--config`. Editing is optional, `sm` never overwrites
 your changes, and a malformed file falls back to defaults with a notice.
+
+You can also press `,` inside `sm` to edit every setting in a dialog —
+saving rewrites `config.json` in the canonical shape; changes apply the
+next time `sm` starts.
 
 ```json
 {
