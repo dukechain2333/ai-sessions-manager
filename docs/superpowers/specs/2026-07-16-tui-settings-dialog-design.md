@@ -72,8 +72,8 @@ startup (defaults already filled in).
 - While not editing a row: `s` saves, `esc`/`q` closes discarding changes.
 - Save success → dialog closes, info dialog shows "Saved — restart sm to
   apply" (reuses the existing error-dialog rendering). Save failure (e.g.
-  unwritable path) → error dialog with the underlying error; settings
-  changes are kept in the form so the user can retry.
+  unwritable path) → the settings dialog stays open with the underlying
+  error shown inline, so the form is preserved and the user can retry.
 
 ## Code changes
 
@@ -106,7 +106,7 @@ startup (defaults already filled in).
 
 ## Error handling
 
-- Unwritable config path → error dialog, form state preserved.
+- Unwritable config path → inline error in the dialog, form state preserved.
 - Invalid hex on commit → inline row error, edit mode retained.
 - No concurrency handling: last write wins over concurrent hand-edits
   (accepted consequence of full-rewrite).
