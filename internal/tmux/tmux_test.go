@@ -1,6 +1,8 @@
 package tmux
 
 import (
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -143,5 +145,54 @@ func TestParseSelfWindow(t *testing.T) {
 	}
 	if got := parseSelfWindow("@1\tother\n\n"); got != "" {
 		t.Errorf("no sm window should yield empty, got %q", got)
+	}
+}
+
+// startIsolatedTmux points every tmux invocation in this test at a private
+// socket dir and starts one detached session there. The user's real tmux
+// server is never touched. Skips when tmux is not installed.
+func startIsolatedTmux(t *testing.T, name, cwd string) {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	t.Setenv("TMUX", "") // never nest inside a surrounding tmux
+	if out, err := exec.Command("tmux", "new-session", "-d", "-s", name, "-c", cwd).CombinedOutput(); err != nil {
+		t.Fatalf("tmux new-session: %v: %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-server").Run() })
+}
+
+// Regression: on tmux 3.4, display-message -t "=name" is parsed as a
+// target-pane and silently yields "" (exit 0), which made adoption skip
+// every pending session forever. The session form must resolve exactly
+// AND return the real pane_current_path.
+func TestExecPathSessionForm(t *testing.T) {
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "sm-claude-pending-42"
+	startIsolatedTmux(t, name, cwd)
+	got, err := Exec{}.Path(name)
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != cwd {
+		t.Errorf("Path = %q, want %q", got, cwd)
+	}
+}
+
+// Exact match must hold: a name that is only a prefix of a live session
+// (no exact match) must not resolve to that session's path.
+func TestExecPathExactMatch(t *testing.T) {
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	startIsolatedTmux(t, "sm-claude-pending-425", cwd)
+	if got, err := (Exec{}).Path("sm-claude-pending-42"); err == nil && got == cwd {
+		t.Errorf("Path resolved a prefix to %q; want no match", got)
 	}
 }

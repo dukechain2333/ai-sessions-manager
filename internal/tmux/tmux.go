@@ -226,7 +226,11 @@ func (e Exec) Rename(from, to string) error {
 }
 
 func (e Exec) Path(name string) (string, error) {
-	target := "=" + name
+	// display-message's -t is a target-PANE: a bare "=name" is parsed in
+	// pane context where "=" is not honored, and tmux (3.4) silently prints
+	// "" with exit 0 — which made adoption skip every pending session. The
+	// trailing ":" forces session-context parsing, keeping the exact match.
+	target := "=" + name + ":"
 	if !hasSession(name) {
 		if id, _, ok := e.Window(name); ok {
 			target = id
