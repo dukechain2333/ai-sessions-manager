@@ -1,9 +1,22 @@
-# sm — AI sessions manager
+<div align="center">
 
-A single-binary terminal UI that finds your local AI coding-agent sessions —
-**Claude Code**, and **OpenAI Codex** when present — groups them by project,
-previews the transcript, and drops you back into any conversation with one
-keypress, in the directory the session originally lived in.
+# ✻ sm
+
+**AI sessions manager** — every local **Claude Code** and **OpenAI Codex**
+conversation in one terminal UI: grouped by project, previewed live, and
+one keypress from picking up exactly where you left off.
+
+[![Release](https://img.shields.io/github/v/release/dukechain2333/ai-sessions-manager?sort=semver&color=D97757)](https://github.com/dukechain2333/ai-sessions-manager/releases)
+[![CI](https://github.com/dukechain2333/ai-sessions-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/dukechain2333/ai-sessions-manager/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/github/go-mod/go-version/dukechain2333/ai-sessions-manager)](go.mod)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue)
+[![License: MIT](https://img.shields.io/github/license/dukechain2333/ai-sessions-manager?color=green)](LICENSE)
+
+**English** · [简体中文](README.zh-CN.md)
+
+</div>
+
+---
 
 ```
 ✻ sm · AI Sessions   52 sessions
@@ -20,6 +33,12 @@ keypress, in the directory the session originally lived in.
 ╰────────────────────────────────────╯╰─────────────────────────────────────╯
  ↵ resume  tab focus  n new  d delete  / filter  a agent  g group  q quit
 ```
+
+Your coding-agent sessions pile up as `.jsonl` files across dozens of
+directories — impossible to track once you work in more than a few places.
+`sm` is a single-binary TUI that gathers them into one browsable,
+searchable list and drops you back into any conversation, in the directory
+the session originally lived in.
 
 ## Features
 
