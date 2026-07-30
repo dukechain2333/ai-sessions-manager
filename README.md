@@ -209,6 +209,41 @@ next time `sm` starts.
 `open_in` and `tmux.enabled` compose: with tmux on, windowed launches are
 tracked (`●`, `x`, re-enter); with it off, windows are untracked.
 
+## Terminal support
+
+The TUI itself runs in any terminal, including inside tmux — browsing,
+search, and `open_in: "current"` (resume in the terminal you're already
+in) work everywhere and need nothing below.
+
+Your terminal starts to matter when launches should open **elsewhere**
+(`open_in: "window"`). `sm` detects the terminal it is running in —
+nothing to configure — and picks the best mechanism it has for it:
+
+| Terminal | Platforms | Launches open as | Mechanism | Repeating a launch |
+|---|---|---|---|---|
+| **iTerm2** | macOS | native window | custom escape sequence → AutoLaunch bridge script | focuses the open window |
+| **Ghostty** | macOS 1.3+, Linux 1.2+ | native window | AppleScript / `ghostty +new-window` | focuses it (macOS); fresh window (Linux) |
+| **Warp** | macOS & Linux, Stable only | native **tab** in the frontmost window | Tab Config file + `warp://` URI | fresh tab (Warp returns no handle to focus) |
+| anything else | anywhere | tmux window | `sm` wraps itself in a tmux session | jumps to the window |
+
+Worth knowing:
+
+- Over plain `ssh`, only iTerm2 can open windows back on your desktop —
+  its escape sequences travel with the connection. For Ghostty and Warp,
+  connect with **`sm ssh <host>`** instead of `ssh`: same session, plus a
+  window bridge.
+- Inside tmux, launches still route to the terminal that owns the
+  session: the env markers are inherited, so a tmux server started in
+  one terminal keeps routing there even when you attach from another.
+- With tmux tracking on, duplicate launches collapse into one tmux
+  session no matter how many windows or tabs mirror it.
+- Warp Preview is unsupported (different URI scheme and config dir); use
+  Warp Stable.
+
+Config knobs and one-time setup are in the next section; the deep dive —
+how each mechanism works, troubleshooting, the security model — is
+[docs/native-windows.md](docs/native-windows.md).
+
 ## Opening launches in new windows
 
 With `"open_in": "window"`, resume/new open **real terminal windows** —
