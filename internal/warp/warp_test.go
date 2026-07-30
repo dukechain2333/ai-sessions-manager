@@ -20,7 +20,7 @@ func TestNewAcceptsWarpEnv(t *testing.T) {
 	t.Setenv("WARP_TERMINAL_SESSION_UUID", "")
 	o, err := New()
 	if err != nil {
-		t.Skipf("environment cannot host Warp windows: %v", err) // linux without xdg-open
+		t.Skipf("environment cannot host Warp tabs: %v", err) // linux without xdg-open
 	}
 	if o.dir == "" || !strings.Contains(o.dir, "tab_configs") {
 		t.Errorf("dir = %q, want a tab_configs path", o.dir)

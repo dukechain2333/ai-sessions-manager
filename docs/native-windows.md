@@ -184,7 +184,8 @@ Same behavior again, third plumbing: Warp has no scripting dictionary and
 no local-window CLI, so `sm` writes a **Tab Config** file —
 `~/.warp/tab_configs/sm.toml` (Linux:
 `~/.local/share/warp-terminal/tab_configs/`), rewritten on every launch —
-and asks Warp to open it via the `warp://tab_config/sm` URI — a new tab in the frontmost Warp window.
+and asks Warp to open it via the `warp://tab_config/sm` URI. This opens a
+new tab in the frontmost Warp window.
 
 ### Local (sm and Warp on the same machine)
 
@@ -198,8 +199,9 @@ Nothing to install. Set the mode and you're done:
 
 Identical to the Ghostty flow: install `sm` on the desktop, connect with
 `sm ssh myserver`, and window-mode launches on the server open native
-Warp tabs (in the frontmost Warp window) on the desktop that dial back. Requirements and the bridge
-troubleshooting list in the Ghostty section above apply unchanged.
+Warp tabs (new tabs in the frontmost Warp window) on the desktop that dial
+back. Requirements and the bridge troubleshooting list in the Ghostty
+section above apply unchanged.
 
 ### Warp-specific notes
 

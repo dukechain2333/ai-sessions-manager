@@ -57,7 +57,7 @@ func New() (*Opener, error) {
 		o.dir = filepath.Join(data, "warp-terminal", "tab_configs")
 		return o, nil
 	}
-	return nil, errors.New("Warp windows are not supported on " + o.goos)
+	return nil, errors.New("Warp tabs are not supported on " + o.goos)
 }
 
 // runOut runs a command with a hang guard and returns its stdout; stderr
@@ -118,10 +118,11 @@ func tomlString(s string) string {
 	return b.String()
 }
 
-// Open runs line in a native Warp tab — a new tab in the frontmost Warp window:
-// land the Tab Config, then deliver the URI. key is accepted for the bridge.Handler shape and
-// ignored — no tab handle comes back, so there is nothing to refocus.
-// Past a successful open/xdg-open exit the launch is fire-and-forget.
+// Open runs line in a native Warp tab (a new tab in the frontmost window):
+// land the Tab Config, then deliver the URI. key is accepted for the
+// bridge.Handler shape and ignored — no tab handle comes back, so there is
+// nothing to refocus. Past a successful open/xdg-open exit the launch is
+// fire-and-forget.
 func (o *Opener) Open(_, line string) error {
 	if err := o.writeConfig(renderTabConfig(line)); err != nil {
 		return errors.New("warp window: " + err.Error())

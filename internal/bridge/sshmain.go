@@ -20,7 +20,7 @@ const sshUsage = `usage: sm ssh <destination> [ssh options...]
 
 Connects like plain ssh, plus a window bridge: while the session is open,
 resuming a session in a window-mode sm on the far side opens a native
-/ Ghostty window or Warp tab on THIS machine that sshes back into
+Ghostty window or Warp tab on THIS machine that sshes back into
 <destination>.
 
 <destination> comes first (a host or ssh alias); everything after it is

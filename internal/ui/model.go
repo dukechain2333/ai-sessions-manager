@@ -443,7 +443,7 @@ var ghosttyEnv = func() bool {
 }
 
 // warpEnv reports whether the terminal is Warp AND this machine can open
-// its windows (Linux needs xdg-open to deliver the warp:// URI). tmux
+// its tabs (Linux needs xdg-open to deliver the warp:// URI). tmux
 // rewrites TERM_PROGRAM, so the inherited WARP_TERMINAL_SESSION_UUID is
 // the fallback marker. Only trusted for local launches — warpWindows
 // pairs it with !overSSH(). Overridable in tests.
