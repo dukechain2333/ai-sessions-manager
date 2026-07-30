@@ -51,6 +51,11 @@ file plus the `warp://` URI scheme. Spike-verified on Warp
   3. run `open`/`xdg-open` on `warp://tab_config/sm?new_window=true` with
      the same hang-guarded runner idiom as ghostty (`run` injected for
      tests).
+
+  Implementation note: the spike's TOML carried a `directory` key; a pane
+  without one is untested. Verify during implementation; if Warp rejects a
+  directory-less pane, emit `directory = "~"` (the `cd` in `line` still
+  decides the real working dir).
 - No window handle comes back, so no refocus dedupe (`key` is accepted and
   ignored) — the Ghostty-on-Linux precedent; duplicate tracked launches
   still collapse via `tmux new-session -A` on the target machine.
@@ -105,6 +110,10 @@ unchanged, since the socket protocol and validation are terminal-agnostic.
 5. **No refocus dedupe** (no handle available) and **no reliance on
    undocumented surfaces** (`WARP_FOCUS_URL`, Warp Control): if Warp ships
    a real open-tab CLI (issue #3959), only `Opener.Open`'s internals change.
+6. **Warp Stable only.** Warp Preview registers only the `warppreview://`
+   URI scheme and reads `~/.warp-preview/tab_configs/`, so Preview users
+   get the tmux fallback; called out in troubleshooting, not special-cased
+   in code.
 
 ## Error handling
 
@@ -140,7 +149,8 @@ unchanged, since the socket protocol and validation are terminal-agnostic.
 - `docs/native-windows.md`: a Warp section alongside iTerm2/Ghostty —
   local setup is "nothing to install", `sm ssh` works the same; notes: the
   `sm` entry visible in Warp's Tab Config pickers, no window refocus,
-  Linux Wayland `xdg-open` caveat, fire-and-forget error surface.
+  Linux Wayland `xdg-open` caveat, fire-and-forget error surface, Warp
+  Preview unsupported.
 - README: add Warp to the supported-terminals line, pointer to the guide.
 
 ## Rollout
