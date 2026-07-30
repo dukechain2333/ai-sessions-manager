@@ -1,9 +1,22 @@
-# sm — AI sessions manager
+<div align="center">
 
-A single-binary terminal UI that finds your local AI coding-agent sessions —
-**Claude Code**, and **OpenAI Codex** when present — groups them by project,
-previews the transcript, and drops you back into any conversation with one
-keypress, in the directory the session originally lived in.
+# ✻ sm
+
+**AI sessions manager** — every local **Claude Code** and **OpenAI Codex**
+conversation in one terminal UI: grouped by project, previewed live, and
+one keypress from picking up exactly where you left off.
+
+[![Release](https://img.shields.io/github/v/release/dukechain2333/ai-sessions-manager?sort=semver&color=D97757)](https://github.com/dukechain2333/ai-sessions-manager/releases)
+[![CI](https://github.com/dukechain2333/ai-sessions-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/dukechain2333/ai-sessions-manager/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/github/go-mod/go-version/dukechain2333/ai-sessions-manager)](go.mod)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue)
+[![License: MIT](https://img.shields.io/github/license/dukechain2333/ai-sessions-manager?color=green)](LICENSE)
+
+**English** · [简体中文](README.zh-CN.md)
+
+</div>
+
+---
 
 ```
 ✻ sm · AI Sessions   52 sessions
@@ -20,6 +33,12 @@ keypress, in the directory the session originally lived in.
 ╰────────────────────────────────────╯╰─────────────────────────────────────╯
  ↵ resume  tab focus  n new  d delete  / filter  a agent  g group  q quit
 ```
+
+Your coding-agent sessions pile up as `.jsonl` files across dozens of
+directories — impossible to track once you work in more than a few places.
+`sm` is a single-binary TUI that gathers them into one browsable,
+searchable list and drops you back into any conversation, in the directory
+the session originally lived in.
 
 ## Features
 
@@ -208,6 +227,41 @@ next time `sm` starts.
 
 `open_in` and `tmux.enabled` compose: with tmux on, windowed launches are
 tracked (`●`, `x`, re-enter); with it off, windows are untracked.
+
+## Terminal support
+
+The TUI itself runs in any terminal, including inside tmux — browsing,
+search, and `open_in: "current"` (resume in the terminal you're already
+in) work everywhere and need nothing below.
+
+Your terminal starts to matter when launches should open **elsewhere**
+(`open_in: "window"`). `sm` detects the terminal it is running in —
+nothing to configure — and picks the best mechanism it has for it:
+
+| Terminal | Platforms | Launches open as | Mechanism | Repeating a launch |
+|---|---|---|---|---|
+| **iTerm2** | macOS | native window | custom escape sequence → AutoLaunch bridge script | focuses the open window |
+| **Ghostty** | macOS 1.3+, Linux 1.2+ | native window | AppleScript / `ghostty +new-window` | focuses it (macOS); fresh window (Linux) |
+| **Warp** | macOS & Linux, Stable only | native **tab** in the frontmost window | Tab Config file + `warp://` URI | fresh tab (Warp returns no handle to focus) |
+| anything else | anywhere | tmux window | `sm` wraps itself in a tmux session | jumps to the window |
+
+Worth knowing:
+
+- Over plain `ssh`, only iTerm2 can open windows back on your desktop —
+  its escape sequences travel with the connection. For Ghostty and Warp,
+  connect with **`sm ssh <host>`** instead of `ssh`: same session, plus a
+  window bridge.
+- Inside tmux, launches still route to the terminal that owns the
+  session: the env markers are inherited, so a tmux server started in
+  one terminal keeps routing there even when you attach from another.
+- With tmux tracking on, duplicate launches collapse into one tmux
+  session no matter how many windows or tabs mirror it.
+- Warp Preview is unsupported (different URI scheme and config dir); use
+  Warp Stable.
+
+Config knobs and one-time setup are in the next section; the deep dive —
+how each mechanism works, troubleshooting, the security model — is
+[docs/native-windows.md](docs/native-windows.md).
 
 ## Opening launches in new windows
 
