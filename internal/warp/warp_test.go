@@ -34,3 +34,28 @@ func TestNewAcceptsTmuxInheritedMarker(t *testing.T) {
 		t.Fatalf("UUID marker not honored: %v", err)
 	}
 }
+
+func TestRenderTabConfig(t *testing.T) {
+	got := renderTabConfig(`cd '/d' && exec 'claude' '--resume' 'x1'`)
+	want := "name = \"sm\"\n\n[[panes]]\nid = \"main\"\ntype = \"terminal\"\ncommands = [\"cd '/d' && exec 'claude' '--resume' 'x1'\"]\n"
+	if got != want {
+		t.Errorf("renderTabConfig:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestTomlStringEscapes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`plain`, `"plain"`},
+		{`say "hi"`, `"say \"hi\""`},
+		{`back\slash`, `"back\\slash"`},
+		{"tab\there", `"tab\there"`},
+		{"nl\nhere", `"nl\nhere"`},
+		{"bell\x07here", `"bellhere"`},
+		{"del\x7fhere", `"delhere"`},
+	}
+	for _, c := range cases {
+		if got := tomlString(c.in); got != c.want {
+			t.Errorf("tomlString(%q) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}

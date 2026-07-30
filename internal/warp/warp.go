@@ -76,3 +76,42 @@ func runOut(name string, args ...string) (string, error) {
 	}
 	return out.String(), err
 }
+
+// renderTabConfig builds the Tab Config that runs line in a fresh
+// terminal pane. No directory key: line already carries its own cd
+// (bridge.Line's local form) or is a complete ssh command. Verified live
+// that Warp accepts a directory-less pane (Task 3 step 6); if a Warp
+// update regresses that, add `directory = "~"` here — the cd in line
+// still decides the real working dir.
+func renderTabConfig(line string) string {
+	return "name = \"sm\"\n\n[[panes]]\nid = \"main\"\ntype = \"terminal\"\ncommands = [" + tomlString(line) + "]\n"
+}
+
+// tomlString renders s as a TOML basic string: backslash, double quote
+// and control characters escaped per the TOML spec. bridge.Line output
+// never contains control bytes (it validates them away), but the escaper
+// must not depend on that.
+func tomlString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '"':
+			b.WriteString(`\"`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r < 0x20 || r == 0x7f:
+			// Skip control characters
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
