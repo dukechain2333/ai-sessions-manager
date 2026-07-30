@@ -64,9 +64,10 @@ type (
 	}
 	agentExitMsg struct{ err error }
 
-	// silentDoneMsg reports a fire-and-forget command (tmux new-window /
-	// select-window) finishing. Unlike agentExitMsg there is no ExecProcess —
-	// the TUI never suspended.
+	// silentDoneMsg reports a fire-and-forget launch (tmux new-window /
+	// select-window, or a native-window opener: bridge, Ghostty, Warp)
+	// finishing. Unlike agentExitMsg there is no ExecProcess — the TUI
+	// never suspended.
 	silentDoneMsg struct{ err error }
 
 	tmuxTickMsg struct{}
@@ -1100,7 +1101,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case silentDoneMsg:
 		if msg.err != nil {
 			m.dialog = dialogError
-			m.errText = "tmux window failed: " + msg.err.Error()
+			m.errText = "window launch failed: " + msg.err.Error()
 		}
 		if m.tmuxEnabled {
 			return m, tea.Batch(m.scanCmd(), m.refreshTmuxCmd())
