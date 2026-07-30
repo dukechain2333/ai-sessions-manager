@@ -63,6 +63,12 @@ file plus the `warp://` URI scheme. Spike-verified on Warp
 - Fixed-filename overwrite has a theoretical two-keypress race (second
   write before Warp reads the first). Launches are single-keypress
   interactive events and the read happens within ~1s; accepted, documented.
+  The same window exists for concurrent `sm ssh` bridge connections and
+  for a local window-mode sm sharing the desktop with an `sm ssh` helper
+  (two writers, one file) — equally accepted: every writer is the same
+  human launching interactively, the loser is a mirror launch, and the
+  only full fix (per-launch unique filenames) would clutter Warp's
+  Tab Config pickers and need GC.
 
 ### Wiring (`internal/ui/model.go`, mirrors the ghostty entries)
 
