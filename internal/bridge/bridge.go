@@ -1,10 +1,11 @@
 // Package bridge carries sm's native-window launches from a remote sm to a
 // helper on the user's own desktop, over an ssh reverse-forwarded unix
 // socket. The helper side is `sm ssh <destination>` run on the desktop: it
-// listens on the socket and opens local Ghostty windows. The remote side is
-// sm itself, which finds the socket path in $LC_SM_BRIDGE (an LC_* name so
-// stock sshd AcceptEnv rules let it through, the same trick iTerm2 uses for
-// LC_TERMINAL) and writes one JSON launch per connection.
+// listens on the socket and opens local terminal windows (Ghostty or
+// Warp). The remote side is sm itself, which finds the socket path in
+// $LC_SM_BRIDGE (an LC_* name so stock sshd AcceptEnv rules let it through,
+// the same trick iTerm2 uses for LC_TERMINAL) and writes one JSON launch
+// per connection.
 //
 // The payload is the iTerm2 escape-bridge shape (iterm2.Launch) and the
 // validation mirrors scripts/iterm2/sm_open_window.py, with one tightening:

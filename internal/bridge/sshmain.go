@@ -3,6 +3,7 @@ package bridge
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,16 +13,31 @@ import (
 	"path/filepath"
 
 	"github.com/dukechain2333/ai-sessions-manager/internal/ghostty"
+	"github.com/dukechain2333/ai-sessions-manager/internal/warp"
 )
 
 const sshUsage = `usage: sm ssh <destination> [ssh options...]
 
 Connects like plain ssh, plus a window bridge: while the session is open,
 resuming a session in a window-mode sm on the far side opens a native
-Ghostty window on THIS machine that sshes back into <destination>.
+terminal window (Ghostty or Warp) on THIS machine that sshes back into
+<destination>.
 
 <destination> comes first (a host or ssh alias); everything after it is
 passed to ssh unchanged and reused when new windows dial back.`
+
+// desktopOpener picks the native-window opener for the terminal this
+// helper runs in: Ghostty first, then Warp. The returned name feeds
+// user-facing messages.
+func desktopOpener() (Handler, string, error) {
+	if g, err := ghostty.New(); err == nil {
+		return g.Open, "Ghostty", nil
+	}
+	if w, err := warp.New(); err == nil {
+		return w.Open, "Warp", nil
+	}
+	return nil, "", errors.New("this terminal is not Ghostty or Warp")
+}
 
 // SSHMain implements `sm ssh <destination> [ssh options...]`: an interactive
 // ssh session wrapped with the reverse-forwarded window bridge. It returns
@@ -39,7 +55,7 @@ func SSHMain(args []string) int {
 		fmt.Fprintf(os.Stderr, "sm ssh: destination %q must come first and start with a letter or digit\n", dest)
 		return 2
 	}
-	opener, err := ghostty.New()
+	open, term, err := desktopOpener()
 	if err != nil {
 		// No bridge possible from this terminal — degrade to plain ssh so
 		// the command still does the obvious thing.
@@ -77,7 +93,7 @@ func SSHMain(args []string) int {
 	if os.Getenv("SM_BRIDGE_DEBUG") != "" {
 		logf = func(format string, a ...any) { fmt.Fprintf(os.Stderr, "sm bridge: "+format+"\r\n", a...) }
 	}
-	go Serve(ln, dest, extra, opener.Open, logf)
+	go Serve(ln, dest, extra, open, logf)
 
 	sshArgs := []string{
 		"-R", remote + ":" + local,
@@ -87,7 +103,7 @@ func SSHMain(args []string) int {
 	}
 	sshArgs = append(sshArgs, extra...)
 	sshArgs = append(sshArgs, dest)
-	fmt.Fprintf(os.Stderr, "sm ssh: window bridge ready — window-mode launches on %s open Ghostty windows here\n", dest)
+	fmt.Fprintf(os.Stderr, "sm ssh: window bridge ready — window-mode launches on %s open %s windows here\n", dest, term)
 	return runSSH(sshArgs)
 }
 
