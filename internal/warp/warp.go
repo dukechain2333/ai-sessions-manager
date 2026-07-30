@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Opener opens native Warp tabs. Unlike Ghostty's it holds no dedupe
@@ -125,6 +126,11 @@ func tomlString(s string) string {
 // nothing to refocus. Past a successful open/xdg-open exit the launch is
 // fire-and-forget.
 func (o *Opener) Open(_, line string) error {
+	// TOML cannot carry invalid UTF-8; rendering would silently rewrite
+	// bad bytes as U+FFFD and cd into a nonexistent path. Refuse instead.
+	if !utf8.ValidString(line) {
+		return errors.New("warp window: launch line is not valid UTF-8")
+	}
 	if err := o.writeConfig(renderTabConfig(line)); err != nil {
 		return errors.New("warp window: " + err.Error())
 	}

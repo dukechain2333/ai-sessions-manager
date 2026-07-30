@@ -120,3 +120,21 @@ func TestOpenSurfacesOpenerError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// TOML cannot carry invalid UTF-8 — rendering would silently rewrite bad
+// bytes as U+FFFD and cd into a nonexistent path. Open must refuse instead,
+// before writing any config or invoking the opener.
+func TestOpenRejectsInvalidUTF8(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tc")
+	o := opener("darwin", dir, func(name string, args ...string) (string, error) {
+		t.Errorf("opener must not run for invalid UTF-8: %s %v", name, args)
+		return "", nil
+	})
+	err := o.Open("k", "cd '/d\xff' && exec 'claude'")
+	if err == nil || !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "sm.toml")); statErr == nil {
+		t.Error("sm.toml must not be written for invalid UTF-8")
+	}
+}
