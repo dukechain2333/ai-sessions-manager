@@ -38,7 +38,7 @@ keypress, in the directory the session originally lived in.
 - **Optional [tmux integration](#tmux-integration)** — launches run in
   detachable tmux sessions with live `●` markers and a kill key.
 - **[Real OS windows](#opening-launches-in-new-windows)** — with
-  `open_in: "window"`, launches open native iTerm2 or Ghostty windows
+  `open_in: "window"`, launches open native iTerm2, Ghostty, or Warp windows
   while `sm` stays put; works locally and over SSH.
 - Single static binary (macOS & Linux, Intel & Apple Silicon), no runtime
   dependencies.
@@ -111,7 +111,7 @@ sm                      # browse ~/.claude/projects (and ~/.codex/sessions, if p
 sm --projects-dir DIR   # a different Claude Code location
 sm --codex-dir DIR      # a different Codex sessions location
 sm --config PATH        # a different config.json
-sm ssh HOST             # ssh + Ghostty window bridge, see "Real OS windows"
+sm ssh HOST             # ssh + native window bridge (Ghostty/Warp), see "Real OS windows"
 sm --version
 ```
 
@@ -214,6 +214,7 @@ With `"open_in": "window"`, resume/new open **real terminal windows** —
 |---|---|---|---|
 | **iTerm2** (macOS) | native window | native window on the Mac | [install the AutoLaunch script](docs/native-windows.md#iterm2-macos); over SSH also set `iterm2.ssh` |
 | **Ghostty** (macOS 1.3+, Linux 1.2+) | native window | native window on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
+| **Warp** (macOS & Linux) | native window | native window on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
 | anything else | tmux window | tmux window | `tmux` on `PATH` (`sm` auto-wraps itself in a tmux session named `sm`) |
 
 The common minimal configs:
@@ -222,7 +223,7 @@ The common minimal configs:
 { "open_in": "window" }
 ```
 
-works as-is for local iTerm2, local Ghostty, Ghostty over `sm ssh`, and
+works as-is for local iTerm2, local Ghostty, local Warp, Ghostty or Warp over `sm ssh`, and
 the tmux fallback. Only iTerm2-over-SSH needs the dial-back destination:
 
 ```json
@@ -267,7 +268,7 @@ make build   # ./sm
 Architecture: `internal/store` is a UI-free reader over the session
 `.jsonl` files; `internal/ui` is the
 [Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI;
-`internal/bridge` + `internal/ghostty` + `scripts/iterm2/` implement the
+`internal/bridge` + `internal/ghostty` + `internal/warp` + `scripts/iterm2/` implement the
 [native-window launchers](docs/native-windows.md). Design notes live under
 `docs/`.
 
