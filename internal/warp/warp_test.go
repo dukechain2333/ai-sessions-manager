@@ -107,7 +107,7 @@ func TestOpenLinuxUsesXdgOpen(t *testing.T) {
 	if err := o.Open("k", "line"); err != nil {
 		t.Fatal(err)
 	}
-	if got.name != "xdg-open" || got.args[0] != "warp://tab_config/sm" {
+	if got.name != "xdg-open" || len(got.args) != 1 || got.args[0] != "warp://tab_config/sm" {
 		t.Errorf("ran %q %q", got.name, got.args)
 	}
 }

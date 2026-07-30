@@ -116,9 +116,10 @@ unchanged, since the socket protocol and validation are terminal-agnostic.
    undocumented surfaces** (`WARP_FOCUS_URL`, Warp Control): if Warp ships
    a real open-tab CLI (issue #3959), only `Opener.Open`'s internals change.
 6. **Warp Stable only.** Warp Preview registers only the `warppreview://`
-   URI scheme and reads `~/.warp-preview/tab_configs/`, so Preview users
-   get the tmux fallback; called out in troubleshooting, not special-cased
-   in code.
+   URI scheme and reads `~/.warp-preview/tab_configs/`; whether Preview
+   exports the same env markers is unverified, so behavior under Preview
+   is simply unsupported — called out in troubleshooting, not
+   special-cased in code.
 
 ## Error handling
 

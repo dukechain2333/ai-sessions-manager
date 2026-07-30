@@ -3,7 +3,6 @@ package bridge
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -30,13 +29,15 @@ passed to ssh unchanged and reused when new windows dial back.`
 // helper runs in: Ghostty first, then Warp. The returned name feeds
 // user-facing messages.
 func desktopOpener() (Handler, string, error) {
-	if g, err := ghostty.New(); err == nil {
+	g, gerr := ghostty.New()
+	if gerr == nil {
 		return g.Open, "Ghostty windows", nil
 	}
-	if w, err := warp.New(); err == nil {
+	w, werr := warp.New()
+	if werr == nil {
 		return w.Open, "Warp tabs", nil
 	}
-	return nil, "", errors.New("this terminal is not Ghostty or Warp")
+	return nil, "", fmt.Errorf("this terminal is not Ghostty or Warp (%v; %v)", gerr, werr)
 }
 
 // SSHMain implements `sm ssh <destination> [ssh options...]`: an interactive

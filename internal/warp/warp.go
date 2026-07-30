@@ -88,11 +88,12 @@ func renderTabConfig(line string) string {
 }
 
 // tomlString renders s as a TOML basic string: backslash and double
-// quote escaped per the TOML spec; \t \n \r get their shorthand escapes.
-// Other control characters are stripped, not escaped — they can never
-// legitimately appear in a launch line (bridge.Line rejects them
-// upstream), and \u-escaping would deliver raw control bytes into a
-// shell command line.
+// quote escaped per the TOML spec. \t \n \r keep their standard
+// shorthand escapes — bridge.Line-validated launch lines never contain
+// them, so they can only arrive from the trusted local sm ssh command
+// line. All other control characters are stripped outright: they can
+// never legitimately appear here, and no escape form is safe to hand
+// to a shell.
 func tomlString(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')

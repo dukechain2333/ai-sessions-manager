@@ -22,7 +22,6 @@ func TestDesktopOpenerSelection(t *testing.T) {
 		t.Fatalf("warp pick: term=%q err=%v", term, err)
 	}
 	t.Setenv("TERM_PROGRAM", "ghostty")
-	t.Setenv("WARP_TERMINAL_SESSION_UUID", "")
 	if open, term, err := desktopOpener(); err != nil || term != "Ghostty windows" || open == nil {
 		t.Fatalf("ghostty pick: term=%q err=%v", term, err)
 	}

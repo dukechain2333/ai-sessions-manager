@@ -219,12 +219,17 @@ section above apply unchanged.
 - Linux: some Wayland setups break `xdg-open` from inside Warp
   (compositor connection refused — a known Warp issue); launches then
   fail silently.
+- A tmux server first started inside Warp keeps Warp's environment
+  markers, so a window-mode `sm` run in that server later — even when
+  you attach from another terminal — still routes launches to Warp.
+  Start a fresh tmux server if you switch terminals (or
+  `tmux set-environment -gu WARP_TERMINAL_SESSION_UUID`).
 
 ---
 
 ## Security model
 
-Both mechanisms treat what arrives at the window-opening side as
+Both untrusted transports treat what arrives at the window-opening side as
 **untrusted input** — for iTerm2 that is terminal output, for `sm ssh`
 anything writable to the tunnel socket. Every payload field is validated
 against strict allowlists (host charset, `sm-` session-name shape,
