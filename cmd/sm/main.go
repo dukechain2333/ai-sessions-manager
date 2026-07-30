@@ -64,17 +64,22 @@ func main() {
 	// dialog and downgrades, and the in-app launch check still guards $TMUX.
 	// Native window launchers are exempt from the wrap: sm stays in this
 	// terminal and launches open real OS windows client-side — via the sm
-	// ssh reverse-tunnel bridge, a local Ghostty, or the iTerm2 escapes.
-	// The probes mirror ui's exactly (bridge.Socket, the triple ssh-marker
-	// check, the Linux ghostty-binary requirement) so the wrap decision and
-	// the in-app launcher choice can never disagree.
+	// ssh reverse-tunnel bridge, a local Ghostty or Warp, or the iTerm2
+	// escapes. The probes mirror ui's exactly (bridge.Socket, the triple
+	// ssh-marker check, the Linux opener-binary requirements) so the wrap
+	// decision and the in-app launcher choice can never disagree.
 	sshEnv := os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_TTY") != ""
 	ghosttyWin := os.Getenv("TERM_PROGRAM") == "ghostty" && !sshEnv
 	if ghosttyWin && runtime.GOOS == "linux" {
 		_, err := exec.LookPath("ghostty")
 		ghosttyWin = err == nil
 	}
-	nativeWin := bridge.Socket() != "" || ghosttyWin ||
+	warpWin := (os.Getenv("TERM_PROGRAM") == "WarpTerminal" || os.Getenv("WARP_TERMINAL_SESSION_UUID") != "") && !sshEnv
+	if warpWin && runtime.GOOS == "linux" {
+		_, err := exec.LookPath("xdg-open")
+		warpWin = err == nil
+	}
+	nativeWin := bridge.Socket() != "" || ghosttyWin || warpWin ||
 		(os.Getenv("LC_TERMINAL") == "iTerm2" && (cfg.ITerm2SSH != "" || !sshEnv))
 	if cfg.OpenIn == config.OpenInWindow && os.Getenv("TMUX") == "" && !nativeWin {
 		if tmuxPath, err := exec.LookPath("tmux"); err == nil {
