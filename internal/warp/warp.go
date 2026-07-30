@@ -1,0 +1,78 @@
+// Package warp opens native Warp windows and runs a command in them. Warp
+// has no scripting dictionary and no local-window CLI (oz drives cloud
+// agents only); the one programmatic "open a window and run a command"
+// path is a Tab Config file whose commands run in the new pane, delivered
+// through the warp://tab_config URI. Used by the `sm ssh` helper on the
+// desktop and by a local window-mode sm.
+package warp
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+)
+
+// Opener opens native Warp windows. Unlike Ghostty's it holds no dedupe
+// state: Warp hands back no window handle, so every launch opens a fresh
+// window (duplicate tracked launches still collapse in the target
+// machine's tmux new-session -A).
+type Opener struct {
+	goos string
+	dir  string                                            // tab_configs dir
+	run  func(name string, args ...string) (string, error) // injected for tests
+}
+
+// New returns an Opener after checking this process can actually reach a
+// Warp: TERM_PROGRAM must say so — or, inside a tmux attach (which
+// rewrites TERM_PROGRAM to "tmux"), the inherited
+// WARP_TERMINAL_SESSION_UUID — and on Linux xdg-open must be on PATH to
+// deliver the warp:// URI.
+func New() (*Opener, error) {
+	if os.Getenv("TERM_PROGRAM") != "WarpTerminal" && os.Getenv("WARP_TERMINAL_SESSION_UUID") == "" {
+		return nil, errors.New("this terminal is not Warp")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	o := &Opener{goos: runtime.GOOS, run: runOut}
+	switch o.goos {
+	case "darwin":
+		o.dir = filepath.Join(home, ".warp", "tab_configs")
+		return o, nil
+	case "linux":
+		if _, err := exec.LookPath("xdg-open"); err != nil {
+			return nil, errors.New("xdg-open not found on PATH")
+		}
+		data := os.Getenv("XDG_DATA_HOME")
+		if data == "" {
+			data = filepath.Join(home, ".local", "share")
+		}
+		o.dir = filepath.Join(data, "warp-terminal", "tab_configs")
+		return o, nil
+	}
+	return nil, errors.New("Warp windows are not supported on " + o.goos)
+}
+
+// runOut runs a command with a hang guard and returns its stdout; stderr
+// is folded into the returned error. Same idiom as ghostty's.
+func runOut(name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, name, args...)
+	var out, errb bytes.Buffer
+	c.Stdout, c.Stderr = &out, &errb
+	err := c.Run()
+	if err != nil {
+		if msg := strings.TrimSpace(errb.String()); msg != "" {
+			err = errors.New(err.Error() + ": " + msg)
+		}
+	}
+	return out.String(), err
+}
