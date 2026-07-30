@@ -222,7 +222,7 @@ func TestTomlStringEscapes(t *testing.T) {
 Run: `go test ./internal/warp/`
 Expected: FAIL — `renderTabConfig` / `tomlString` undefined.
 
-- [ ] **Step 3: Write the implementation** (append to `warp.go`; add `"fmt"` to imports)
+- [ ] **Step 3: Write the implementation** (append to `warp.go`)
 
 ```go
 // renderTabConfig builds the Tab Config that runs line in a fresh
@@ -235,10 +235,12 @@ func renderTabConfig(line string) string {
 	return "name = \"sm\"\n\n[[panes]]\nid = \"main\"\ntype = \"terminal\"\ncommands = [" + tomlString(line) + "]\n"
 }
 
-// tomlString renders s as a TOML basic string: backslash, double quote
-// and control characters escaped per the TOML spec. bridge.Line output
-// never contains control bytes (it validates them away), but the escaper
-// must not depend on that.
+// tomlString renders s as a TOML basic string: backslash and double
+// quote escaped per the TOML spec; \t \n \r get their shorthand escapes.
+// Other control characters are stripped, not escaped — they can never
+// legitimately appear in a launch line (bridge.Line rejects them
+// upstream), and \u-escaping would deliver raw control bytes into a
+// shell command line. (Ruling 2026-07-30: stripping governs.)
 func tomlString(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
@@ -255,7 +257,7 @@ func tomlString(s string) string {
 		case r == '\t':
 			b.WriteString(`\t`)
 		case r < 0x20 || r == 0x7f:
-			b.WriteString(fmt.Sprintf(`\u%04X`, r))
+			// stripped — see doc comment
 		default:
 			b.WriteRune(r)
 		}
