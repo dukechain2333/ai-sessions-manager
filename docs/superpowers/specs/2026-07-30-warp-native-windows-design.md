@@ -21,9 +21,10 @@ file plus the `warp://` URI scheme. Spike-verified on Warp
 
 - A TOML file in `~/.warp/tab_configs/` with a single `[[panes]]` entry and
   `commands = ["<one shell line>"]` (plain strings, run sequentially).
-- `open "warp://tab_config/<filename>?new_window=true"` opens a new window
-  and runs the commands; the URI matches the **filename** (extension
-  optional, case-insensitive), not the `name` key.
+- `open "warp://tab_config/<filename>"` opens a **new tab in the frontmost
+  Warp window** and runs the commands (`?new_window=true` opens a separate
+  window instead — both forms spike-verified, ≈1s); the URI matches the
+  **filename** (extension optional, case-insensitive), not the `name` key.
 - Hot discovery works: the file — and the `tab_configs` dir itself — can be
   created moments before the URI is opened; no Warp restart.
 - The file is **re-read on every URI open**, so one fixed file overwritten
@@ -48,9 +49,9 @@ file plus the `warp://` URI scheme. Spike-verified on Warp
      same dir), creating the dir if missing; per-OS dir: macOS
      `~/.warp/tab_configs`, Linux
      `${XDG_DATA_HOME:-~/.local/share}/warp-terminal/tab_configs`;
-  3. run `open`/`xdg-open` on `warp://tab_config/sm?new_window=true` with
-     the same hang-guarded runner idiom as ghostty (`run` injected for
-     tests).
+  3. run `open`/`xdg-open` on `warp://tab_config/sm` with the same
+     hang-guarded runner idiom as ghostty (`run` injected for tests) — a
+     new TAB in the frontmost Warp window, per the revised decision below.
 
   Implementation note: the spike's TOML carried a `directory` key; a pane
   without one is untested. Verify during implementation; if Warp rejects a
@@ -105,8 +106,12 @@ unchanged, since the socket protocol and validation are terminal-agnostic.
 3. **No config schema or settings-dialog changes.** Local Warp is
    env-detected; `sm ssh` takes its destination from the command line.
    Zero new keys.
-4. **No tab-in-current-window mode.** Windows only, matching the sibling
-   backends' "native OS windows" semantics.
+4. **Tabs, not windows** (REVISED 2026-07-30 during live QA — user
+   decision; supersedes the original "windows only" ruling). Warp launches
+   open a new tab in the frontmost Warp window (`warp://tab_config/sm`,
+   no `?new_window=true`) — the Warp-native idiom. Applies to both local
+   launches and the `sm ssh` helper. No config knob for windows-vs-tabs;
+   add one only if asked.
 5. **No refocus dedupe** (no handle available) and **no reliance on
    undocumented surfaces** (`WARP_FOCUS_URL`, Warp Control): if Warp ships
    a real open-tab CLI (issue #3959), only `Opener.Open`'s internals change.
