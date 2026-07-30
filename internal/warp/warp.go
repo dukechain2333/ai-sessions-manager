@@ -117,3 +117,42 @@ func tomlString(s string) string {
 	b.WriteByte('"')
 	return b.String()
 }
+
+// Open runs line in a native Warp window: land the Tab Config, then
+// deliver the URI. key is accepted for the bridge.Handler shape and
+// ignored — no window handle comes back, so there is nothing to refocus.
+// Past a successful open/xdg-open exit the launch is fire-and-forget.
+func (o *Opener) Open(_, line string) error {
+	if err := o.writeConfig(renderTabConfig(line)); err != nil {
+		return errors.New("warp window: " + err.Error())
+	}
+	opener := "open"
+	if o.goos == "linux" {
+		opener = "xdg-open"
+	}
+	if _, err := o.run(opener, "warp://tab_config/sm?new_window=true"); err != nil {
+		return errors.New("warp window: " + err.Error())
+	}
+	return nil
+}
+
+// writeConfig lands content at <dir>/sm.toml via temp-file-plus-rename in
+// the same directory, so Warp can never read a half-written file.
+func (o *Opener) writeConfig(content string) error {
+	if err := os.MkdirAll(o.dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(o.dir, "sm-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(o.dir, "sm.toml"))
+}

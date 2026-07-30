@@ -1,6 +1,8 @@
 package warp
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -57,5 +59,64 @@ func TestTomlStringEscapes(t *testing.T) {
 		if got := tomlString(c.in); got != c.want {
 			t.Errorf("tomlString(%q) = %s, want %s", c.in, got, c.want)
 		}
+	}
+}
+
+type call struct {
+	name string
+	args []string
+}
+
+func opener(goos, dir string, run func(name string, args ...string) (string, error)) *Opener {
+	return &Opener{goos: goos, dir: dir, run: run}
+}
+
+func TestOpenWritesConfigAndDeliversURI(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tab_configs") // must not pre-exist
+	var got call
+	o := opener("darwin", dir, func(name string, args ...string) (string, error) {
+		got = call{name, args}
+		return "", nil
+	})
+	line := `cd '/d' && exec 'claude'`
+	if err := o.Open("ignored-key", line); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "sm.toml"))
+	if err != nil {
+		t.Fatalf("sm.toml not written: %v", err)
+	}
+	if want := renderTabConfig(line); string(b) != want {
+		t.Errorf("sm.toml = %q, want %q", b, want)
+	}
+	if got.name != "open" || len(got.args) != 1 || got.args[0] != "warp://tab_config/sm?new_window=true" {
+		t.Errorf("ran %q %q", got.name, got.args)
+	}
+	left, _ := filepath.Glob(filepath.Join(dir, "sm-*"))
+	if len(left) != 0 {
+		t.Errorf("temp files left behind: %v", left)
+	}
+}
+
+func TestOpenLinuxUsesXdgOpen(t *testing.T) {
+	var got call
+	o := opener("linux", filepath.Join(t.TempDir(), "tab_configs"), func(name string, args ...string) (string, error) {
+		got = call{name, args}
+		return "", nil
+	})
+	if err := o.Open("k", "line"); err != nil {
+		t.Fatal(err)
+	}
+	if got.name != "xdg-open" || got.args[0] != "warp://tab_config/sm?new_window=true" {
+		t.Errorf("ran %q %q", got.name, got.args)
+	}
+}
+
+func TestOpenSurfacesOpenerError(t *testing.T) {
+	o := opener("darwin", filepath.Join(t.TempDir(), "tc"), func(string, ...string) (string, error) {
+		return "", os.ErrNotExist
+	})
+	if err := o.Open("k", "line"); err == nil || !strings.Contains(err.Error(), "warp window:") {
+		t.Fatalf("err = %v", err)
 	}
 }
