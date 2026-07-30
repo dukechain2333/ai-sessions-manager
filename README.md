@@ -140,8 +140,12 @@ sm --version
 
 Everything is clickable: click selects (double-click resumes), headers
 fold, the scroll wheel moves the selection or scrolls the preview, and
-help-bar actions and dialog buttons are buttons. With mouse reporting on,
-select text with **Shift+drag** (standard for mouse-enabled TUIs).
+help-bar actions and dialog buttons are buttons. The settings form too:
+click a row to select it, click a value to change it (checkboxes toggle,
+`◂` cycles enums backward, text fields open their editor), wheel to move,
+and `s save` / `esc close` in its help line are buttons. With mouse
+reporting on, select text with **Shift+drag** (standard for mouse-enabled
+TUIs).
 
 ### Search
 

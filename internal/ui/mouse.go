@@ -245,12 +245,15 @@ func (m Model) handleDialogMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-		if m.dialog == dialogPickDir {
-			k := tea.KeyMsg{Type: tea.KeyDown}
-			if msg.Button == tea.MouseButtonWheelUp {
-				k = tea.KeyMsg{Type: tea.KeyUp}
-			}
+		k := tea.KeyMsg{Type: tea.KeyDown}
+		if msg.Button == tea.MouseButtonWheelUp {
+			k = tea.KeyMsg{Type: tea.KeyUp}
+		}
+		switch {
+		case m.dialog == dialogPickDir:
 			return m.handleDialogKey(k)
+		case m.dialog == dialogSettings && !m.setEditing:
+			return m.handleSettingsKey(k)
 		}
 		return m, nil
 	}
@@ -296,6 +299,71 @@ func (m Model) handleDialogMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.handleDialogKey(tea.KeyMsg{Type: tea.KeyEsc})
 		}
 		return m.clickPickDir(cy)
+
+	case dialogSettings:
+		if !inside {
+			// Layered like esc itself: cancels an active edit, else closes.
+			return m.handleSettingsKey(tea.KeyMsg{Type: tea.KeyEsc})
+		}
+		if m.setEditing {
+			// The editor owns the form; only the help segments act.
+			if cy == m.settingsHelpLine(len(settingsRows())) {
+				return m.clickSettingsHelp(cx)
+			}
+			return m, nil
+		}
+		return m.clickSettings(cx, cy)
+	}
+	return m, nil
+}
+
+// clickSettings maps a click inside the settings form to the same key paths
+// the keyboard uses: the label region only selects the row, the value cell
+// changes it (enums cycle — the ◂ glyph cycles backward), and the help
+// line's live segments act.
+func (m Model) clickSettings(cx, cy int) (tea.Model, tea.Cmd) {
+	rows := settingsRows()
+	if cy == m.settingsHelpLine(len(rows)) {
+		return m.clickSettingsHelp(cx)
+	}
+	i := cy - settingsRowTop
+	if i < 0 || i >= len(rows) {
+		return m, nil
+	}
+	m.setCursor = i
+	if cx < settingsValueCol {
+		return m, nil
+	}
+	switch rows[i].kind {
+	case settingEnum:
+		key := "right"
+		if cx <= settingsValueCol+1 { // the "◂ " cells
+			key = "left"
+		}
+		return m.activateSettingRow(rows[i], key)
+	case settingBool:
+		return m.activateSettingRow(rows[i], " ")
+	default:
+		return m.activateSettingRow(rows[i], "enter")
+	}
+}
+
+// clickSettingsHelp fires the live help segment under cx, if any; gap and
+// informational segments change nothing.
+func (m Model) clickSettingsHelp(cx int) (tea.Model, tea.Cmd) {
+	pos := 0
+	for i, it := range m.settingsHelp() {
+		if i > 0 {
+			pos += 3 // the " · " separator
+		}
+		w := lipgloss.Width(it.label)
+		if cx >= pos && cx < pos+w {
+			if it.live {
+				return m.handleSettingsKey(it.key)
+			}
+			return m, nil
+		}
+		pos += w
 	}
 	return m, nil
 }
