@@ -23,6 +23,7 @@ import (
 	"github.com/dukechain2333/ai-sessions-manager/internal/iterm2"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 	"github.com/dukechain2333/ai-sessions-manager/internal/tmux"
+	"github.com/dukechain2333/ai-sessions-manager/internal/warp"
 )
 
 type focusArea int
@@ -63,9 +64,10 @@ type (
 	}
 	agentExitMsg struct{ err error }
 
-	// silentDoneMsg reports a fire-and-forget command (tmux new-window /
-	// select-window) finishing. Unlike agentExitMsg there is no ExecProcess —
-	// the TUI never suspended.
+	// silentDoneMsg reports a fire-and-forget launch (tmux new-window /
+	// select-window, or a native-window opener: bridge, Ghostty, Warp)
+	// finishing. Unlike agentExitMsg there is no ExecProcess — the TUI
+	// never suspended.
 	silentDoneMsg struct{ err error }
 
 	tmuxTickMsg struct{}
@@ -144,6 +146,7 @@ type Model struct {
 	emitSeq     func(string) tea.Cmd
 	sendLaunch  func(sock string, l iterm2.Launch) tea.Cmd
 	ghosttyOpen func(l iterm2.Launch) tea.Cmd
+	warpOpen    func(l iterm2.Launch) tea.Cmd
 	bell        tea.Cmd
 
 	// mouse double-click tracking; now is injected for tests
@@ -218,6 +221,7 @@ func New(projectsDir, codexDir, configPath string, cfg config.Config) Model {
 		emitSeq:      emitEscape,
 		sendLaunch:   sendLaunchCmd,
 		ghosttyOpen:  ghosttyOpenCmd,
+		warpOpen:     warpOpenCmd,
 		bell:         ringBell,
 		lastClickRow: -1,
 		now:          time.Now,
@@ -307,21 +311,30 @@ func (m Model) ghosttyWindows() bool {
 	return m.openIn == config.OpenInWindow && !overSSH() && ghosttyEnv()
 }
 
+// warpWindows reports whether window-mode launches open native Warp
+// tabs on this same machine. Over ssh a forwarded Warp env must not
+// count — tabs can only open client-side, which is the bridge's job.
+func (m Model) warpWindows() bool {
+	return m.openIn == config.OpenInWindow && !overSSH() && warpEnv()
+}
+
 // nativeWindows reports whether window-mode launches open real OS terminal
 // windows (any launcher) instead of tmux windows.
 func (m Model) nativeWindows() bool {
-	return m.bridgeWindows() || m.ghosttyWindows() || m.iterm2Windows()
+	return m.bridgeWindows() || m.ghosttyWindows() || m.warpWindows() || m.iterm2Windows()
 }
 
 // openWindowCmd routes one native-window launch to its launcher. The bridge
 // wins when present — it is the most explicit signal (the user started this
-// connection with sm ssh) — then a local Ghostty, then the iTerm2 escapes.
+// connection with sm ssh) — then a local Ghostty or Warp, then the iTerm2 escapes.
 func (m Model) openWindowCmd(l iterm2.Launch) tea.Cmd {
 	switch {
 	case m.bridgeWindows():
 		return m.sendLaunch(m.bridgePath, l)
 	case m.ghosttyWindows():
 		return m.ghosttyOpen(l)
+	case m.warpWindows():
+		return m.warpOpen(l)
 	default:
 		return m.emitSeq(iterm2.Sequence(l, insideTmux()))
 	}
@@ -346,6 +359,25 @@ func ghosttyOpenCmd(l iterm2.Launch) tea.Cmd {
 		if err == nil {
 			var op *ghostty.Opener
 			if op, err = localGhostty(); err == nil {
+				err = op.Open(key, line)
+			}
+		}
+		return silentDoneMsg{err: err}
+	}
+}
+
+// localWarp builds the process-wide local Warp opener once.
+var localWarp = sync.OnceValues(func() (*warp.Opener, error) { return warp.New() })
+
+// warpOpenCmd opens l in a native Warp tab on this machine. The empty
+// destination selects bridge.Line's local form — run directly, no ssh
+// and no PATH prepend (a fresh local shell already has the user's PATH).
+func warpOpenCmd(l iterm2.Launch) tea.Cmd {
+	return func() tea.Msg {
+		key, line, err := bridge.Line(l, "", nil)
+		if err == nil {
+			var op *warp.Opener
+			if op, err = localWarp(); err == nil {
 				err = op.Open(key, line)
 			}
 		}
@@ -406,6 +438,22 @@ var ghosttyEnv = func() bool {
 	}
 	if runtime.GOOS == "linux" {
 		_, err := exec.LookPath("ghostty")
+		return err == nil
+	}
+	return true
+}
+
+// warpEnv reports whether the terminal is Warp AND this machine can open
+// its tabs (Linux needs xdg-open to deliver the warp:// URI). tmux
+// rewrites TERM_PROGRAM, so the inherited WARP_TERMINAL_SESSION_UUID is
+// the fallback marker. Only trusted for local launches — warpWindows
+// pairs it with !overSSH(). Overridable in tests.
+var warpEnv = func() bool {
+	if os.Getenv("TERM_PROGRAM") != "WarpTerminal" && os.Getenv("WARP_TERMINAL_SESSION_UUID") == "" {
+		return false
+	}
+	if runtime.GOOS == "linux" {
+		_, err := exec.LookPath("xdg-open")
 		return err == nil
 	}
 	return true
@@ -1053,7 +1101,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case silentDoneMsg:
 		if msg.err != nil {
 			m.dialog = dialogError
-			m.errText = "tmux window failed: " + msg.err.Error()
+			m.errText = "window launch failed: " + msg.err.Error()
 		}
 		if m.tmuxEnabled {
 			return m, tea.Batch(m.scanCmd(), m.refreshTmuxCmd())

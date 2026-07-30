@@ -3,7 +3,7 @@
 With `"open_in": "window"` in [`config.json`](../README.md#configuration),
 pressing `enter` (resume) or `n` (new session) opens the agent in a **real
 terminal window** while `sm` stays exactly where you ran it. This guide
-covers the two supported terminals in depth; the
+covers the three supported terminals in depth; the
 [README section](../README.md#opening-launches-in-new-windows) has the
 short version.
 
@@ -15,7 +15,8 @@ Shared behavior, regardless of terminal:
   fine: the tmux session keeps running, and the next `enter` opens a fresh
   window into it.
 - Repeating a launch whose window is still open focuses that window
-  instead of opening a duplicate (iTerm2, and Ghostty on macOS).
+  instead of opening a duplicate (iTerm2, and Ghostty on macOS; Warp
+  opens a fresh tab each time — see its section).
 - Over SSH, each window dials its own fresh connection, so key-based
   (non-interactive) login to the server must already work.
 - `sm` itself never wraps into tmux in these modes.
@@ -177,9 +178,58 @@ Requirements:
 
 ---
 
+## Warp (macOS & Linux)
+
+Same behavior again, third plumbing: Warp has no scripting dictionary and
+no local-window CLI, so `sm` writes a **Tab Config** file —
+`~/.warp/tab_configs/sm.toml` (Linux:
+`~/.local/share/warp-terminal/tab_configs/`), rewritten on every launch —
+and asks Warp to open it via the `warp://tab_config/sm` URI. This opens a
+new tab in the frontmost Warp window.
+
+### Local (sm and Warp on the same machine)
+
+Nothing to install. Set the mode and you're done:
+
+```json
+{ "open_in": "window" }
+```
+
+### Over SSH
+
+Identical to the Ghostty flow: install `sm` on the desktop, connect with
+`sm ssh myserver`, and window-mode launches on the server open native
+Warp tabs (new tabs in the frontmost Warp window) on the desktop that dial
+back. Requirements and the bridge troubleshooting list in the Ghostty
+section above apply unchanged.
+
+### Warp-specific notes
+
+- **No tab refocus:** repeating a launch opens another tab instead
+  of focusing the still-open one — Warp hands back no tab handle.
+  Tracked launches still collapse into the same tmux session, so the
+  duplicate tabs are mirrors, not duplicate agents.
+- A Tab Config named **`sm`** appears in Warp's pickers (command palette,
+  the `+` tab menu). It is sm's launch vehicle; deleting it is harmless —
+  the next launch recreates it.
+- Once the URI is handed off, errors are only visible inside Warp — the
+  launch is fire-and-forget, like the iTerm2 escapes.
+- **Warp Preview is unsupported** (it registers `warppreview://` and reads
+  `~/.warp-preview/`); use Warp Stable.
+- Linux: some Wayland setups break `xdg-open` from inside Warp
+  (compositor connection refused — a known Warp issue); launches then
+  fail silently.
+- A tmux server first started inside Warp keeps Warp's environment
+  markers, so a window-mode `sm` run in that server later — even when
+  you attach from another terminal — still routes launches to Warp.
+  Start a fresh tmux server if you switch terminals (or
+  `tmux set-environment -gu WARP_TERMINAL_SESSION_UUID`).
+
+---
+
 ## Security model
 
-Both mechanisms treat what arrives at the window-opening side as
+Both untrusted transports treat what arrives at the window-opening side as
 **untrusted input** — for iTerm2 that is terminal output, for `sm ssh`
 anything writable to the tunnel socket. Every payload field is validated
 against strict allowlists (host charset, `sm-` session-name shape,

@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/dukechain2333/ai-sessions-manager/internal/config"
 	"github.com/dukechain2333/ai-sessions-manager/internal/store"
 )
 
@@ -811,5 +812,137 @@ func TestHelpBarHasViewButton(t *testing.T) {
 	m := newTwoAgentModel(t)
 	if !strings.Contains(helpLineFor(m.helpItems()), "v view") {
 		t.Error("help bar should list the v view toggle")
+	}
+}
+
+// --- settings dialog mouse ---
+
+// settingsMouseModel opens the settings dialog on a fresh test model.
+func settingsMouseModel(t *testing.T) Model {
+	t.Helper()
+	return openSettingsDialog(t, newTestModel())
+}
+
+// A click on a row's label region moves the cursor without changing the
+// value; the value cell is the change surface.
+func TestSettingsClickSelectsRow(t *testing.T) {
+	m := settingsMouseModel(t)
+	before := m.setForm
+	cx, cy := dialogContentOrigin(m)
+	m2, _ := m.Update(click(cx+2, cy+settingsRowTop+3)) // "tmux enabled" label
+	m = m2.(Model)
+	if m.setCursor != 3 {
+		t.Fatalf("cursor = %d, want 3", m.setCursor)
+	}
+	if m.setForm != before {
+		t.Errorf("label click must not change values:\n got %+v\nwant %+v", m.setForm, before)
+	}
+}
+
+func TestSettingsClickTogglesBool(t *testing.T) {
+	m := settingsMouseModel(t)
+	was := m.setForm.TmuxEnabled
+	cx, cy := dialogContentOrigin(m)
+	m2, _ := m.Update(click(cx+settingsValueCol, cy+settingsRowTop+3)) // "[x]" cell
+	m = m2.(Model)
+	if m.setCursor != 3 || m.setForm.TmuxEnabled == was {
+		t.Fatalf("cursor=%d enabled=%v, want cursor 3 and toggled from %v", m.setCursor, m.setForm.TmuxEnabled, was)
+	}
+}
+
+// Both value-cell regions cycle an enum; with two options each click flips
+// the value, so forward-then-◂ lands back on the original.
+func TestSettingsClickCyclesEnum(t *testing.T) {
+	m := settingsMouseModel(t)
+	was := m.setForm.View
+	cx, cy := dialogContentOrigin(m)
+	m2, _ := m.Update(click(cx+settingsValueCol+4, cy+settingsRowTop)) // value text: forward
+	m = m2.(Model)
+	if m.setForm.View == was {
+		t.Fatalf("value click should cycle view away from %q", was)
+	}
+	m2, _ = m.Update(click(cx+settingsValueCol, cy+settingsRowTop)) // the ◂ glyph: backward
+	m = m2.(Model)
+	if m.setForm.View != was {
+		t.Errorf("◂ click should cycle back to %q, got %q", was, m.setForm.View)
+	}
+}
+
+func TestSettingsClickOpensEditorAndOutsideCancels(t *testing.T) {
+	m := settingsMouseModel(t)
+	cx, cy := dialogContentOrigin(m)
+	m2, _ := m.Update(click(cx+settingsValueCol+1, cy+settingsRowTop+2)) // "iterm2 ssh" value
+	m = m2.(Model)
+	if !m.setEditing || m.setCursor != 2 {
+		t.Fatalf("editing=%v cursor=%d, want editor open on row 2", m.setEditing, m.setCursor)
+	}
+	// While editing, clicks on other rows are inert: the editor owns the form.
+	view := m.setForm.View
+	m2, _ = m.Update(click(cx+settingsValueCol+4, cy+settingsRowTop))
+	m = m2.(Model)
+	if !m.setEditing || m.setForm.View != view || m.setCursor != 2 {
+		t.Fatalf("row click during edit must be inert: editing=%v view=%q cursor=%d", m.setEditing, m.setForm.View, m.setCursor)
+	}
+	// An outside click layers like esc: cancel the edit, keep the dialog.
+	m2, _ = m.Update(click(0, 0))
+	m = m2.(Model)
+	if m.setEditing || m.dialog != dialogSettings {
+		t.Fatalf("outside click during edit: editing=%v dialog=%v, want edit canceled and dialog open", m.setEditing, m.dialog)
+	}
+	// A second outside click closes the dialog.
+	m2, _ = m.Update(click(0, 0))
+	m = m2.(Model)
+	if m.dialog != dialogNone {
+		t.Errorf("outside click should close the settings dialog, got %v", m.dialog)
+	}
+}
+
+func TestSettingsHelpClickSaves(t *testing.T) {
+	m := settingsMouseModel(t)
+	saved := false
+	m.saveConfig = func(string, config.Config) error { saved = true; return nil }
+	cx, cy := dialogContentOrigin(m)
+	x := lipgloss.Width("j/k move · ↵/←/→ change · ") + 1 // one cell into "s save"
+	m2, _ := m.Update(click(cx+x, cy+m.settingsHelpLine(len(settingsRows()))))
+	m = m2.(Model)
+	if !saved || m.dialog != dialogInfo {
+		t.Fatalf("saved=%v dialog=%v, want save fired and the info dialog", saved, m.dialog)
+	}
+}
+
+func TestSettingsWheelMovesCursor(t *testing.T) {
+	m := settingsMouseModel(t)
+	m2, _ := m.Update(wheel(5, 5, false))
+	m = m2.(Model)
+	if m.setCursor != 1 {
+		t.Fatalf("wheel down: cursor = %d, want 1", m.setCursor)
+	}
+	m2, _ = m.Update(wheel(5, 5, true))
+	m = m2.(Model)
+	if m.setCursor != 0 {
+		t.Errorf("wheel up: cursor = %d, want 0", m.setCursor)
+	}
+}
+
+// The hit-tested help line must be the rendered one, with and without the
+// error line shifting it.
+func TestSettingsHelpLineMatchesRender(t *testing.T) {
+	m := settingsMouseModel(t)
+	for _, withErr := range []bool{false, true} {
+		if withErr {
+			m.setErr = "boom"
+		}
+		_, cy := dialogContentOrigin(m)
+		want := cy + m.settingsHelpLine(len(settingsRows()))
+		found := -1
+		for y, ln := range strings.Split(m.View(), "\n") {
+			if strings.Contains(ln, "s save") {
+				found = y
+				break
+			}
+		}
+		if found != want {
+			t.Fatalf("withErr=%v: help line rendered at %d, hit-test expects %d", withErr, found, want)
+		}
 	}
 }

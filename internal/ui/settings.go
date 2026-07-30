@@ -24,6 +24,14 @@ const (
 	settingHex
 )
 
+// Form geometry shared by settingsView and the mouse hit-testing in
+// mouse.go — one source, so rendering and click mapping cannot drift.
+const (
+	settingsRowTop   = 2                  // content line of the first form row (title + blank above)
+	settingsLabelW   = 13                 // label column width
+	settingsValueCol = 2 + settingsLabelW // value cell start: marker cell + label column
+)
+
 // settingRow is one line of the form. get/set go through the working copy
 // as strings (bools as "true"/"false") so one table drives rendering,
 // cycling, and editing for every kind.
@@ -169,6 +177,42 @@ func (m Model) activateSettingRow(row settingRow, key string) (tea.Model, tea.Cm
 	return m, nil
 }
 
+// settingsHelpItem is one segment of the dialog's help line. Live segments
+// are clickable and feed their key through handleSettingsKey; the same
+// table drives rendering and hit-testing (the helpBar idiom), so the two
+// cannot drift.
+type settingsHelpItem struct {
+	label string
+	key   tea.KeyMsg
+	live  bool
+}
+
+// settingsHelp is the help line for the dialog's current mode.
+func (m Model) settingsHelp() []settingsHelpItem {
+	if m.setEditing {
+		return []settingsHelpItem{
+			{label: "↵ apply", key: tea.KeyMsg{Type: tea.KeyEnter}, live: true},
+			{label: "esc cancel edit", key: tea.KeyMsg{Type: tea.KeyEsc}, live: true},
+		}
+	}
+	return []settingsHelpItem{
+		{label: "j/k move"},
+		{label: "↵/←/→ change"},
+		{label: "s save", key: runeKey("s"), live: true},
+		{label: "esc close", key: tea.KeyMsg{Type: tea.KeyEsc}, live: true},
+	}
+}
+
+// settingsHelpLine is the content line the help text renders on: the rows,
+// a blank, and the error line when present.
+func (m Model) settingsHelpLine(n int) int {
+	l := settingsRowTop + n + 1
+	if m.setErr != "" {
+		l++
+	}
+	return l
+}
+
 // settingsView renders the form.
 func (m Model) settingsView() string {
 	rows := settingsRows()
@@ -179,17 +223,18 @@ func (m Model) settingsView() string {
 		if i == m.setCursor {
 			marker = m.st.ListTitleSel.Render("▶") + " "
 		}
-		b.WriteString(marker + fmt.Sprintf("%-13s", r.label) + m.renderSettingValue(r, i) + "\n")
+		b.WriteString(marker + fmt.Sprintf("%-*s", settingsLabelW, r.label) + m.renderSettingValue(r, i) + "\n")
 	}
 	b.WriteString("\n")
 	if m.setErr != "" {
 		b.WriteString(m.st.ErrorText.Render(m.setErr) + "\n")
 	}
-	help := "j/k move · ↵/←/→ change · s save · esc close"
-	if m.setEditing {
-		help = "↵ apply · esc cancel edit"
+	items := m.settingsHelp()
+	parts := make([]string, len(items))
+	for i, it := range items {
+		parts[i] = it.label
 	}
-	b.WriteString(m.st.Help.Render(help))
+	b.WriteString(m.st.Help.Render(strings.Join(parts, " · ")))
 	return m.st.DialogBox.Render(b.String())
 }
 

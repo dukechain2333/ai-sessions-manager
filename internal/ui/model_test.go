@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 	// the same whether or not the runner sits inside Ghostty or an sm ssh
 	// bridge. Tests for those launchers override these explicitly.
 	ghosttyEnv = func() bool { return false }
+	warpEnv = func() bool { return false }
 	bridgeSock = func() string { return "" }
 	os.Exit(m.Run())
 }
@@ -1573,6 +1574,61 @@ func TestGhosttyOverSSHStaysOff(t *testing.T) {
 	m.openIn = config.OpenInWindow
 	if m.nativeWindows() {
 		t.Error("forwarded TERM_PROGRAM over ssh must not enable native windows")
+	}
+}
+
+// A local window-mode sm inside Warp opens windows itself — no ssh, no
+// escapes, host always empty.
+func TestWarpLocalOpensWindow(t *testing.T) {
+	origIn, origWp, origSSH := insideTmux, warpEnv, overSSH
+	insideTmux = func() bool { return false }
+	warpEnv = func() bool { return true }
+	overSSH = func() bool { return false }
+	t.Cleanup(func() { insideTmux, warpEnv, overSSH = origIn, origWp, origSSH })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	m.tmuxEnabled = true
+	launches := &[]iterm2.Launch{}
+	m.warpOpen = func(l iterm2.Launch) tea.Cmd {
+		*launches = append(*launches, l)
+		return nil
+	}
+	m.ghosttyOpen = func(l iterm2.Launch) tea.Cmd {
+		t.Errorf("warp mode must not route to ghostty: %+v", l)
+		return nil
+	}
+	m.emitSeq = func(seq string) tea.Cmd {
+		t.Errorf("warp mode must not emit escapes: %q", seq)
+		return nil
+	}
+	m.runSilent = func(name, dir string, args ...string) tea.Cmd {
+		t.Errorf("warp mode must not runSilent: %s %v", name, args)
+		return nil
+	}
+	dir := t.TempDir()
+	m.list.sessions[0].CWD = dir
+	m.list.selectSession(0)
+	m.startResume()
+	if len(*launches) != 1 {
+		t.Fatalf("want 1 launch, got %v", *launches)
+	}
+	if l := (*launches)[0]; l.Host != "" || l.Name != "sm-claude-s1" || !l.Tmux {
+		t.Errorf("launch = %+v, want empty host", l)
+	}
+}
+
+// A forwarded Warp env over ssh must not count: windows can only open
+// client-side, which is the bridge's job.
+func TestWarpOverSSHStaysOff(t *testing.T) {
+	origWp, origSSH, origIT := warpEnv, overSSH, iTerm2Env
+	warpEnv = func() bool { return true }
+	overSSH = func() bool { return true }
+	iTerm2Env = func() bool { return false }
+	t.Cleanup(func() { warpEnv, overSSH, iTerm2Env = origWp, origSSH, origIT })
+	m := newTestModel()
+	m.openIn = config.OpenInWindow
+	if m.nativeWindows() {
+		t.Error("forwarded Warp env over ssh must not enable native windows")
 	}
 }
 
