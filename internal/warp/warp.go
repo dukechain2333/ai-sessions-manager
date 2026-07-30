@@ -1,6 +1,6 @@
-// Package warp opens native Warp windows and runs a command in them. Warp
+// Package warp opens native Warp tabs and runs a command in them. Warp
 // has no scripting dictionary and no local-window CLI (oz drives cloud
-// agents only); the one programmatic "open a window and run a command"
+// agents only); the one programmatic "open a tab and run a command"
 // path is a Tab Config file whose commands run in the new pane, delivered
 // through the warp://tab_config URI. Used by the `sm ssh` helper on the
 // desktop and by a local window-mode sm.
@@ -18,9 +18,9 @@ import (
 	"time"
 )
 
-// Opener opens native Warp windows. Unlike Ghostty's it holds no dedupe
-// state: Warp hands back no window handle, so every launch opens a fresh
-// window (duplicate tracked launches still collapse in the target
+// Opener opens native Warp tabs. Unlike Ghostty's it holds no dedupe
+// state: Warp hands back no tab handle, so every launch opens a fresh
+// tab (duplicate tracked launches still collapse in the target
 // machine's tmux new-session -A).
 type Opener struct {
 	goos string
@@ -118,9 +118,9 @@ func tomlString(s string) string {
 	return b.String()
 }
 
-// Open runs line in a native Warp window: land the Tab Config, then
-// deliver the URI. key is accepted for the bridge.Handler shape and
-// ignored — no window handle comes back, so there is nothing to refocus.
+// Open runs line in a native Warp tab — a new tab in the frontmost Warp window:
+// land the Tab Config, then deliver the URI. key is accepted for the bridge.Handler shape and
+// ignored — no tab handle comes back, so there is nothing to refocus.
 // Past a successful open/xdg-open exit the launch is fire-and-forget.
 func (o *Opener) Open(_, line string) error {
 	if err := o.writeConfig(renderTabConfig(line)); err != nil {
@@ -130,7 +130,7 @@ func (o *Opener) Open(_, line string) error {
 	if o.goos == "linux" {
 		opener = "xdg-open"
 	}
-	if _, err := o.run(opener, "warp://tab_config/sm?new_window=true"); err != nil {
+	if _, err := o.run(opener, "warp://tab_config/sm"); err != nil {
 		return errors.New("warp window: " + err.Error())
 	}
 	return nil

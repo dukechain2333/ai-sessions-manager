@@ -311,8 +311,8 @@ func (m Model) ghosttyWindows() bool {
 }
 
 // warpWindows reports whether window-mode launches open native Warp
-// windows on this same machine. Over ssh a forwarded Warp env must not
-// count — windows can only open client-side, which is the bridge's job.
+// tabs on this same machine. Over ssh a forwarded Warp env must not
+// count — tabs can only open client-side, which is the bridge's job.
 func (m Model) warpWindows() bool {
 	return m.openIn == config.OpenInWindow && !overSSH() && warpEnv()
 }
@@ -325,7 +325,7 @@ func (m Model) nativeWindows() bool {
 
 // openWindowCmd routes one native-window launch to its launcher. The bridge
 // wins when present — it is the most explicit signal (the user started this
-// connection with sm ssh) — then a local Ghostty, then the iTerm2 escapes.
+// connection with sm ssh) — then a local Ghostty or Warp, then the iTerm2 escapes.
 func (m Model) openWindowCmd(l iterm2.Launch) tea.Cmd {
 	switch {
 	case m.bridgeWindows():
@@ -368,7 +368,7 @@ func ghosttyOpenCmd(l iterm2.Launch) tea.Cmd {
 // localWarp builds the process-wide local Warp opener once.
 var localWarp = sync.OnceValues(func() (*warp.Opener, error) { return warp.New() })
 
-// warpOpenCmd opens l in a native Warp window on this machine. The empty
+// warpOpenCmd opens l in a native Warp tab on this machine. The empty
 // destination selects bridge.Line's local form — run directly, no ssh
 // and no PATH prepend (a fresh local shell already has the user's PATH).
 func warpOpenCmd(l iterm2.Launch) tea.Cmd {

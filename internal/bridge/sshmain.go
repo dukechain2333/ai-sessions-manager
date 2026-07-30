@@ -20,7 +20,7 @@ const sshUsage = `usage: sm ssh <destination> [ssh options...]
 
 Connects like plain ssh, plus a window bridge: while the session is open,
 resuming a session in a window-mode sm on the far side opens a native
-terminal window (Ghostty or Warp) on THIS machine that sshes back into
+/ Ghostty window or Warp tab on THIS machine that sshes back into
 <destination>.
 
 <destination> comes first (a host or ssh alias); everything after it is
@@ -31,10 +31,10 @@ passed to ssh unchanged and reused when new windows dial back.`
 // user-facing messages.
 func desktopOpener() (Handler, string, error) {
 	if g, err := ghostty.New(); err == nil {
-		return g.Open, "Ghostty", nil
+		return g.Open, "Ghostty windows", nil
 	}
 	if w, err := warp.New(); err == nil {
-		return w.Open, "Warp", nil
+		return w.Open, "Warp tabs", nil
 	}
 	return nil, "", errors.New("this terminal is not Ghostty or Warp")
 }
@@ -103,7 +103,7 @@ func SSHMain(args []string) int {
 	}
 	sshArgs = append(sshArgs, extra...)
 	sshArgs = append(sshArgs, dest)
-	fmt.Fprintf(os.Stderr, "sm ssh: window bridge ready — window-mode launches on %s open %s windows here\n", dest, term)
+	fmt.Fprintf(os.Stderr, "sm ssh: window bridge ready — window-mode launches on %s open %s here\n", dest, term)
 	return runSSH(sshArgs)
 }
 

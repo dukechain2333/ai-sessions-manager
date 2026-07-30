@@ -38,7 +38,7 @@ keypress, in the directory the session originally lived in.
 - **Optional [tmux integration](#tmux-integration)** — launches run in
   detachable tmux sessions with live `●` markers and a kill key.
 - **[Real OS windows](#opening-launches-in-new-windows)** — with
-  `open_in: "window"`, launches open native iTerm2, Ghostty, or Warp windows
+  `open_in: "window"`, launches open native iTerm2 or Ghostty windows, or Warp tabs
   while `sm` stays put; works locally and over SSH.
 - Single static binary (macOS & Linux, Intel & Apple Silicon), no runtime
   dependencies.
@@ -214,7 +214,7 @@ With `"open_in": "window"`, resume/new open **real terminal windows** —
 |---|---|---|---|
 | **iTerm2** (macOS) | native window | native window on the Mac | [install the AutoLaunch script](docs/native-windows.md#iterm2-macos); over SSH also set `iterm2.ssh` |
 | **Ghostty** (macOS 1.3+, Linux 1.2+) | native window | native window on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
-| **Warp** (macOS & Linux) | native window | native window on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
+| **Warp** (macOS & Linux) | native tab | native tab on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
 | anything else | tmux window | tmux window | `tmux` on `PATH` (`sm` auto-wraps itself in a tmux session named `sm`) |
 
 The common minimal configs:

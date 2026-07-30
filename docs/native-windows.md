@@ -16,7 +16,7 @@ Shared behavior, regardless of terminal:
   window into it.
 - Repeating a launch whose window is still open focuses that window
   instead of opening a duplicate (iTerm2, and Ghostty on macOS; Warp
-  opens a fresh window each time — see its section).
+  opens a fresh tab each time — see its section).
 - Over SSH, each window dials its own fresh connection, so key-based
   (non-interactive) login to the server must already work.
 - `sm` itself never wraps into tmux in these modes.
@@ -184,8 +184,7 @@ Same behavior again, third plumbing: Warp has no scripting dictionary and
 no local-window CLI, so `sm` writes a **Tab Config** file —
 `~/.warp/tab_configs/sm.toml` (Linux:
 `~/.local/share/warp-terminal/tab_configs/`), rewritten on every launch —
-and asks Warp to open it via the `warp://tab_config/sm?new_window=true`
-URI.
+and asks Warp to open it via the `warp://tab_config/sm` URI — a new tab in the frontmost Warp window.
 
 ### Local (sm and Warp on the same machine)
 
@@ -199,15 +198,15 @@ Nothing to install. Set the mode and you're done:
 
 Identical to the Ghostty flow: install `sm` on the desktop, connect with
 `sm ssh myserver`, and window-mode launches on the server open native
-Warp windows on the desktop that dial back. Requirements and the bridge
+Warp tabs (in the frontmost Warp window) on the desktop that dial back. Requirements and the bridge
 troubleshooting list in the Ghostty section above apply unchanged.
 
 ### Warp-specific notes
 
-- **No window refocus:** repeating a launch opens another window instead
-  of focusing the still-open one — Warp hands back no window handle.
+- **No tab refocus:** repeating a launch opens another tab instead
+  of focusing the still-open one — Warp hands back no tab handle.
   Tracked launches still collapse into the same tmux session, so the
-  duplicate windows are mirrors, not duplicate agents.
+  duplicate tabs are mirrors, not duplicate agents.
 - A Tab Config named **`sm`** appears in Warp's pickers (command palette,
   the `+` tab menu). It is sm's launch vehicle; deleting it is harmless —
   the next launch recreates it.

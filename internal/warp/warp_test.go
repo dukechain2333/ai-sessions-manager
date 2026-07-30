@@ -89,7 +89,7 @@ func TestOpenWritesConfigAndDeliversURI(t *testing.T) {
 	if want := renderTabConfig(line); string(b) != want {
 		t.Errorf("sm.toml = %q, want %q", b, want)
 	}
-	if got.name != "open" || len(got.args) != 1 || got.args[0] != "warp://tab_config/sm?new_window=true" {
+	if got.name != "open" || len(got.args) != 1 || got.args[0] != "warp://tab_config/sm" {
 		t.Errorf("ran %q %q", got.name, got.args)
 	}
 	left, _ := filepath.Glob(filepath.Join(dir, "sm-*"))
@@ -107,7 +107,7 @@ func TestOpenLinuxUsesXdgOpen(t *testing.T) {
 	if err := o.Open("k", "line"); err != nil {
 		t.Fatal(err)
 	}
-	if got.name != "xdg-open" || got.args[0] != "warp://tab_config/sm?new_window=true" {
+	if got.name != "xdg-open" || got.args[0] != "warp://tab_config/sm" {
 		t.Errorf("ran %q %q", got.name, got.args)
 	}
 }
