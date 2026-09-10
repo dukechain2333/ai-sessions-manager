@@ -92,6 +92,14 @@ Pressing `enter` does nothing, or windows die instantly:
 - Over SSH: `iterm2.ssh` missing from config, or `$LC_TERMINAL` not
   reaching the host — check `echo $LC_TERMINAL` prints `iTerm2` there; your
   ssh setup must forward `LC_*` (macOS ssh does by default).
+- The window opens but sits at a bare prompt, and the console shows
+  `[sm] no session in new window`: the bridge script predates iTerm2 3.7.
+  That release switched scripts to a new Python runtime whose `iterm2`
+  module no longer reports a fresh window's current tab promptly; the
+  script now takes the session id straight from iTerm2's reply instead.
+  Re-run the installer (Step 1) to update the script, then stop the old
+  copy under *Scripts → Manage → Console* (select it, *Terminate*) and start
+  it again from *Scripts → AutoLaunch* — or just restart iTerm2.
 - Running `sm` inside a tmux attach: `sm` auto-enables pane passthrough,
   but a tmux older than 3.3 lacks `allow-passthrough` — run `sm` outside
   tmux.

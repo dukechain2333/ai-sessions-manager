@@ -7,6 +7,7 @@ build:
 
 test:
 	go test ./...
+	python3 -m unittest discover -s scripts/iterm2
 
 vet:
 	go vet ./...
