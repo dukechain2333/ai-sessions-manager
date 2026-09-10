@@ -3,3 +3,4 @@
 
 # macOS Finder artifacts
 .DS_Store
+__pycache__/

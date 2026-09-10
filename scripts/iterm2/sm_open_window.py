@@ -20,6 +20,8 @@ import re
 import shlex
 
 import iterm2
+import iterm2.api_pb2
+import iterm2.rpc
 
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
 NAME_RE = re.compile(r"^sm(-[a-z0-9]+)+$")
@@ -27,6 +29,7 @@ AGENTS = ("claude", "codex")
 ARG_RE = re.compile(r"^[A-Za-z0-9._/=@-]{1,256}$")
 BINDIR_RE = re.compile(r"^/[A-Za-z0-9._@/-]{0,512}$")
 
+# dedupe key -> iTerm2 window id of the window still (presumably) showing it
 windows = {}
 
 
@@ -84,6 +87,48 @@ def remote_command(spec):
     return host, host + "|" + (name or (dir_ + " " + inner)), cmd
 
 
+# The three calls below go straight to iTerm2's RPCs instead of through the
+# iterm2 module's Window/Session objects. Those objects mirror the app state
+# through notifications, and that mirror lags: with the module bundled with
+# iTerm2 3.7 (iterm2 2.22) the focus notification for a brand-new window is
+# dropped while the creation-triggered refresh is in flight, so
+# Window.current_tab stayed None for about a second and every launch after
+# the first found "no session" to type into — the window opened and sat at
+# a bare prompt. The RPC replies carry the ids directly and answer for the
+# window that exists right now, not for a cached picture of it.
+
+
+async def open_window(connection):
+    """Open a plain shell window (default profile).
+
+    Returns (window_id, session_id), or None after logging the failure.
+    """
+    reply = (await iterm2.rpc.async_create_tab(connection)).create_tab_response
+    status = iterm2.api_pb2.CreateTabResponse.Status
+    if reply.status != status.Value("OK"):
+        print("[sm] window creation failed:", status.Name(reply.status))
+        return None
+    return reply.window_id, reply.session_id
+
+
+async def type_into(connection, session_id, text):
+    """Send text to session_id as if typed; logs (does not raise) on failure."""
+    reply = (await iterm2.rpc.async_send_text(
+        connection, session_id, text, False)).send_text_response
+    status = iterm2.api_pb2.SendTextResponse.Status
+    if reply.status != status.Value("OK"):
+        print("[sm] typing into session", session_id, "failed:", status.Name(reply.status))
+
+
+async def refocus(connection, window_id):
+    """Bring window_id to the front. False when iTerm2 no longer has it —
+    the authoritative check that keeps a closed window from eating every
+    relaunch of the same session."""
+    reply = (await iterm2.rpc.async_activate(
+        connection, False, False, True, window_id=window_id)).activate_response
+    return reply.status == iterm2.api_pb2.ActivateResponse.Status.Value("OK")
+
+
 async def handle(connection, payload):
     spec = json.loads(base64.b64decode(payload))
     print("[sm] payload:", json.dumps(spec, sort_keys=True))
@@ -93,11 +138,7 @@ async def handle(connection, payload):
         return
     old = windows.get(key)
     if old is not None:
-        # async_activate on a closed window does not raise — verify against
-        # the live app state, or a closed window would eat every relaunch.
-        app = await iterm2.async_get_app(connection)
-        if app.get_window_by_id(old.window_id) is not None:
-            await old.async_activate()
+        if await refocus(connection, old):
             print("[sm] focused existing window for", key)
             return
         print("[sm] window for", key, "is gone; opening a new one")
@@ -112,23 +153,12 @@ async def handle(connection, payload):
     # environment (ssh agent etc.); on failure the window stays open showing
     # the error instead of flashing closed. The leading space keeps it out of
     # histories configured with HIST_IGNORE_SPACE.
-    win = await iterm2.Window.async_create(connection)
-    if win is None:
-        print("[sm] window creation failed")
+    opened = await open_window(connection)
+    if opened is None:
         return
-    # The Window object returned by async_create may not carry tab/session
-    # data yet; re-fetch it from the app state before typing into it.
-    session = win.current_tab.current_session if win.current_tab else None
-    if session is None:
-        app = await iterm2.async_get_app(connection)
-        fresh = app.get_window_by_id(win.window_id)
-        if fresh is not None and fresh.current_tab is not None:
-            session = fresh.current_tab.current_session
-    if session is None:
-        print("[sm] no session in new window", win.window_id)
-        return
-    await session.async_send_text(" " + line + "\n")
-    windows[key] = win
+    window_id, session_id = opened
+    await type_into(connection, session_id, " " + line + "\n")
+    windows[key] = window_id
 
 
 async def main(connection):

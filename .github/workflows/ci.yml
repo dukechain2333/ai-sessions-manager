@@ -21,6 +21,8 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -race ./...
+      - name: Test iTerm2 bridge script
+        run: python3 -m unittest discover -s scripts/iterm2
       - name: Cross-compile (macOS + Linux, amd64 + arm64)
         run: |
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
