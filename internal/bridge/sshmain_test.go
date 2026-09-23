@@ -2,9 +2,26 @@ package bridge
 
 import (
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestBridgeSSHArgsBypassesMultiplexing(t *testing.T) {
+	got := bridgeSSHArgs("/tmp/sm-bridge-ab.sock", "/l/helper.sock", "myserver", []string{"-p", "2222"})
+	want := []string{
+		"-o", "ControlPath=none",
+		"-R", "/tmp/sm-bridge-ab.sock:/l/helper.sock",
+		"-o", "StreamLocalBindUnlink=yes",
+		"-o", "StreamLocalBindMask=0177",
+		"-o", "SetEnv=LC_SM_BRIDGE=/tmp/sm-bridge-ab.sock",
+		"-p", "2222",
+		"myserver",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("args =\n %q\nwant\n %q", got, want)
+	}
+}
 
 func TestDesktopOpenerSelection(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
