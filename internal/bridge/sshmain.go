@@ -84,11 +84,6 @@ func SSHMain(args []string) int {
 
 	// Random remote path: predictable names in a shared /tmp could be
 	// squatted, and two concurrent sm ssh sessions must not collide.
-	// StreamLocalBindMask 0177 leaves the forwarded socket 0600, so other
-	// users on the server cannot feed the bridge; StreamLocalBindUnlink
-	// clears a stale leftover. SetEnv uses an LC_* name because stock sshd
-	// AcceptEnv (Debian/Ubuntu default "AcceptEnv LANG LC_*") lets it
-	// through — the same route iTerm2's LC_TERMINAL rides.
 	remote := "/tmp/sm-bridge-" + randHex(8) + ".sock"
 	logf := func(string, ...any) {}
 	if os.Getenv("SM_BRIDGE_DEBUG") != "" {
@@ -96,16 +91,32 @@ func SSHMain(args []string) int {
 	}
 	go Serve(ln, dest, extra, open, logf)
 
-	sshArgs := []string{
+	fmt.Fprintf(os.Stderr, "sm ssh: window bridge ready — window-mode launches on %s open %s here\n", dest, term)
+	return runSSH(bridgeSSHArgs(remote, local, dest, extra))
+}
+
+// bridgeSSHArgs builds the argv of the interactive ssh that carries the
+// bridge. ControlPath=none keeps this one connection off any ControlMaster
+// in the user's ssh config: a session multiplexed onto an existing master
+// gets the master's SetEnv, so LC_SM_BRIDGE would name the socket of the
+// sm ssh that created the master — long gone — instead of this one's. As
+// the first -o it beats the config file (ssh keeps the first value seen).
+// The windows the bridge opens still multiplex; they need neither -R nor
+// SetEnv. StreamLocalBindMask 0177 leaves the forwarded socket 0600, so
+// other users on the server cannot feed the bridge; StreamLocalBindUnlink
+// clears a stale leftover. SetEnv uses an LC_* name because stock sshd
+// AcceptEnv (Debian/Ubuntu default "AcceptEnv LANG LC_*") lets it through
+// — the same route iTerm2's LC_TERMINAL rides.
+func bridgeSSHArgs(remote, local, dest string, extra []string) []string {
+	args := []string{
+		"-o", "ControlPath=none",
 		"-R", remote + ":" + local,
 		"-o", "StreamLocalBindUnlink=yes",
 		"-o", "StreamLocalBindMask=0177",
 		"-o", "SetEnv=" + EnvVar + "=" + remote,
 	}
-	sshArgs = append(sshArgs, extra...)
-	sshArgs = append(sshArgs, dest)
-	fmt.Fprintf(os.Stderr, "sm ssh: window bridge ready — window-mode launches on %s open %s here\n", dest, term)
-	return runSSH(sshArgs)
+	args = append(args, extra...)
+	return append(args, dest)
 }
 
 // runSSH runs ssh in the foreground on this tty. It must stay a child (not

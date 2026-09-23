@@ -168,6 +168,11 @@ Requirements:
   iTerm2 mechanism relies on for `LC_TERMINAL`);
 - `tmux` on the server if you also want tracking (`tmux.enabled`).
 
+SSH connection sharing (`ControlMaster` in `~/.ssh/config`) is fine: `sm ssh`
+always opens its own connection (`ControlPath=none`), because a session
+multiplexed onto an existing master would inherit that master's
+`$LC_SM_BRIDGE`. The windows it opens still reuse your master.
+
 ### Troubleshooting
 
 - "window bridge not reachable — reconnect with `sm ssh`": the shell still
