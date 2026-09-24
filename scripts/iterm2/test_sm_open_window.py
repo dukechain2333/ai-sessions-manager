@@ -17,7 +17,10 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import types
 import unittest
 
@@ -182,7 +185,8 @@ class HandleTests(unittest.TestCase):
                      "argv": ["claude", "--resume", "abc"], "tmux": True, "bindir": "/usr/local/bin"})
         sid, text = self.state.typed[0]
         self.assertEqual(sid, "sess-1")
-        self.assertTrue(text.startswith(" ssh -t -- myserver "), text)
+        self.assertTrue(text.startswith(
+            " ssh -t -o RemoteCommand=none -o ClearAllForwardings=yes -- myserver "), text)
         inner = shlex.split(text)[-1]  # the single-quoted remote command
         self.assertEqual(
             inner,
@@ -210,6 +214,77 @@ class HandleTests(unittest.TestCase):
         self.handle({"host": "", "dir": "/tmp", "argv": ["rm", "-rf", "/"]})
         self.assertEqual(self.state.create_tab_calls, 0)
         self.assertEqual(self.state.typed, [])
+
+    def test_only_new_and_resume_agent_commands_are_accepted(self):
+        for argv in (["claude"], ["codex"], ["claude", "--resume", "abc-123"],
+                     ["codex", "resume", "abc-123"]):
+            with self.subTest(argv=argv):
+                _, _, command = self.bridge.remote_command({"dir": "/tmp", "argv": argv})
+                self.assertIsNotNone(command)
+        for argv in (
+                ["codex", "mcp", "add", "evil", "--", "/bin/sh"],
+                ["codex", "exec", "payload"],
+                ["codex", "-c", "mcp_servers.evil.command=/bin/sh"],
+                ["claude", "--mcp-config", "/tmp/evil.json"],
+                ["claude", "--dangerously-skip-permissions"],
+                ["codex", "resume", "--last"],
+                ["claude", "--resume", "--dangerously-skip-permissions"],
+                ["codex", "resume", "abc", "--dangerously-bypass-approvals-and-sandbox"],
+                ["claude", "--resume", "abc\n"], ["codex", "resume", "=sh"],
+                ["codex", "resume", "/tmp/session"]):
+            with self.subTest(argv=argv):
+                self.handle({"dir": "/tmp", "argv": argv})
+        self.assertEqual(self.state.create_tab_calls, 0)
+
+    def test_malformed_types_and_control_characters_are_rejected(self):
+        invalid = [None, [], "claude", 12]
+        for field, value in (
+                ("argv", "claude"), ("argv", ["claude", 1]),
+                ("argv", None), ("host", False), ("dir", []),
+                ("name", {}), ("bindir", 1), ("window_key", True),
+                ("attach", "false"), ("tmux", 1),
+                ("host", "myserver\n"), ("name", "sm-claude-abc\n"),
+                ("dir", "/tmp/\x1b[31m"), ("bindir", "/tmp/bin\n"),
+                ("window_key", "sm-claude-abc\n"), ("window_key", "untracked")):
+            invalid.append({"argv": ["claude"], field: value})
+        invalid.extend([
+            {"name": "sm-claude-abc", "attach": True, "argv": ["codex", "exec", "x"]},
+            {"name": "sm-claude-abc", "attach": True, "tmux": True},
+            {"name": "sm-claude-abc", "attach": True, "dir": "/tmp/\n"},
+        ])
+        for spec in invalid:
+            with self.subTest(spec=spec):
+                self.assertEqual(self.bridge.remote_command(spec), (None, None, None))
+
+    def test_adopted_session_refocuses_its_pending_window(self):
+        pending = "sm-claude-pending-123"
+        self.handle({"dir": "/tmp", "name": pending, "argv": ["claude"], "tmux": True})
+        adopted = {"name": "sm-claude-abc12345", "window_key": pending, "attach": True}
+        _, _, command = self.bridge.remote_command(adopted)
+        self.assertIn("=sm-claude-abc12345", command)
+        self.assertNotIn(pending, command)
+        self.handle(adopted)
+        self.assertEqual(self.state.create_tab_calls, 1)
+        self.assertEqual(self.state.activated, ["pty-1"])
+        self.assertEqual(len(self.state.typed), 1)
+
+    @unittest.skipUnless(shutil.which("ssh"), "OpenSSH not installed")
+    def test_window_ssh_clears_login_command_and_forwardings(self):
+        self.handle({"host": "myserver", "name": "sm-claude-abc", "attach": True})
+        argv = shlex.split(self.state.typed[0][1])
+        with tempfile.TemporaryDirectory() as directory:
+            config = os.path.join(directory, "ssh_config")
+            with open(config, "w") as f:
+                f.write("Host myserver\n HostName 192.0.2.1\n Port 2222\n"
+                        " RemoteCommand tmux attach\n LocalForward 18080 127.0.0.1:8080\n"
+                        " ExitOnForwardFailure yes\n")
+            # -G parses OpenSSH configuration without opening a connection.
+            result = subprocess.run([argv[0], "-G", "-F", config] + argv[1:],
+                                    text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("localforward ", result.stdout)
+        self.assertNotIn("remotecommand ", result.stdout)
+        self.assertIn("port 2222\n", result.stdout)
 
 
 if __name__ == "__main__":

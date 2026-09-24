@@ -47,11 +47,27 @@ func Socket() string {
 var (
 	hostRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$`)
 	nameRE   = regexp.MustCompile(`^sm(-[a-z0-9]+)+$`)
-	argRE    = regexp.MustCompile(`^[A-Za-z0-9._/=@-]{1,256}$`)
+	idRE     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$`)
 	binDirRE = regexp.MustCompile(`^/[A-Za-z0-9._@/-]{0,512}$`)
 )
 
-var agents = map[string]bool{"claude": true, "codex": true}
+// AgentArgvOK accepts only commands sm itself emits. A character allowlist
+// alone would also admit configuration and execution subcommands such as
+// `codex mcp add`, which can run arbitrary programs on the desktop.
+func AgentArgvOK(argv []string) bool {
+	if len(argv) != 1 && len(argv) != 3 {
+		return false
+	}
+	if argv[0] != "claude" && argv[0] != "codex" {
+		return false
+	}
+	if len(argv) == 1 {
+		return true
+	}
+	return idRE.MatchString(argv[2]) &&
+		((argv[0] == "claude" && argv[1] == "--resume") ||
+			(argv[0] == "codex" && argv[1] == "resume"))
+}
 
 // HostOK reports whether dest is safe to embed in an ssh command line: it
 // must start with an alphanumeric, so it can never be parsed as a flag.
@@ -84,21 +100,36 @@ func Line(spec iterm2.Launch, dest string, sshArgs []string) (key, line string, 
 	if dest != "" && !HostOK(dest) {
 		return "", "", errors.New("invalid ssh destination")
 	}
+	if spec.WindowKey != "" && !nameRE.MatchString(spec.WindowKey) {
+		return "", "", errors.New("invalid window key")
+	}
+	if spec.Name != "" && !nameRE.MatchString(spec.Name) {
+		return "", "", errors.New("invalid tmux session name")
+	}
+	if spec.Host != "" && !HostOK(spec.Host) {
+		return "", "", errors.New("invalid payload host")
+	}
+	if spec.BinDir != "" && !binDirRE.MatchString(spec.BinDir) {
+		return "", "", errors.New("invalid bindir")
+	}
+	// The command is typed into a live shell; quoting does not protect its
+	// line editor from control bytes. Check this even on attach payloads.
+	if strings.ContainsFunc(spec.Dir, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", "", errors.New("dir contains control characters")
+	}
 	var cmd string
 	if spec.Attach {
+		if len(spec.Argv) != 0 || spec.Tmux {
+			return "", "", errors.New("attach cannot include an agent command")
+		}
 		if !nameRE.MatchString(spec.Name) {
 			return "", "", errors.New("invalid tmux session name")
 		}
 		key = dest + "|" + spec.Name
 		cmd = "exec tmux attach-session -t " + Quote("="+spec.Name)
 	} else {
-		if len(spec.Argv) == 0 || !agents[spec.Argv[0]] {
-			return "", "", errors.New("argv does not start with a known agent")
-		}
-		for _, a := range spec.Argv {
-			if !argRE.MatchString(a) {
-				return "", "", errors.New("argv contains a disallowed argument")
-			}
+		if !AgentArgvOK(spec.Argv) {
+			return "", "", errors.New("argv is not a supported agent launch")
 		}
 		inner := quoteJoin(spec.Argv)
 		// PATH prepend for the ssh form only: the remote end of a fresh ssh
@@ -108,17 +139,7 @@ func Line(spec iterm2.Launch, dest string, sshArgs []string) (key, line string, 
 		// forged bindir would let the payload steer binary resolution.
 		path := ""
 		if spec.BinDir != "" && dest != "" {
-			if !binDirRE.MatchString(spec.BinDir) {
-				return "", "", errors.New("invalid bindir")
-			}
 			path = "export PATH=" + Quote(spec.BinDir) + `:"$PATH" && `
-		}
-		// Dir is free-form (any real path is legal) so it is quoted rather
-		// than pattern-matched — but the line gets typed into a live shell,
-		// where raw control bytes could drive the line editor even inside
-		// quotes. Reject them.
-		if strings.ContainsFunc(spec.Dir, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-			return "", "", errors.New("dir contains control characters")
 		}
 		d := Quote(spec.Dir)
 		if spec.Tmux {
@@ -137,10 +158,16 @@ func Line(spec iterm2.Launch, dest string, sshArgs []string) (key, line string, 
 			key = dest + "|" + spec.Dir + " " + inner
 		}
 	}
+	if spec.WindowKey != "" {
+		key = dest + "|" + spec.WindowKey
+	}
 	if dest == "" {
 		return key, cmd, nil
 	}
-	sshPart := "ssh -t"
+	// These windows run an explicit command and share the original login's
+	// forwards. Reset session-only options before user flags (ssh takes the
+	// first value) while preserving host, identity, port and jump settings.
+	sshPart := "ssh -t -o RemoteCommand=none -o ClearAllForwardings=yes"
 	if len(sshArgs) > 0 {
 		sshPart += " " + quoteJoin(sshArgs)
 	}

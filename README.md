@@ -194,6 +194,12 @@ mv ~/.claude/projects/.trash/<project-slug>/<id>.jsonl \
    ~/.claude/projects/<project-slug>/
 ```
 
+If a trash entry already exists, the next copy is kept under
+`.trash/<project-slug>/duplicate-*/<id>.jsonl` (Codex: `.trash/duplicate-*/`).
+Restore the desired copy using its original filename; an older archive is never
+overwritten.
+
+
 ## Configuration
 
 On first run `sm` writes this default `config.json` to
@@ -222,7 +228,7 @@ next time `sm` starts.
 | `view` | `"list"` (default) / `"tabs"` | startup view mode; `v` toggles live |
 | `open_in.mode` | `"current"` (default) / `"window"` | `"current"` suspends `sm` and runs the agent in this terminal; `"window"` opens every launch in a [new window](#opening-launches-in-new-windows) while `sm` stays on screen. Shorthand: `"open_in": "window"` |
 | `open_in.iterm2.ssh` | ssh destination | only for iTerm2 windows when `sm` runs over SSH — whatever you type after `ssh` on the Mac. See below |
-| `tmux.enabled` | `false` (default) / `true` | launches run in tmux sessions named `sm-<agent>-<id8>`, so work survives detaching; adds the `●` markers and `x` kill. Needs `tmux` on `PATH` |
+| `tmux.enabled` | `false` (default) / `true` | launches run in tmux sessions named `sm-<agent>-<full-id>`, so work survives detaching; adds the `●` markers and `x` kill. Needs `tmux` on `PATH` |
 | `colors.claude` / `colors.codex` | `{"light","dark"}` hex | per-agent accent colors |
 
 `open_in` and `tmux.enabled` compose: with tmux on, windowed launches are
@@ -241,7 +247,7 @@ nothing to configure — and picks the best mechanism it has for it:
 | Terminal | Platforms | Launches open as | Mechanism | Repeating a launch |
 |---|---|---|---|---|
 | **iTerm2** | macOS | native window | custom escape sequence → AutoLaunch bridge script | focuses the open window |
-| **Ghostty** | macOS 1.3+, Linux 1.2+ | native window | AppleScript / `ghostty +new-window` | focuses it (macOS); fresh window (Linux) |
+| **Ghostty** | macOS 1.3+, Linux 1.3+ | native window | AppleScript / `ghostty +new-window` | focuses it (macOS); fresh window (Linux) |
 | **Warp** | macOS & Linux, Stable only | native **tab** in the frontmost window | Tab Config file + `warp://` URI | fresh tab (Warp returns no handle to focus) |
 | anything else | anywhere | tmux window | `sm` wraps itself in a tmux session | jumps to the window |
 
@@ -271,7 +277,7 @@ With `"open_in": "window"`, resume/new open **real terminal windows** —
 | Your terminal | Locally | Over SSH | One-time setup |
 |---|---|---|---|
 | **iTerm2** (macOS) | native window | native window on the Mac | [install the AutoLaunch script](docs/native-windows.md#iterm2-macos); over SSH also set `iterm2.ssh` |
-| **Ghostty** (macOS 1.3+, Linux 1.2+) | native window | native window on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
+| **Ghostty** (macOS 1.3+, Linux 1.3+) | native window | native window on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
 | **Warp** (macOS & Linux) | native tab | native tab on the desktop | none locally; over SSH just connect with **`sm ssh <host>`** |
 | anything else | tmux window | tmux window | `tmux` on `PATH` (`sm` auto-wraps itself in a tmux session named `sm`) |
 
@@ -338,3 +344,8 @@ Release, the Homebrew tap, and the APT repo all come from that one tag
 ## License
 
 [MIT](LICENSE)
+
+Tracked tmux names now retain the full session ID. Existing sessions created with
+the old eight-character names remain running, but are not automatically claimed:
+those prefixes can identify multiple Codex conversations. Attach to them manually
+or finish them before resuming through the new manager.

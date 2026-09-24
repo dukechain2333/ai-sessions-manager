@@ -26,10 +26,10 @@ func decode(t *testing.T, seq string) Launch {
 
 func TestSequenceRoundTrips(t *testing.T) {
 	in := Launch{Host: "myhost", Dir: "/x/alpha", Name: "sm-claude-s1",
-		Argv: []string{"claude", "--resume", "s1"}, Tmux: true}
+		Argv: []string{"claude", "--resume", "s1"}, Tmux: true, WindowKey: "sm-claude-pending-123"}
 	got := decode(t, Sequence(in, false))
 	if got.Host != in.Host || got.Dir != in.Dir || got.Name != in.Name ||
-		!got.Tmux || got.Attach || len(got.Argv) != 3 || got.Argv[0] != "claude" {
+		!got.Tmux || got.Attach || got.WindowKey != in.WindowKey || len(got.Argv) != 3 || got.Argv[0] != "claude" {
 		t.Errorf("round trip = %+v", got)
 	}
 }

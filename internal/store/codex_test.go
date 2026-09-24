@@ -29,9 +29,9 @@ func TestCodexParseMetadata(t *testing.T) {
 	if m.TotalMessages != 2 {
 		t.Errorf("TotalMessages = %d, want 2 (1 user + 1 assistant)", m.TotalMessages)
 	}
-	want := time.Date(2026, 6, 26, 3, 52, 34, 743000000, time.UTC)
+	want := time.Date(2026, 6, 26, 3, 52, 58, 0, time.UTC)
 	if !m.LastActivity.Equal(want) {
-		t.Errorf("LastActivity = %v, want %v (session_meta timestamp)", m.LastActivity, want)
+		t.Errorf("LastActivity = %v, want %v (latest record timestamp)", m.LastActivity, want)
 	}
 }
 

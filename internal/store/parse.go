@@ -102,35 +102,66 @@ func ParseMetadata(path string) (Meta, error) {
 }
 
 // realPrompt returns the text of a user record iff it is a prompt the
-// human actually typed: not a meta record, not a tool_result, and not
-// harness-injected markup (which always starts with "<").
+// human actually typed: not a meta record or a tool_result. Only known
+// harness wrappers are removed; HTML/XML is otherwise ordinary user text.
 func realPrompt(rec rawRecord) string {
 	if rec.IsMeta {
 		return ""
 	}
-	text := strings.TrimSpace(firstText(rec.Message))
-	if text == "" || strings.HasPrefix(text, "<") {
-		return ""
-	}
-	return text
+	return claudeUserText(rec.Message)
 }
 
-func firstText(raw json.RawMessage) string {
+func stripClaudeContext(text string) string {
+	return stripContextBlocks(text, []string{
+		"system-reminder", "local-command-caveat", "local-command-stdout",
+		"command-name", "command-message", "command-args",
+	})
+}
+
+// stripContextBlocks removes complete, recognized leading context blocks,
+// retaining any human text that follows. Incomplete or unknown markup stays
+// visible instead of silently turning a real conversation into an empty one.
+func stripContextBlocks(text string, tags []string) string {
+	text = strings.TrimSpace(text)
+	for {
+		stripped := false
+		for _, tag := range tags {
+			open, close := "<"+tag+">", "</"+tag+">"
+			if !strings.HasPrefix(text, open) {
+				continue
+			}
+			if end := strings.Index(text[len(open):], close); end >= 0 {
+				text = strings.TrimSpace(text[len(open)+end+len(close):])
+				stripped = true
+			}
+			break
+		}
+		if !stripped {
+			return text
+		}
+	}
+}
+
+func claudeUserText(raw json.RawMessage) string {
 	var msg apiMessage
 	if json.Unmarshal(raw, &msg) != nil {
 		return ""
 	}
 	var s string
 	if json.Unmarshal(msg.Content, &s) == nil {
-		return s
+		return stripClaudeContext(s)
 	}
 	var blocks []contentBlock
 	if json.Unmarshal(msg.Content, &blocks) == nil {
+		var texts []string
 		for _, b := range blocks {
-			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-				return b.Text
+			if b.Type == "text" {
+				if text := stripClaudeContext(b.Text); text != "" {
+					texts = append(texts, text)
+				}
 			}
 		}
+		return strings.Join(texts, "\n\n")
 	}
 	return ""
 }

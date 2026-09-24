@@ -23,6 +23,9 @@ type Launch struct {
 	Argv   []string `json:"argv,omitempty"`
 	Tmux   bool     `json:"tmux,omitempty"`
 	Attach bool     `json:"attach,omitempty"`
+	// WindowKey keeps a new session's native window identity stable when its
+	// provisional tmux name is adopted. Name still selects the actual tmux.
+	WindowKey string `json:"window_key,omitempty"`
 	// BinDir is the directory holding the agent binary, resolved by sm in
 	// the user's real (interactive) environment. The remote end of a fresh
 	// ssh runs with sshd's bare PATH — tmux panes created from it inherit

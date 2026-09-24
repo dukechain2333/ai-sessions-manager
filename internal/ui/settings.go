@@ -168,7 +168,7 @@ func (m Model) activateSettingRow(row settingRow, key string) (tea.Model, tea.Cm
 		if key != "enter" {
 			return m, nil
 		}
-		m.setInput.SetValue(row.get(&m.setForm))
+		m.setInput.SetValue(displayText(row.get(&m.setForm)))
 		m.setInput.CursorEnd()
 		m.setInput.Focus()
 		m.setEditing = true
@@ -227,7 +227,7 @@ func (m Model) settingsView() string {
 	}
 	b.WriteString("\n")
 	if m.setErr != "" {
-		b.WriteString(m.st.ErrorText.Render(m.setErr) + "\n")
+		b.WriteString(m.st.ErrorText.Render(displayText(m.setErr)) + "\n")
 	}
 	items := m.settingsHelp()
 	parts := make([]string, len(items))
@@ -259,6 +259,6 @@ func (m Model) renderSettingValue(r settingRow, i int) string {
 		if v == "" {
 			return m.st.ListMeta.Render("(unset)")
 		}
-		return v
+		return displayText(v)
 	}
 }

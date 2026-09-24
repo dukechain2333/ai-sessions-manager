@@ -14,5 +14,5 @@ echo "  2. Scripts > AutoLaunch > sm_open_window.py (or restart iTerm2)."
 echo "     First run offers to download the iTerm2 Python runtime - accept."
 echo
 echo "Then on the remote host, set in ~/.config/sm/config.json:"
-echo '  "open_in": "window",'
-echo '  "iterm2": { "ssh": "<how this Mac sshes there, e.g. myserver>" }'
+echo '  { "open_in": { "mode": "window", "iterm2": { "ssh": "myserver" } } }'
+echo 'Replace myserver with the SSH destination this Mac uses for the remote host.'

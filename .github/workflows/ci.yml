@@ -10,20 +10,55 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}, Go ${{ matrix.go }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            go: minimum
+          - os: ubuntu-latest
+            go: stable
+          - os: macos-latest
+            go: stable
+    runs-on: ${{ matrix.os }}
+    env:
+      SM_REQUIRE_TMUX_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Set up minimum Go version
+        if: matrix.go == 'minimum'
+        uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: go.mod
           cache: true
+      - name: Set up current Go version
+        if: matrix.go == 'stable'
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: Install tmux and ShellCheck (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y tmux shellcheck
+      - name: Install tmux and ShellCheck (macOS)
+        if: runner.os == 'macOS'
+        run: brew install tmux shellcheck
+      - name: Verify shell scripts
+        run: |
+          shellcheck install.sh scripts/install-iterm2.sh apt/build-repo.sh
+          sh -n install.sh scripts/install-iterm2.sh
+          bash -n apt/build-repo.sh
       - name: Vet
         run: go vet ./...
       - name: Test
         run: go test -race ./...
       - name: Test iTerm2 bridge script
         run: python3 -m unittest discover -s scripts/iterm2
+      - name: Test installers and checksum failures
+        run: python3 -m unittest discover -s scripts/tests
       - name: Cross-compile (macOS + Linux, amd64 + arm64)
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
         run: |
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 \

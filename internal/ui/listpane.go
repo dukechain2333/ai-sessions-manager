@@ -591,7 +591,7 @@ func (l *listPane) View() string {
 	var lines []string
 	for i, r := range l.rows {
 		if r.subheader {
-			lines = append(lines, l.styles.ListMeta.Render(store.Truncate("  "+r.label, l.width)))
+			lines = append(lines, l.styles.ListMeta.Render(displayLine("  "+r.label, l.width)))
 			continue
 		}
 		if r.header {
@@ -605,7 +605,7 @@ func (l *listPane) View() string {
 			if l.projectHasLiveTmux(r.project) {
 				headerWidth -= 2 // reserve space for the trailing " ●"
 			}
-			label := store.Truncate(name+" "+count, headerWidth)
+			label := displayLine(name+" "+count, headerWidth)
 			style := l.styles.GroupHeader
 			if i == l.cursor {
 				// accent() is the default accent in the mixed list (a no-op
@@ -681,12 +681,12 @@ func (l *listPane) View() string {
 			if s.Agent == store.AgentCodex {
 				tagStyle = l.styles.CodexTag
 			}
-			metaLine = metaStyle.Render(store.Truncate("  "+meta, l.width-len(tag)-3)) + " " + tagStyle.Render(tag)
+			metaLine = metaStyle.Render(displayLine("  "+meta, l.width-len(tag)-3)) + " " + tagStyle.Render(tag)
 		} else {
-			metaLine = metaStyle.Render(store.Truncate("  "+meta, l.width))
+			metaLine = metaStyle.Render(displayLine("  "+meta, l.width))
 		}
 		lines = append(lines,
-			titleStyle.Render(store.Truncate(prefix+title, titleWidth))+marker,
+			titleStyle.Render(displayLine(prefix+title, titleWidth))+marker,
 			metaLine,
 			"")
 	}
@@ -707,6 +707,9 @@ func (l *listPane) View() string {
 // pane (a viewport) always renders its full height, so the list must too;
 // otherwise the shorter box's bottom border ends a row above its neighbor's.
 func (l *listPane) padHeight(s string) string {
+	if l.width > 0 {
+		s = lipgloss.NewStyle().Width(l.width).MaxWidth(l.width).Render(s)
+	}
 	if l.height <= 0 {
 		return s
 	}

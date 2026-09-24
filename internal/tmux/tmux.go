@@ -4,7 +4,10 @@
 package tmux
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -14,19 +17,26 @@ const Prefix = "sm-"
 
 const pendingInfix = "-pending-"
 
-// Short is the first 8 lowercased characters of a session id (fewer if the
-// id is shorter). tmux mangles '.', so the full UUID is never embedded.
+var safeID = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+var uuidID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// Short retains its historical name but no longer truncates IDs: UUIDv7
+// prefixes are timestamps, so unrelated Codex sessions routinely share them.
+// Safe IDs (including full UUIDs) are preserved. Other IDs are hashed so tmux
+// cannot interpret punctuation as target syntax. Reserve the hash namespace
+// and pending marker to avoid aliases with generated names.
 func Short(id string) string {
 	s := strings.ToLower(id)
-	if len(s) > 8 {
-		s = s[:8]
+	if safeID.MatchString(s) && (s == id || uuidID.MatchString(s)) && !strings.HasPrefix(s, "hash-") &&
+		!strings.HasPrefix(s, "pending-") && !strings.Contains(s, pendingInfix) {
+		return s
 	}
-	return s
+	return fmt.Sprintf("hash-%x", sha256.Sum256([]byte(id)))
 }
 
-// Name is the tmux session name for an agent and short id: sm-<agent>-<id8>.
-func Name(agent, id8 string) string {
-	return Prefix + agent + "-" + id8
+// Name is the tmux session name for an agent and its complete safe identity.
+func Name(agent, id string) string {
+	return Prefix + agent + "-" + id
 }
 
 // PendingName is a provisional name for a new session whose id is not known
@@ -81,6 +91,37 @@ func NewArgs(name, cwd, agentName string, agentArgs []string) []string {
 	return append(args, agentArgs...)
 }
 
+// DetachedArgs creates a tracked session from inside an existing tmux client,
+// then moves that client to it. Attaching new-session would refuse to nest.
+// For resume, check the server again before creating: new-session -A would
+// still try to attach (and reject nesting) when the session already exists.
+func DetachedArgs(name, cwd, agentName string, agentArgs []string, resume bool) []string {
+	args := []string{"new-session", "-d", "-s", name, "-c", cwd}
+	args = append(args, executableArgs(append([]string{agentName}, agentArgs...))...)
+	if resume {
+		check := "tmux has-session -t " + quoteArg("="+name)
+		switchCmd := "switch-client -t " + quoteArg("="+name)
+		quoted := make([]string, len(args))
+		for i, arg := range args {
+			quoted[i] = quoteArg(arg)
+		}
+		return []string{"if-shell", check, switchCmd, strings.Join(quoted, " ") + " ; " + switchCmd}
+	}
+	return append(args, ";", "switch-client", "-t", "="+name)
+}
+
+func quoteArg(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+
+// tmux treats a single shell-command argument as shell source, but executes
+// multiple arguments directly. Quote a lone executable, even if its path has
+// spaces or shell metacharacters. Preserve the multi-argument form verbatim.
+func executableArgs(argv []string) []string {
+	if len(argv) == 1 {
+		return []string{quoteArg(argv[0])}
+	}
+	return argv
+}
+
 // WindowArgs builds the tmux argv (after the "tmux" binary) that opens a new
 // window in the caller's current tmux session, running the agent command in
 // cwd. A non-empty name tags the window for sm's tracking — -n also disables
@@ -123,7 +164,7 @@ func SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID s
 		if cwd != "" {
 			args = append(args, "-c", cwd)
 		}
-		return append(args, selfCmd...)
+		return append(args, executableArgs(selfCmd)...)
 	case smWindowID != "":
 		return []string{"select-window", "-t", smWindowID, ";", "attach-session", "-t", "=" + SelfSession}
 	default:
@@ -131,7 +172,7 @@ func SelfWrapArgs(selfCmd []string, cwd string, sessionExists bool, smWindowID s
 		if cwd != "" {
 			args = append(args, "-c", cwd)
 		}
-		args = append(args, selfCmd...)
+		args = append(args, executableArgs(selfCmd)...)
 		return append(args, ";", "attach-session", "-t", "="+SelfSession)
 	}
 }
