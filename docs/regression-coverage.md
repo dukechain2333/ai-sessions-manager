@@ -29,6 +29,12 @@ The IDs map the original findings to a behavior change and an automated check.
 | R22 | Adoption retains the original native-window cache key while using the final tmux name. | `ui.TestAdoptionPreservesNativeWindowKey`, `bridge.TestWindowKeySurvivesSessionAdoption`, Python pending-to-adopted refocus test. |
 | R23 | Long filter input scrolls within the available terminal width. | `ui.TestFilterInputFitsTerminal`. |
 
+The parser also excludes structured Claude background-task notifications without
+`isMeta`, including their generated output-file hint. Notification regressions
+exercise metadata, transcripts, search, adjacent text blocks, genuine trailing
+human text, and preservation of ordinary/incomplete XML. Index schema version 3
+invalidates version-2 caches that could contain these synthetic messages.
+
 ## CI execution
 
 - Linux: exact minimum Go version from `go.mod` and current stable Go.

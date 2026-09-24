@@ -17,7 +17,7 @@ const indexMsgSep = "\n\x1e\n"
 
 // Bump when extraction semantics change, not just when the file layout does.
 // Existing sessions must be re-extracted after prompt/context parser fixes.
-const indexVersion = "2"
+const indexVersion = "3"
 
 // SearchIndex is a per-session plain-text cache of message content, used
 // by the full-text search layer. One file per session under Dir; line 1 is

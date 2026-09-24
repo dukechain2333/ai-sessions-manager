@@ -118,6 +118,60 @@ func stripClaudeContext(text string) string {
 	})
 }
 
+// claudeHumanText also handles background-task notifications, which Claude
+// stores as user messages without isMeta. Their generated output-file hint is
+// outside the XML envelope and can occupy a separate text block. Keep actual
+// trailing human text, and never classify arbitrary/incomplete XML as a task.
+func claudeHumanText(text, taskOutput string) (string, string) {
+	text, taskOutput = stripTaskOutputHint(stripClaudeContext(text), taskOutput)
+	const open, close = "<task-notification>", "</task-notification>"
+	for strings.HasPrefix(text, open) {
+		end := strings.Index(text[len(open):], close)
+		if end < 0 {
+			break
+		}
+		body := text[len(open) : len(open)+end]
+		if taskField(body, "task-id") == "" || taskField(body, "status") == "" {
+			break
+		}
+		taskOutput = taskField(body, "output-file")
+		text = strings.TrimSpace(text[len(open)+end+len(close):])
+		text, taskOutput = stripTaskOutputHint(text, taskOutput)
+		text = stripClaudeContext(text)
+	}
+	if text != "" {
+		// A later human block that happens to mention this path is unrelated.
+		taskOutput = ""
+	}
+	return text, taskOutput
+}
+
+// Notification summaries can contain literal shell/XML punctuation, so this
+// recognizes the small harness envelope rather than requiring valid XML.
+func taskField(body, tag string) string {
+	_, rest, ok := strings.Cut(body, "<"+tag+">")
+	if !ok {
+		return ""
+	}
+	value, _, ok := strings.Cut(rest, "</"+tag+">")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func stripTaskOutputHint(text, output string) (string, string) {
+	text = strings.TrimSpace(text)
+	if output == "" {
+		return text, ""
+	}
+	line, rest, _ := strings.Cut(text, "\n")
+	if strings.TrimSpace(line) == "Read the output file to retrieve the result: "+output {
+		return strings.TrimSpace(rest), ""
+	}
+	return text, output
+}
+
 // stripContextBlocks removes complete, recognized leading context blocks,
 // retaining any human text that follows. Incomplete or unknown markup stays
 // visible instead of silently turning a real conversation into an empty one.
@@ -149,16 +203,22 @@ func claudeUserText(raw json.RawMessage) string {
 	}
 	var s string
 	if json.Unmarshal(msg.Content, &s) == nil {
-		return stripClaudeContext(s)
+		text, _ := claudeHumanText(s, "")
+		return text
 	}
 	var blocks []contentBlock
 	if json.Unmarshal(msg.Content, &blocks) == nil {
 		var texts []string
+		var taskOutput string
 		for _, b := range blocks {
 			if b.Type == "text" {
-				if text := stripClaudeContext(b.Text); text != "" {
+				var text string
+				text, taskOutput = claudeHumanText(b.Text, taskOutput)
+				if text != "" {
 					texts = append(texts, text)
 				}
+			} else {
+				taskOutput = ""
 			}
 		}
 		return strings.Join(texts, "\n\n")
