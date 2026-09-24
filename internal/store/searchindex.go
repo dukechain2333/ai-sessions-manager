@@ -15,9 +15,13 @@ import (
 // separator) cannot occur in message text, so splitting is unambiguous.
 const indexMsgSep = "\n\x1e\n"
 
+// Bump when extraction semantics change, not just when the file layout does.
+// Existing sessions must be re-extracted after prompt/context parser fixes.
+const indexVersion = "3"
+
 // SearchIndex is a per-session plain-text cache of message content, used
 // by the full-text search layer. One file per session under Dir; line 1 is
-// the validity key "path\tmtimeUnixNano\tsize", the body is the messages
+// the validity key "version\tpath\tmtimeUnixNano\tsize", the body is the messages
 // joined by indexMsgSep. Tool messages are excluded at extraction time.
 // Session paths must not contain newlines — line 1 of a cache file is the header.
 type SearchIndex struct {
@@ -47,7 +51,7 @@ func validityKey(sessionPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s\t%d\t%d", sessionPath, st.ModTime().UnixNano(), st.Size()), nil
+	return fmt.Sprintf("%s\t%s\t%d\t%d", indexVersion, sessionPath, st.ModTime().UnixNano(), st.Size()), nil
 }
 
 // EnsureSession makes the cache file for one session fresh: a no-op when
@@ -55,45 +59,64 @@ func validityKey(sessionPath string) (string, error) {
 // atomically (temp file + rename) so a failed extraction never leaves a
 // half-indexed session behind.
 func (ix SearchIndex) EnsureSession(sessionPath string, parse func() (Transcript, error)) error {
-	key, err := validityKey(sessionPath)
-	if err != nil {
-		return err
-	}
-	if cur, ok := ix.readKey(sessionPath); ok && cur == key {
-		return nil
-	}
-	tr, err := parse()
-	if err != nil {
-		return err
-	}
-	// ParseTranscript never emits empty user/assistant text, so a
-	// zero-message body is unambiguous (join of one empty string would
-	// collide with it).
-	var texts []string
-	for _, m := range tr.Messages {
-		if m.Kind == KindTool {
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		key, err := validityKey(sessionPath)
+		if err != nil {
+			return err
+		}
+		if cur, ok := ix.readKey(sessionPath); ok && cur == key {
+			return nil
+		}
+		tr, err := parse()
+		if err != nil {
+			return err
+		}
+		after, err := validityKey(sessionPath)
+		if err != nil {
+			return err
+		}
+		if after != key {
+			continue // the parser did not observe a stable source version
+		}
+		// ParseTranscript never emits empty user/assistant text, so a
+		// zero-message body is unambiguous.
+		var texts []string
+		for _, m := range tr.Messages {
+			if m.Kind != KindTool {
+				texts = append(texts, m.Text)
+			}
+		}
+		tmp, err := os.CreateTemp(ix.Dir, "tmp-*")
+		if err != nil {
+			return err
+		}
+		_, werr := tmp.WriteString(key + "\n" + strings.Join(texts, indexMsgSep))
+		cerr := tmp.Close()
+		if werr != nil || cerr != nil {
+			os.Remove(tmp.Name())
+			if werr != nil {
+				return werr
+			}
+			return cerr
+		}
+		// A large cache write may overlap another append as well. Retain
+		// the previous cache unless this extraction still matches its source.
+		after, err = validityKey(sessionPath)
+		if err != nil || after != key {
+			os.Remove(tmp.Name())
+			if err != nil {
+				return err
+			}
 			continue
 		}
-		texts = append(texts, m.Text)
-	}
-	tmp, err := os.CreateTemp(ix.Dir, "tmp-*")
-	if err != nil {
-		return err
-	}
-	_, werr := tmp.WriteString(key + "\n" + strings.Join(texts, indexMsgSep))
-	cerr := tmp.Close()
-	if werr != nil || cerr != nil {
-		os.Remove(tmp.Name())
-		if werr != nil {
-			return werr
+		if err := os.Rename(tmp.Name(), ix.cacheFile(sessionPath)); err != nil {
+			os.Remove(tmp.Name())
+			return err
 		}
-		return cerr
+		return nil
 	}
-	if err := os.Rename(tmp.Name(), ix.cacheFile(sessionPath)); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	return nil
+	return fmt.Errorf("session changed while indexing after %d attempts: %s", maxAttempts, sessionPath)
 }
 
 // readKey returns the cache file's header line. Freshness is decided by

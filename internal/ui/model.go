@@ -71,7 +71,10 @@ type (
 	silentDoneMsg struct{ err error }
 
 	tmuxTickMsg struct{}
-	tmuxListMsg struct{ set map[string]bool }
+	tmuxListMsg struct {
+		set        map[string]bool
+		windowKeys map[string]string // adopted name -> original native-window key
+	}
 )
 
 const searchDebounce = 150 * time.Millisecond
@@ -95,6 +98,7 @@ type Model struct {
 	tmuxEnabled bool
 	tmux        tmux.Runner
 	tmuxLive    map[string]bool
+	windowKeys  map[string]string
 	openIn      string // config.OpenInCurrent or config.OpenInWindow
 	iterm2Host  string
 	bridgePath  string // sm ssh reverse-tunnel socket ("" = no bridge)
@@ -123,7 +127,7 @@ type Model struct {
 
 	dialog             dialogKind
 	errText            string
-	pendingDelete      int
+	pendingDelete      *store.Session
 	pendingResume      *store.Session
 	pendingNewDir      string
 	pendingKillProject string
@@ -134,6 +138,7 @@ type Model struct {
 	cache      *store.TranscriptCache
 	enrichCh   chan store.EnrichResult
 	previewFor string
+	transcript *store.Transcript // unstyled source retained for resize/reflow
 	loading    bool
 
 	width, height int
@@ -192,23 +197,22 @@ func New(projectsDir, codexDir, configPath string, cfg config.Config) Model {
 		provs = append(provs, cp)
 	}
 	ret := Model{
-		projectsDir:   projectsDir,
-		cfg:           cfg,
-		configPath:    configPath,
-		saveConfig:    config.Save,
-		setInput:      si,
-		st:            st,
-		list:          listPane{styles: st, groupByProject: true},
-		filterInput:   fi,
-		dirInput:      di,
-		cache:         store.NewTranscriptCache(8),
-		pendingDelete: -1,
-		providers:     provs,
-		tmuxEnabled:   cfg.TmuxEnabled,
-		openIn:        cfg.OpenIn,
-		iterm2Host:    cfg.ITerm2SSH,
-		bridgePath:    bridgeSock(),
-		tmux:          tmux.Exec{},
+		projectsDir: projectsDir,
+		cfg:         cfg,
+		configPath:  configPath,
+		saveConfig:  config.Save,
+		setInput:    si,
+		st:          st,
+		list:        listPane{styles: st, groupByProject: true},
+		filterInput: fi,
+		dirInput:    di,
+		cache:       store.NewTranscriptCache(8),
+		providers:   provs,
+		tmuxEnabled: cfg.TmuxEnabled,
+		openIn:      cfg.OpenIn,
+		iterm2Host:  cfg.ITerm2SSH,
+		bridgePath:  bridgeSock(),
+		tmux:        tmux.Exec{},
 		trashFn: func(s store.Session) (string, error) {
 			p := store.ProviderFor(provs, s.Agent)
 			if p == nil {
@@ -688,6 +692,11 @@ func (m Model) switchAgentView(a store.Agent) (tea.Model, tea.Cmd) {
 // query. Empty queries clear results immediately.
 func (m *Model) dispatchSearch() tea.Cmd {
 	m.searchSeq++
+	if m.indexing {
+		// The next query needs a validity pass of its own if files changed
+		// while the current build was running.
+		m.indexStale = true
+	}
 	q := strings.TrimSpace(m.filterInput.Value())
 	if q == "" {
 		m.activeQuery = ""
@@ -732,12 +741,15 @@ func (m *Model) loadTranscriptCmd() tea.Cmd {
 	if !ok {
 		m.preview.SetContent("")
 		m.previewFor = ""
+		m.transcript = nil
+		m.hitMsgs, m.msgStarts = nil, nil
 		return nil
 	}
 	if s.ID == m.previewFor {
 		return nil
 	}
 	m.previewFor = s.ID
+	m.transcript = nil
 	cache, path, id, agent := m.cache, s.Path, s.ID, s.Agent
 	provs := m.providers
 	return func() tea.Msg {
@@ -819,7 +831,7 @@ func (m Model) projectLabelText() string {
 	if !ok {
 		return ""
 	}
-	return " ▸ " + store.Truncate(s.Project(), 40) + "  "
+	return " ▸ " + displayLine(s.Project(), 40) + "  "
 }
 
 // tmuxNameFor is the tmux session name sm uses for a session.
@@ -881,12 +893,54 @@ func (m *Model) layout() {
 	bodyH := m.bodyHeight()
 	listW, previewW := m.paneWidths()
 	m.list.SetSize(listW-2, bodyH)
+	// textinput renders its cursor in addition to the visible value width.
+	m.filterInput.Width = max(1, m.width-lipgloss.Width(m.filterInput.Prompt)-1)
 	if !m.ready {
 		m.preview = viewport.New(previewW, bodyH)
 		m.ready = true
 	} else {
 		m.preview.Width = previewW
 		m.preview.Height = bodyH
+	}
+}
+
+// renderPreview derives display content from the cached raw transcript. On a
+// resize keep the message at the top of the viewport visible after rewrapping.
+func (m *Model) renderPreview(preservePosition bool) {
+	if m.transcript == nil {
+		return
+	}
+	anchor, offset := 0, m.preview.YOffset
+	oldStarts, oldTotal := m.msgStarts, m.preview.TotalLineCount()
+	for i, start := range m.msgStarts {
+		if start > offset {
+			break
+		}
+		anchor = i
+	}
+	var terms []string
+	if m.searchAll {
+		terms = store.SplitTerms(m.activeQuery)
+	}
+	content, starts, hits := renderTranscriptTerms(*m.transcript, m.preview.Width, m.st, terms)
+	m.msgStarts, m.hitMsgs = starts, hits
+	m.preview.SetContent(content)
+	if preservePosition {
+		if anchor < len(starts) && anchor < len(oldStarts) {
+			oldEnd, newEnd := oldTotal, m.preview.TotalLineCount()
+			if anchor+1 < len(starts) {
+				oldEnd, newEnd = oldStarts[anchor+1], starts[anchor+1]
+			}
+			within := max(0, offset-oldStarts[anchor])
+			within = within * max(1, newEnd-starts[anchor]) / max(1, oldEnd-oldStarts[anchor])
+			m.preview.SetYOffset(starts[anchor] + within)
+		}
+		return
+	}
+	m.curHit = 0
+	m.preview.GotoTop()
+	if len(hits) > 0 {
+		m.preview.SetYOffset(starts[hits[0]])
 	}
 }
 
@@ -902,7 +956,8 @@ func (m *Model) layout() {
 // session — once it does appear — looks tmux-less and resumes into a second
 // tmux backed by the same id. Staying pending until the real transcript shows
 // up is the correct wait.
-func adoptPending(r tmux.Runner, sessions []store.Session, set map[string]bool) {
+func adoptPending(r tmux.Runner, sessions []store.Session, set map[string]bool) map[string]string {
+	windowKeys := make(map[string]string)
 	backed := map[string]bool{}
 	for name := range set {
 		if !tmux.IsPending(name) {
@@ -947,8 +1002,10 @@ func adoptPending(r tmux.Runner, sessions []store.Session, set map[string]bool) 
 			delete(set, name)
 			set[target] = true
 			backed[target] = true
+			windowKeys[target] = name
 		}
 	}
+	return windowKeys
 }
 
 // adoptCmd re-lists tmux, adopts provisional sessions against the given
@@ -961,8 +1018,8 @@ func (m Model) adoptCmd(sessions []store.Session) tea.Cmd {
 		if set == nil {
 			set = map[string]bool{}
 		}
-		adoptPending(r, snap, set)
-		return tmuxListMsg{set: set}
+		keys := adoptPending(r, snap, set)
+		return tmuxListMsg{set: set, windowKeys: keys}
 	}
 }
 
@@ -971,6 +1028,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.layout()
+		m.renderPreview(true)
 		return m, nil
 
 	case scanDoneMsg:
@@ -992,6 +1050,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetSessions(msg.sessions)
 		m.lastClickRow = -1 // rows renumbered — stale click index must not pair into a double-click
 		m.previewFor = ""
+		m.transcript = nil
+		m.enrichCh = nil
+		m.loading = false
 		if len(msg.sessions) == 0 {
 			if m.ready {
 				m.preview.SetContent("")
@@ -1016,13 +1077,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.ch != m.enrichCh {
 			return m, nil // stale result from a superseded scan; do not re-arm
 		}
+		idx := msg.Index
+		if msg.Path != "" {
+			idx = -1
+			for i, s := range m.list.sessions {
+				if s.Path == msg.Path {
+					idx = i
+					break
+				}
+			}
+		}
 		if msg.Err != nil {
-			if msg.Index >= 0 && msg.Index < len(m.list.sessions) {
-				m.list.sessions[msg.Index].Unreadable = true
-				m.list.sessions[msg.Index].Enriched = true
+			if idx >= 0 && idx < len(m.list.sessions) {
+				m.list.sessions[idx].Unreadable = true
+				m.list.sessions[idx].Enriched = true
 			}
 		} else {
-			m.list.ApplyEnrich(msg.Index, msg.Meta)
+			m.list.ApplyEnrich(idx, msg.Meta)
 			// Enrichment can flip a session to Empty and drop it from the
 			// visible rows, renumbering them. Invalidate any pending click so a
 			// second click at the same coordinates can't pair with a stale row
@@ -1047,41 +1118,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // stale response for a de-selected session
 		}
 		if msg.err != nil {
-			m.preview.SetContent(m.st.ErrorText.Render(msg.err.Error()))
+			m.transcript = nil
+			m.preview.SetContent(m.st.ErrorText.Render(displayText(msg.err.Error())))
 			return m, nil
 		}
-		tr := msg.t
-		// tr is a copy of the message slice header, but tr.Messages[i].Text =
-		// … below mutates the shared backing array of the cached transcript.
-		// Deep-copy the messages first so highlighting never poisons the cache.
-		msgs := make([]store.Message, len(tr.Messages))
-		copy(msgs, tr.Messages)
-		tr.Messages = msgs
-		m.hitMsgs = nil
-		m.curHit = 0
-		terms := store.SplitTerms(m.activeQuery)
-		if m.searchAll && len(terms) > 0 {
-			for i := range tr.Messages {
-				if tr.Messages[i].Kind == store.KindTool {
-					continue
-				}
-				lower := strings.ToLower(tr.Messages[i].Text)
-				for _, t := range terms {
-					if strings.Contains(lower, t) {
-						tr.Messages[i].Text = highlightTerms(tr.Messages[i].Text, terms)
-						m.hitMsgs = append(m.hitMsgs, i)
-						break
-					}
-				}
-			}
-		}
-		content, starts := renderTranscript(tr, m.preview.Width, m.st)
-		m.msgStarts = starts
-		m.preview.SetContent(content)
-		m.preview.GotoTop()
-		if len(m.hitMsgs) > 0 {
-			m.preview.SetYOffset(m.msgStarts[m.hitMsgs[0]])
-		}
+		m.transcript = &msg.t
+		m.renderPreview(false)
 		return m, nil
 
 	case agentExitMsg:
@@ -1116,6 +1158,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tmuxListMsg:
 		m.tmuxLive = msg.set
+		if len(msg.windowKeys) > 0 {
+			if m.windowKeys == nil {
+				m.windowKeys = make(map[string]string)
+			}
+			for name, key := range msg.windowKeys {
+				m.windowKeys[name] = key
+			}
+		}
 		m.list.SetTmuxLive(msg.set)
 		return m, nil
 
@@ -1125,10 +1175,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.activeQuery = strings.TrimSpace(m.filterInput.Value())
 		var cmds []tea.Cmd
-		if !m.indexReady && !m.indexing {
+		if !m.indexing {
 			ch := make(chan store.IndexProgress, 8)
 			m.indexCh = ch
 			m.indexing = true
+			m.indexReady = false
 			m.indexDone, m.indexTotal = 0, len(m.list.Sessions())
 			m.indexFailed = 0
 			provs := m.providers
@@ -1378,6 +1429,7 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 				l := iterm2.Launch{Host: m.iterm2SSHHost(), Dir: cwd, Argv: append([]string{name}, args...), BinDir: binDir(name)}
 				if m.tmuxEnabled {
 					l.Name, l.Tmux = sess, true
+					l.WindowKey = m.windowKeys[sess]
 				}
 				return m.openWindowCmd(l)
 			}
@@ -1388,6 +1440,9 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 			return m.runSilent("tmux", cwd, tmux.WindowArgs(win, cwd, name, args)...)
 		}
 		if m.tmuxEnabled {
+			if insideTmux() {
+				return m.runSilent("tmux", cwd, tmux.DetachedArgs(sess, cwd, name, args, true)...)
+			}
 			return m.runCmd("tmux", cwd, tmux.ResumeArgs(sess, cwd, name, args)...)
 		}
 		return m.runCmd(name, cwd, args...)
@@ -1409,6 +1464,9 @@ func (m Model) runAgentCmd(p store.Provider, cwd string, resume *store.Session) 
 	}
 	if m.tmuxEnabled {
 		pend := tmux.PendingName(string(p.Agent()), m.now().UnixNano())
+		if insideTmux() {
+			return m.runSilent("tmux", cwd, tmux.DetachedArgs(pend, cwd, name, args, false)...)
+		}
 		return m.runCmd("tmux", cwd, tmux.NewArgs(pend, cwd, name, args)...)
 	}
 	return m.runCmd(name, cwd, args...)
@@ -1428,7 +1486,7 @@ func (m Model) attachLiveCmd(sess, cwd, agentName string, agentArgs []string) te
 		// of a fresh ssh. A window-form live tmux (legacy of the
 		// tmux-window mechanism) falls through to the local jump below.
 		if _, _, ok := m.tmux.Window(sess); !ok {
-			return m.openWindowCmd(iterm2.Launch{Host: m.iterm2SSHHost(), Name: sess, Attach: true})
+			return m.openWindowCmd(iterm2.Launch{Host: m.iterm2SSHHost(), Name: sess, WindowKey: m.windowKeys[sess], Attach: true})
 		}
 	}
 	if id, owner, ok := m.tmux.Window(sess); ok {
@@ -1516,8 +1574,8 @@ func (m *Model) openDirPicker() {
 }
 
 func (m Model) askDelete() (tea.Model, tea.Cmd) {
-	if _, idx, ok := m.list.Selected(); ok {
-		m.pendingDelete = idx
+	if s, _, ok := m.list.Selected(); ok {
+		m.pendingDelete = &s
 		m.dialog = dialogDelete
 	}
 	return m, nil
@@ -1541,11 +1599,20 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case dialogDelete:
 		switch msg.String() {
 		case "y", "enter":
-			idx := m.pendingDelete
-			m.pendingDelete = -1
+			pending := m.pendingDelete
+			m.pendingDelete = nil
 			m.dialog = dialogNone
-			if idx >= 0 && idx < len(m.list.sessions) {
-				s := m.list.sessions[idx]
+			idx := -1
+			if pending != nil {
+				for i, s := range m.list.sessions {
+					if s.Agent == pending.Agent && s.ID == pending.ID && s.Path == pending.Path {
+						idx = i
+						break
+					}
+				}
+			}
+			if idx >= 0 {
+				s := *pending
 				if _, err := m.trashFn(s); err != nil {
 					m.dialog = dialogError
 					m.errText = "delete failed: " + err.Error()
@@ -1562,7 +1629,7 @@ func (m Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.loadTranscriptCmd()
 		case "n", "esc":
-			m.pendingDelete = -1
+			m.pendingDelete = nil
 			m.dialog = dialogNone
 			return m, nil
 		}
@@ -1674,26 +1741,27 @@ func (m Model) dialogView() string {
 	switch m.dialog {
 	case dialogError:
 		return m.st.DialogBox.Render(
-			m.st.ErrorText.Render("Error") + "\n\n" + m.errText + "\n\n" +
+			m.st.ErrorText.Render("Error") + "\n\n" + displayText(m.errText) + "\n\n" +
 				m.st.Help.Render("press any key"))
 
 	case dialogInfo:
 		return m.st.DialogBox.Render(
-			m.errText + "\n\n" + m.st.Help.Render("press any key"))
+			displayText(m.errText) + "\n\n" + m.st.Help.Render("press any key"))
 
 	case dialogSettings:
 		return m.settingsView()
 
 	case dialogDelete:
 		title := ""
-		if m.pendingDelete >= 0 && m.pendingDelete < len(m.list.sessions) {
-			s := m.list.sessions[m.pendingDelete]
+		if m.pendingDelete != nil {
+			s := *m.pendingDelete
 			title = s.Title
 			if title == "" {
 				title = s.ID
 			}
 			title += "  (" + s.Project() + ")"
 		}
+		title = displayText(title)
 		return m.st.DialogBox.Render(
 			"Move session to trash?\n\n  " + title + "\n\n" +
 				m.st.Help.Render("y confirm · n cancel"))
@@ -1709,9 +1777,9 @@ func (m Model) dialogView() string {
 			b.WriteString(m.st.ListMeta.Render("  (no known directories)") + "\n")
 		}
 		for i, d := range m.dirs {
-			line := "  " + d
+			line := "  " + displayText(d)
 			if i == m.dirCursor {
-				line = m.st.ListTitleSel.Render("▶ " + d)
+				line = m.st.ListTitleSel.Render("▶ " + displayText(d))
 			}
 			b.WriteString(line + "\n")
 		}
@@ -1721,7 +1789,7 @@ func (m Model) dialogView() string {
 
 	case dialogPickAgent:
 		return m.st.DialogBox.Render(
-			"New session in " + m.pendingNewDir + "\n\n" +
+			"New session in " + displayText(m.pendingNewDir) + "\n\n" +
 				"  [1] Claude    [2] Codex\n\n" +
 				m.st.Help.Render("1/2 choose · esc cancel"))
 
@@ -1729,7 +1797,7 @@ func (m Model) dialogView() string {
 		// Same scope as the kill itself and the header dot — one source.
 		n := m.list.liveTmuxCount(m.pendingKillProject)
 		return m.st.DialogBox.Render(fmt.Sprintf(
-			"Kill %d tmux in %s?\n\n%s", n, m.pendingKillProject,
+			"Kill %d tmux in %s?\n\n%s", n, displayText(m.pendingKillProject),
 			m.st.Help.Render("y confirm · n cancel")))
 	}
 	return ""

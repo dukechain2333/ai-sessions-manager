@@ -80,6 +80,17 @@ func runCmds(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	return msgs
 }
 
+func getSearchResult(t *testing.T, cmd tea.Cmd) searchResultMsg {
+	t.Helper()
+	for _, msg := range runCmds(t, cmd) {
+		if result, ok := msg.(searchResultMsg); ok {
+			return result
+		}
+	}
+	t.Fatal("search command produced no result")
+	return searchResultMsg{}
+}
+
 func TestTabTogglesSearchLayer(t *testing.T) {
 	m := searchModel(t)
 	m2, _ := m.Update(key("/"))
@@ -140,7 +151,7 @@ func TestSearchPipelineEndToEnd(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
-	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
+	m.indexReady = true // start with a previously built index; this query still revalidates it
 	m = typeInto(t, m, "quick")
 	// drive the debounce deterministically: fire the tick for the live seq
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
@@ -148,11 +159,7 @@ func TestSearchPipelineEndToEnd(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("live tick must return the async search cmd")
 	}
-	msg := cmd() // run the search synchronously
-	res, ok := msg.(searchResultMsg)
-	if !ok {
-		t.Fatalf("cmd produced %T, want searchResultMsg", msg)
-	}
+	res := getSearchResult(t, cmd)
 	m.lastClickRow = 1 // M5 setup: simulate a stale click recorded before this refresh
 	m2, _ = m.Update(res)
 	m = m2.(Model)
@@ -251,16 +258,12 @@ func TestRunSearchSnapshotsSessions(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
-	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
+	m.indexReady = true // start with a previously built index; this query still revalidates it
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
 	m.list.sessions[1].Path = "/mutated/after/dispatch.jsonl" // enrich-style in-place mutation
-	msg := cmd()
-	res, ok := msg.(searchResultMsg)
-	if !ok {
-		t.Fatalf("got %T", msg)
-	}
+	res := getSearchResult(t, cmd)
 	if len(res.hits) != 2 {
 		t.Errorf("snapshot must shield the in-flight search from mutations: hits=%v", res.hits)
 	}
@@ -276,7 +279,7 @@ func TestRescanRefreshesActiveSearch(t *testing.T) {
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
-	m2, _ = m.Update(cmd().(searchResultMsg))
+	m2, _ = m.Update(getSearchResult(t, cmd))
 	m = m2.(Model)
 	if m.list.search == nil {
 		t.Fatal("setup: expected active results")
@@ -343,7 +346,7 @@ func TestDeleteInvalidatesInFlightSearch(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
-	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
+	m.indexReady = true // start with a previously built index; this query still revalidates it
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
@@ -354,7 +357,7 @@ func TestDeleteInvalidatesInFlightSearch(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(key("y"))
 	m = m2.(Model)
-	m2, _ = m.Update(inflight().(searchResultMsg)) // stale seq now
+	m2, _ = m.Update(getSearchResult(t, inflight)) // stale seq now
 	m = m2.(Model)
 	if m.list.search != nil && len(m.list.search) == 2 {
 		t.Error("stale in-flight result must not be applied after a delete")
@@ -426,11 +429,11 @@ func TestQueryChangeRefreshesPreviewHighlights(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
-	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
+	m.indexReady = true // start with a previously built index; this query still revalidates it
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
-	m2, cmd = m.Update(cmd().(searchResultMsg))
+	m2, cmd = m.Update(getSearchResult(t, cmd))
 	m = m2.(Model)
 	if cmd == nil {
 		t.Fatal("setup: first result must reload the preview")
@@ -445,7 +448,7 @@ func TestQueryChangeRefreshesPreviewHighlights(t *testing.T) {
 	_ = m.dispatchSearch() // bumps searchSeq; the live tick is fed manually below
 	m2, cmd = m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
-	m2, cmd = m.Update(cmd().(searchResultMsg))
+	m2, cmd = m.Update(getSearchResult(t, cmd))
 	m = m2.(Model)
 	if cmd == nil {
 		t.Fatal("query change with unchanged selection must still reload the preview")
@@ -471,7 +474,7 @@ func TestClaudeExitRevalidatesIndex(t *testing.T) {
 	m = typeInto(t, m, "quick")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
-	m2, _ = m.Update(cmd().(searchResultMsg))
+	m2, _ = m.Update(getSearchResult(t, cmd))
 	m = m2.(Model)
 	if m.list.search == nil {
 		t.Fatal("setup: expected active search results")
@@ -584,11 +587,11 @@ func TestEscClearsStaleHighlights(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
-	m.indexReady = true // this test isn't exercising the entry-triggered indexing pass itself
+	m.indexReady = true // start with a previously built index; this query still revalidates it
 	m = typeInto(t, m, "fox")
 	m2, cmd := m.Update(searchTickMsg{seq: m.searchSeq})
 	m = m2.(Model)
-	m2, _ = m.Update(cmd().(searchResultMsg))
+	m2, _ = m.Update(getSearchResult(t, cmd))
 	m = m2.(Model)
 	s, _, ok := m.list.Selected()
 	if !ok || s.ID != "s1" {

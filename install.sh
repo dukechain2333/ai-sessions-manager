@@ -53,8 +53,9 @@ if [ -z "$VERSION" ]; then
 		|| err "could not reach GitHub to find the latest release"
 	VERSION="${latest_url##*/}"
 fi
-[ -n "$VERSION" ] && [ "$VERSION" != "releases" ] \
-	|| err "no releases found for $OWNER/$REPO yet"
+if [ -z "$VERSION" ] || [ "$VERSION" = "releases" ]; then
+	err "no releases found for $OWNER/$REPO yet"
+fi
 
 ver="${VERSION#v}"   # strip leading v for the asset name
 asset="${BINARY}_${ver}_${os}_${arch}.tar.gz"

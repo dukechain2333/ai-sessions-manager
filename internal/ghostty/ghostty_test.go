@@ -2,6 +2,7 @@ package ghostty
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,11 @@ func TestOpenLinuxUsesIPC(t *testing.T) {
 	if got.name != "ghostty" {
 		t.Fatalf("ran %q", got.name)
 	}
-	want := []string{"+new-window", "-e", "/bin/sh", "-c", "cd '/d' && exec 'claude'"}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"+new-window", "--working-directory=" + cwd, "-e", "/bin/sh", "-c", "cd '/d' && exec 'claude'"}
 	if len(got.args) != len(want) {
 		t.Fatalf("args = %q", got.args)
 	}
@@ -81,5 +86,63 @@ func TestOpenDarwinErrorSurfaced(t *testing.T) {
 	})
 	if err := o.Open("k", "line"); err == nil || !strings.Contains(err.Error(), "Ghostty") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLinuxCommandVersionGate(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		ok      bool
+	}{
+		{"Ghostty 1.2.0\n", false},
+		{"Ghostty 1.2.3\n", false},
+		{"Ghostty 1.3.0\n", true},
+		{"Ghostty 1.3.1\nBuild Config\n", true},
+		{"Ghostty 1.3.0-abcdef\n", true},
+		{"Ghostty 1.3.1-dev+abcdef\n", true},
+		{"Ghostty 2.0.0\n", true},
+		{"unrecognized version\n", false},
+	} {
+		t.Run(strings.TrimSpace(tc.version), func(t *testing.T) {
+			o := opener("linux", func(name string, args ...string) (string, error) {
+				if name != "ghostty" || len(args) != 1 || args[0] != "--version" {
+					t.Fatalf("version check launched a window: %s %q", name, args)
+				}
+				return tc.version, nil
+			})
+			if err := o.checkLinuxVersion(); (err == nil) != tc.ok {
+				t.Errorf("version %q, err=%v", tc.version, err)
+			}
+		})
+	}
+	o := opener("linux", func(string, ...string) (string, error) {
+		return "", errors.New("binary failed")
+	})
+	if err := o.checkLinuxVersion(); err == nil || !strings.Contains(err.Error(), "binary failed") {
+		t.Fatalf("version subprocess error lost: %v", err)
+	}
+}
+
+func TestDarwinFocusUsesSupportedWindowCommand(t *testing.T) {
+	if !strings.Contains(focusScript, "activate window w") || strings.Contains(focusScript, "set index") || strings.Contains(focusScript, "try") {
+		t.Fatal("focus must activate the target Ghostty window and propagate errors")
+	}
+}
+
+func TestDarwinFocusFailureDoesNotDuplicateWindow(t *testing.T) {
+	calls := 0
+	o := opener("darwin", func(name string, args ...string) (string, error) {
+		calls++
+		if args[1] != focusScript {
+			t.Fatal("focus failure must not create a second window")
+		}
+		return "", errors.New("Automation permission denied")
+	})
+	o.windows["key"] = "existing-window"
+	if err := o.Open("key", "line"); err == nil || !strings.Contains(err.Error(), "Automation permission denied") {
+		t.Fatalf("focus error not surfaced: %v", err)
+	}
+	if calls != 1 || o.windows["key"] != "existing-window" {
+		t.Fatalf("focus failure discarded window identity: calls=%d, windows=%v", calls, o.windows)
 	}
 }

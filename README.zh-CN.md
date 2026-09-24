@@ -188,6 +188,10 @@ mv ~/.claude/projects/.trash/<project-slug>/<id>.jsonl \
    ~/.claude/projects/<project-slug>/
 ```
 
+若回收站已有同名文件，新副本会保存到 `.trash/<project-slug>/duplicate-*/<id>.jsonl`
+（Codex 为 `.trash/duplicate-*/`），保留原文件名，绝不覆盖旧历史。恢复时选择需要的副本。
+
+
 ## 配置
 
 首次运行时 `sm` 会把下面的默认 `config.json` 写到
@@ -215,7 +219,7 @@ mv ~/.claude/projects/.trash/<project-slug>/<id>.jsonl \
 | `view` | `"list"`(默认)/ `"tabs"` | 启动时的视图模式;`v` 可随时切换 |
 | `open_in.mode` | `"current"`(默认)/ `"window"` | `"current"` 挂起 `sm`、在当前终端运行 agent;`"window"` 让每次启动都开一个[新窗口](#在新窗口中打开启动),`sm` 留在屏幕上。简写:`"open_in": "window"` |
 | `open_in.iterm2.ssh` | ssh 目标 | 仅用于 `sm` 跑在 SSH 远端时的 iTerm2 开窗——填你在 Mac 上 `ssh` 后面敲的那个目标。见下文 |
-| `tmux.enabled` | `false`(默认)/ `true` | 启动跑在名为 `sm-<agent>-<id8>` 的 tmux 会话里,断开也不丢工作;带来 `●` 标记和 `x` 终止键。需要 `tmux` 在 `PATH` 上 |
+| `tmux.enabled` | `false`(默认)/ `true` | 启动跑在名为 `sm-<agent>-<full-id>` 的 tmux 会话里,断开也不丢工作;带来 `●` 标记和 `x` 终止键。需要 `tmux` 在 `PATH` 上 |
 | `colors.claude` / `colors.codex` | `{"light","dark"}` 十六进制 | 各 agent 的主题色 |
 
 `open_in` 与 `tmux.enabled` 可以组合:tmux 开启时,开窗启动是受跟踪的
@@ -234,7 +238,7 @@ TUI 本体在任何终端里都能跑,包括 tmux 里——浏览、搜索、
 | 终端 | 平台 | 启动开成什么 | 机制 | 重复启动 |
 |---|---|---|---|---|
 | **iTerm2** | macOS | 原生窗口 | 私有转义序列 → AutoLaunch 桥接脚本 | 聚焦已开窗口 |
-| **Ghostty** | macOS 1.3+、Linux 1.2+ | 原生窗口 | AppleScript / `ghostty +new-window` | 聚焦(macOS);新开窗口(Linux) |
+| **Ghostty** | macOS 1.3+、Linux 1.3+ | 原生窗口 | AppleScript / `ghostty +new-window` | 聚焦(macOS);新开窗口(Linux) |
 | **Warp** | macOS 与 Linux,仅 Stable | 最前窗口的原生**标签页** | Tab Config 文件 + `warp://` URI | 新开标签页(Warp 不返回可聚焦的句柄) |
 | 其他任意终端 | 任意 | tmux 窗口 | `sm` 把自己包进一个 tmux 会话 | 跳到已有窗口 |
 
@@ -262,7 +266,7 @@ TUI 本体在任何终端里都能跑,包括 tmux 里——浏览、搜索、
 | 你的终端 | 本地 | SSH 远程 | 一次性设置 |
 |---|---|---|---|
 | **iTerm2**(macOS) | 原生窗口 | 在 Mac 上开原生窗口 | [安装 AutoLaunch 脚本](docs/native-windows.md#iterm2-macos);SSH 场景还需设置 `iterm2.ssh` |
-| **Ghostty**(macOS 1.3+、Linux 1.2+) | 原生窗口 | 在桌面开原生窗口 | 本地无需任何设置;SSH 场景改用 **`sm ssh <host>`** 连接即可 |
+| **Ghostty**(macOS 1.3+、Linux 1.3+) | 原生窗口 | 在桌面开原生窗口 | 本地无需任何设置;SSH 场景改用 **`sm ssh <host>`** 连接即可 |
 | **Warp**(macOS 与 Linux) | 原生标签页 | 在桌面开原生标签页 | 本地无需任何设置;SSH 场景改用 **`sm ssh <host>`** 连接即可 |
 | 其他任意终端 | tmux 窗口 | tmux 窗口 | `tmux` 在 `PATH` 上(`sm` 自动把自己包进名为 `sm` 的 tmux 会话) |
 
@@ -326,3 +330,6 @@ Release、Homebrew tap 与 APT 仓库全部出自这一个标签(预发布标签
 ## 许可证
 
 [MIT](LICENSE)
+
+受管 tmux 名称现在使用完整会话 ID。旧版本的八位名称会话会继续运行，但不会自动关联，
+以免把多个 Codex 会话误认为同一个；请手动附加旧会话，或结束后再用新版恢复。

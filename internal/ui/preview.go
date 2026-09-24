@@ -13,16 +13,35 @@ import (
 // preview viewport, returning each message's first rendered line so hit
 // navigation can jump by message. Prefixes: > user, ⏺ assistant, ⎿ tool call.
 func renderTranscript(t store.Transcript, width int, st styles) (string, []int) {
+	content, starts, _ := renderTranscriptTerms(t, width, st, nil)
+	return content, starts
+}
+
+// renderTranscriptTerms sanitizes source text before adding our own highlight
+// sequences. It never mutates the shared transcript-cache backing array.
+func renderTranscriptTerms(t store.Transcript, width int, st styles, terms []string) (string, []int, []int) {
 	if len(t.Messages) == 0 {
-		return st.ListMeta.Render("no messages"), nil
+		return st.ListMeta.Render("no messages"), nil, nil
 	}
 	if width < 4 {
 		width = 4
 	}
 	parts := make([]string, 0, len(t.Messages))
 	starts := make([]int, 0, len(t.Messages))
+	var hits []int
 	line := 0
-	for _, m := range t.Messages {
+	for i, m := range t.Messages {
+		text := displayText(m.Text)
+		if m.Kind != store.KindTool {
+			lower := strings.ToLower(text)
+			for _, term := range terms {
+				if term != "" && strings.Contains(lower, term) {
+					text = highlightTerms(text, terms)
+					hits = append(hits, i)
+					break
+				}
+			}
+		}
 		var style = st.AssistantMsg
 		prefix := "⏺ "
 		switch m.Kind {
@@ -31,12 +50,12 @@ func renderTranscript(t store.Transcript, width int, st styles) (string, []int) 
 		case store.KindTool:
 			style, prefix = st.ToolMsg, "⎿ "
 		}
-		rendered := style.Width(width).Render(prefix + m.Text)
+		rendered := style.Width(width).Render(prefix + text)
 		starts = append(starts, line)
 		line += lipgloss.Height(rendered) + 1 // +1 for the blank joiner line
 		parts = append(parts, rendered)
 	}
-	return strings.Join(parts, "\n\n"), starts
+	return strings.Join(parts, "\n\n"), starts, hits
 }
 
 // highlightTerms wraps every case-insensitive occurrence of each term in

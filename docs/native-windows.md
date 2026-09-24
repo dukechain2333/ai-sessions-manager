@@ -10,7 +10,7 @@ short version.
 Shared behavior, regardless of terminal:
 
 - With `tmux.enabled`, every launch lands in a tracked tmux session named
-  `sm-<agent>-<id8>` **on the machine where sm runs** — the usual `●`
+  `sm-<agent>-<full-id>` **on the machine where sm runs** — the usual `●`
   marker, `x` kill, and `enter` re-enter all work. Closing a window is
   fine: the tmux session keeps running, and the next `enter` opens a fresh
   window into it.
@@ -33,7 +33,7 @@ terminal — it travels through SSH like any other output. An AutoLaunch
 script inside your local iTerm2 picks it up and opens a native window that
 runs the agent: locally it types the command straight into a fresh shell;
 over SSH it dials back with
-`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent's resume command>"`.
+`ssh -t <host> "cd <dir> && tmux new-session -A -s sm-<agent>-<full-id> <agent's resume command>"`.
 
 ### Setup
 
@@ -130,7 +130,7 @@ Nothing to install. Set the mode and you're done:
 - **macOS:** windows open through Ghostty's AppleScript support (Ghostty
   **1.3+**). The first launch pops the standard macOS Automation
   permission dialog — click Allow.
-- **Linux:** windows open through `ghostty +new-window` (Ghostty **1.2+**,
+- **Linux:** windows open through `ghostty +new-window` (Ghostty **1.3+**,
   GTK build with D-Bus). No window refocus dedupe here — the IPC returns
   no window handle.
 
@@ -149,7 +149,7 @@ unix socket (random path, mode 0600) and advertises it to the remote shell
 as `$LC_SM_BRIDGE`. A window-mode `sm` on the server sends each launch down
 that socket, and the helper on your desktop opens a Ghostty window that
 dials back with
-`ssh -t -- myserver "cd <dir> && tmux new-session -A -s sm-<agent>-<id8> <agent command>"`.
+`ssh -t -- myserver "cd <dir> && tmux new-session -A -s sm-<agent>-<full-id> <agent command>"`.
 Extra arguments are passed through to ssh and reused by the windows
 (`sm ssh -p 2222 myserver` works). On the server side the config only needs
 

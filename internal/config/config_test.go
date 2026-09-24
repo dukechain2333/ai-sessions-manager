@@ -2,7 +2,10 @@ package config
 
 import (
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -16,6 +19,78 @@ func TestDefault(t *testing.T) {
 	}
 	if c.Codex.Light != "#0A7C66" || c.Codex.Dark != "#10A37F" {
 		t.Errorf("codex default = %+v", c.Codex)
+	}
+}
+
+func TestSavePreservesPermissionsAndSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "actual.json")
+	if err := os.WriteFile(target, []byte(DefaultFileJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.json")
+	if err := os.Symlink("actual.json", link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Default()
+	cfg.View = "tabs"
+	if err := Save(link, cfg); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("config symlink replaced: %v", err)
+	}
+	info, err = os.Stat(target)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("private permissions changed: %v", err)
+	}
+	got, err := Load(link)
+	if err != nil || got != cfg {
+		t.Fatalf("saved config = %+v, %v", got, err)
+	}
+}
+
+func TestSaveFailedWritePreservesExistingFile(t *testing.T) {
+	if os.Getenv("SM_TEST_CONFIG_WRITE_LIMIT") == "1" {
+		// Limit only this helper process, never the parent test suite. This
+		// creates a deterministic short write on both supported OSes.
+		path := os.Getenv("SM_TEST_CONFIG_PATH")
+		old, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signal.Ignore(syscall.SIGXFSZ)
+		var limit syscall.Rlimit
+		if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+			t.Fatal(err)
+		}
+		limit.Cur = 64
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+			t.Fatal(err)
+		}
+		if err := Save(path, Default()); err == nil {
+			t.Fatal("expected quota failure")
+		}
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != string(old) {
+			t.Fatalf("failed save damaged old config: %q, %v", got, err)
+		}
+		entries, err := os.ReadDir(filepath.Dir(path))
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("temporary file leaked: %v, %v", entries, err)
+		}
+		return
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	old := []byte(`{"view":"tabs","tmux":{"enabled":true}}`)
+	if err := os.WriteFile(path, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSaveFailedWritePreservesExistingFile$")
+	cmd.Env = append(os.Environ(), "SM_TEST_CONFIG_WRITE_LIMIT=1", "SM_TEST_CONFIG_PATH="+path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("write-failure helper: %v: %s", err, out)
 	}
 }
 

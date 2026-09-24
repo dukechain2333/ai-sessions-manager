@@ -49,6 +49,7 @@ func Scan(projectsDir string) ([]Session, error) {
 
 type EnrichResult struct {
 	Index int
+	Path  string // stable identity from the snapshot; Index is only its original position
 	Meta  Meta
 	Err   error
 }
@@ -71,6 +72,7 @@ func Enrich(sessions []Session, providers []Provider, workers int, results chan<
 		snap[i] = job{s.Path, s.Slug, s.Agent}
 	}
 	jobs := make(chan int)
+	resolveSlug := newSlugResolver("/")
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
@@ -79,14 +81,14 @@ func Enrich(sessions []Session, providers []Provider, workers int, results chan<
 			for i := range jobs {
 				p := ProviderFor(providers, snap[i].agent)
 				if p == nil {
-					results <- EnrichResult{Index: i, Err: fmt.Errorf("no provider for agent %q", snap[i].agent)}
+					results <- EnrichResult{Index: i, Path: snap[i].path, Err: fmt.Errorf("no provider for agent %q", snap[i].agent)}
 					continue
 				}
 				m, err := p.ParseMetadata(snap[i].path)
 				if err == nil && m.CWD == "" && snap[i].agent == AgentClaude {
-					m.CWD = ResolveSlug("/", snap[i].slug)
+					m.CWD = resolveSlug(snap[i].slug)
 				}
-				results <- EnrichResult{Index: i, Meta: m, Err: err}
+				results <- EnrichResult{Index: i, Path: snap[i].path, Meta: m, Err: err}
 			}
 		}()
 	}
@@ -102,27 +104,52 @@ func Enrich(sessions []Session, providers []Provider, workers int, results chan<
 
 // ResolveSlug maps a projects-dir slug like "-home-william-hyper-sagnn"
 // back to a filesystem path. Slugs replace "/" with "-", which collides
-// with dashes inside directory names, so it tries every split and
-// returns the longest candidate that exists under root ("" if none).
+// with dashes inside directory names. Only existing directory prefixes
+// are explored, so long slugs do not enumerate every slash/dash partition.
+// It returns the longest existing candidate under root ("" if none).
 func ResolveSlug(root, slug string) string {
 	tokens := strings.Split(strings.TrimPrefix(slug, "-"), "-")
+	if len(tokens) == 1 && tokens[0] == "" {
+		if st, err := os.Stat(root); err == nil && st.IsDir() {
+			return filepath.Clean(root)
+		}
+		return ""
+	}
 	best := ""
 	var walk func(prefix string, i int)
 	walk = func(prefix string, i int) {
-		if i == len(tokens) {
-			full := filepath.Join(root, prefix)
-			if st, err := os.Stat(full); err == nil && st.IsDir() && len(full) > len(best) {
-				best = full
+		for end := i + 1; end <= len(tokens); end++ {
+			name := strings.Join(tokens[i:end], "-")
+			if name == "" || name == "." || name == ".." {
+				continue
 			}
-			return
-		}
-		walk(prefix+"/"+tokens[i], i+1)
-		if i > 0 {
-			walk(prefix+"-"+tokens[i], i+1)
+			full := filepath.Join(prefix, name)
+			if st, err := os.Stat(full); err != nil || !st.IsDir() {
+				continue
+			}
+			if end == len(tokens) {
+				if len(full) > len(best) {
+					best = full
+				}
+			} else {
+				walk(full, end)
+			}
 		}
 	}
-	walk("", 0)
+	walk(root, 0)
 	return best
+}
+
+// Each enrichment pass shares successful and missing resolutions across
+// workers. A fresh pass gets a fresh cache so directory changes are observed.
+func newSlugResolver(root string) func(string) string {
+	var cache sync.Map
+	return func(slug string) string {
+		resolve, _ := cache.LoadOrStore(slug, sync.OnceValue(func() string {
+			return ResolveSlug(root, slug)
+		}))
+		return resolve.(func() string)()
+	}
 }
 
 // KnownDirs returns the unique, still-existing working directories of
